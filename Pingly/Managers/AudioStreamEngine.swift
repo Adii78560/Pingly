@@ -47,25 +47,12 @@ final class AudioStreamEngine: NSObject, ObservableObject {
             AppLogger.audio.warning("Could not enable Voice Processing: \(error.localizedDescription)")
         }
         
-        // Bandpass Filter Setup (Radio Transceiver Audio Simulation: 300Hz to 3400Hz)
-        let hpFilter = bandpassEQ.bands[0]
-        hpFilter.filterType = .highPass
-        hpFilter.frequency = 300.0 // Cut low rumbles
-        hpFilter.bypass = false
-        
-        let lpFilter = bandpassEQ.bands[1]
-        lpFilter.filterType = .lowPass
-        lpFilter.frequency = 3400.0 // Cut high noise
-        lpFilter.bypass = false
-        
-        // Attach nodes to engine
+        // Attach player node to engine
         audioEngine.attach(playerNode)
-        audioEngine.attach(bandpassEQ)
         
-        // Connect player pipeline: Player -> EQ -> MainMixer
-        let format = audioEngine.mainMixerNode.outputFormat(forBus: 0)
-        audioEngine.connect(playerNode, to: bandpassEQ, format: format)
-        audioEngine.connect(bandpassEQ, to: audioEngine.mainMixerNode, format: format)
+        // Connect player directly to main mixer using hardware output format
+        let mixerFormat = audioEngine.mainMixerNode.outputFormat(forBus: 0)
+        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: mixerFormat)
     }
     
     // MARK: - Public Recording Engine
@@ -93,7 +80,10 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] (buffer, time) in
             guard let self = self, self.isRecording else { return }
             
-            // Direct float buffer RMS level calculation with logarithmic compression
+            // Forward buffer to live speech transcriber
+            SpeechTranscriberManager.shared.processAudioBuffer(buffer)
+            
+            // Direct float buffer RMS level calculation
             if let floatChannelData = buffer.floatChannelData?[0] {
                 let frameLength = Int(buffer.frameLength)
                 if frameLength > 0 {
@@ -110,26 +100,30 @@ final class AudioStreamEngine: NSObject, ObservableObject {
                 }
             }
             
-            // Forward buffer to live speech transcriber
-            SpeechTranscriberManager.shared.processAudioBuffer(buffer)
-            
             guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: bufferSize) else { return }
             var error: NSError?
+            var hasProvidedData = false
             
             let status = formatConverter.convert(to: convertedBuffer, error: &error) { _, outStatus in
-                outStatus.pointee = .haveData
-                return buffer
+                if !hasProvidedData {
+                    outStatus.pointee = .haveData
+                    hasProvidedData = true
+                    return buffer
+                } else {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
             }
             
-            if status == .haveData, let data = self.pcmBufferToData(convertedBuffer) {
+            if (status == .haveData || status == .inputRanDry), let data = self.pcmBufferToData(convertedBuffer) {
                 self.delegate?.audioStreamEngine(self, didCaptureAudioChunk: data)
             }
         }
-
-
         
         do {
-            try audioEngine.start()
+            if !audioEngine.isRunning {
+                try audioEngine.start()
+            }
             isRecording = true
             AppLogger.audio.info("AudioStreamEngine recording started successfully")
             return true
@@ -155,15 +149,18 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     
     /// Enqueues and plays incoming real-time audio data frame from network packet.
     func playAudioChunk(_ data: Data) {
+        guard !data.isEmpty else { return }
         calculateAudioLevel(from: data)
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true),
-              let buffer = dataToPCMBuffer(data, format: format) else { return }
+        
+        let mixerFormat = audioEngine.mainMixerNode.outputFormat(forBus: 0)
+        guard let buffer = dataToPCMBuffer(data, targetFormat: mixerFormat) else { return }
         
         if !audioEngine.isRunning {
             do {
                 try audioEngine.start()
             } catch {
                 AppLogger.audio.error("Engine start failed for playback: \(error.localizedDescription)")
+                return
             }
         }
         
@@ -206,21 +203,44 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     private func pcmBufferToData(_ buffer: AVAudioPCMBuffer) -> Data? {
         let channelCount = Int(buffer.format.channelCount)
         let length = Int(buffer.frameLength) * channelCount * 2 // 16-bit = 2 bytes
-        guard let channelData = buffer.int16ChannelData else { return nil }
+        guard let channelData = buffer.int16ChannelData, length > 0 else { return nil }
         return Data(bytes: channelData[0], count: length)
     }
     
-    private func dataToPCMBuffer(_ data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let frameCapacity = UInt32(data.count / 2)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity) else { return nil }
-        buffer.frameLength = frameCapacity
+    private func dataToPCMBuffer(_ data: Data, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let sourceSampleRate: Double = 16000.0
+        guard let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sourceSampleRate, channels: 1, interleaved: true) else { return nil }
         
+        let sampleCount = data.count / 2
+        guard sampleCount > 0,
+              let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: UInt32(sampleCount)) else { return nil }
+        sourceBuffer.frameLength = UInt32(sampleCount)
+        
+        guard let sourceInt16 = sourceBuffer.int16ChannelData?[0] else { return nil }
         data.withUnsafeBytes { rawBuffer in
             if let baseAddress = rawBuffer.baseAddress {
-                memcpy(buffer.int16ChannelData?[0], baseAddress, data.count)
+                memcpy(sourceInt16, baseAddress, data.count)
             }
         }
-        return buffer
+        
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else { return nil }
+        let targetFrameCapacity = UInt32(Double(sampleCount) * (targetFormat.sampleRate / sourceSampleRate)) + 100
+        guard let targetBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: targetFrameCapacity) else { return nil }
+        
+        var error: NSError?
+        var hasProvidedData = false
+        let status = converter.convert(to: targetBuffer, error: &error) { _, outStatus in
+            if !hasProvidedData {
+                outStatus.pointee = .haveData
+                hasProvidedData = true
+                return sourceBuffer
+            } else {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+        }
+        
+        return (status == .haveData || status == .inputRanDry) ? targetBuffer : nil
     }
 }
 

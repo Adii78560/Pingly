@@ -13,7 +13,10 @@ import os
 /// Production AVFoundation audio manager handling live Push-To-Talk (PTT) radio streaming and waveform levels
 final class RadioAudioService: ObservableObject {
     
+    static let shared = RadioAudioService()
+    
     // MARK: - Published Properties
+
     @Published private(set) var isRecording = false
     @Published private(set) var isPlaying = false
     @Published private(set) var currentAudioLevel: Float = 0.0

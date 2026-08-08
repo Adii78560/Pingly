@@ -73,17 +73,23 @@ final class SpeechTranscriberManager: ObservableObject {
         
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        if #available(iOS 16.0, *) {
-            request.addsPunctuation = true
-        }
-        
-        self.recognitionRequest = request
         
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
             AppLogger.audio.warning("SFSpeechRecognizer is NOT available. Active locale: \(self.speechRecognizer?.locale.identifier ?? "none")")
             self.isTranscribing = true
             return
         }
+        
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
+        
+        if #available(iOS 16.0, *) {
+            request.addsPunctuation = true
+        }
+        
+        self.recognitionRequest = request
+
         
         AppLogger.audio.info("SFSpeechRecognizer available. supportsOnDevice: \(recognizer.supportsOnDeviceRecognition)")
         
@@ -158,6 +164,9 @@ final class SpeechTranscriberManager: ObservableObject {
             
             let transcript = VoiceTranscript(speakerName: finalSpeaker, text: textToSave, channel: channel)
             self.transcriptHistory.append(transcript)
+            
+            // Persist transcript to SwiftData local storage
+            _ = SwiftDataService.shared.saveVoiceTranscript(speakerName: finalSpeaker, text: textToSave, channel: channel)
             AppLogger.audio.info("Saved VoiceTranscript from \(finalSpeaker) on \(channel): \"\(textToSave)\"")
         }
         
@@ -172,8 +181,10 @@ final class SpeechTranscriberManager: ObservableObject {
         DispatchQueue.main.async {
             let transcript = VoiceTranscript(speakerName: speakerName, text: text, channel: channel)
             self.transcriptHistory.append(transcript)
+            _ = SwiftDataService.shared.saveVoiceTranscript(speakerName: speakerName, text: text, channel: channel)
         }
     }
+
 
     
     /// Clears transcript history log.

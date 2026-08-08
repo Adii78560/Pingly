@@ -13,7 +13,10 @@ import os
 /// CoreLocation wrapper for offline GPS coordinates in SOS emergency drops
 final class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     
+    static let shared = LocationService()
+    
     @Published private(set) var currentLocation: CLLocationCoordinate2D?
+
     @Published private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
     
     private let locationManager = CLLocationManager()

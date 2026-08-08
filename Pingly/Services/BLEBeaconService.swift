@@ -13,7 +13,10 @@ import os
 /// Production CoreBluetooth service for low-power beaconing and RSSI radar scanning
 final class BLEBeaconService: NSObject, ObservableObject {
     
+    static let shared = BLEBeaconService()
+    
     // MARK: - Published Properties
+
     @Published private(set) var discoveredBLEPeers: [PeerDevice] = []
     @Published private(set) var bluetoothState: CBManagerState = .unknown
     

@@ -14,14 +14,19 @@ final class RadioCallViewModel: ObservableObject {
     
     @Published var session: RadioSession = RadioSession()
     @Published var isPTTPressed: Bool = false
-    @Published var selectedChannel: String = "CH-1 EMERGENCY"
+    @Published var selectedChannel: String = "CH-1 EMERGENCY" {
+        didSet {
+            loadSwiftDataTranscripts()
+        }
+    }
     
-    @Published var connectedPeerName: String = "Alex's iPhone"
-    @Published var connectedPeerRSSI: Int = -42
-    @Published var isConnected: Bool = true
+    @Published var connectedPeerName: String = "Searching for Peers..."
+    @Published var connectedPeerRSSI: Int = 0
+    @Published var isConnected: Bool = false
     @Published var isAddedToMessages: Bool = false
     @Published var latestTextSnippet: String = "Standing by for live voice transcripts..."
     @Published var transcriptHistory: [VoiceTranscript] = []
+
     
     var localUserHandle: String {
         return UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
@@ -55,7 +60,18 @@ final class RadioCallViewModel: ObservableObject {
         self.multipeerService = multipeerService
         self.audioService = audioService
         setupSubscriptions()
+        loadSwiftDataTranscripts()
     }
+    
+    func loadSwiftDataTranscripts() {
+        let saved = SwiftDataService.shared.fetchTranscripts(for: selectedChannel)
+        for item in saved {
+            if !transcriptHistory.contains(where: { $0.id == item.id }) {
+                transcriptHistory.append(item)
+            }
+        }
+    }
+
     
     func createChannel(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -99,17 +115,18 @@ final class RadioCallViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Observe SpeechTranscriberManager transcript updates
-        speechTranscriber.$transcriptHistory
+        // Listen for newly saved voice transcripts to update channel history
+        NotificationCenter.default.publisher(for: .didSaveVoiceTranscript)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] history in
+            .sink { [weak self] _ in
                 guard let self = self else { return }
-                self.transcriptHistory = history
+                self.loadSwiftDataTranscripts()
                 if let last = self.filteredTranscripts.last {
                     self.latestTextSnippet = "\(last.speakerName): \"\(last.text)\""
                 }
             }
             .store(in: &cancellables)
+
 
             
         // Live speech recognition snippet preview

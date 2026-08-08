@@ -19,8 +19,11 @@ import SwiftUI
 /// Native Apple iOS Settings View conforming to HIG
 struct SettingsView: View {
     @StateObject var viewModel: SettingsViewModel
+    @StateObject private var swiftDataService = SwiftDataService.shared
+    @StateObject private var cloudSyncService = CloudSyncService.shared
     
     var body: some View {
+
         NavigationStack {
             Form {
                 // Section 1: Profile & Node Identity
@@ -115,7 +118,47 @@ struct SettingsView: View {
                     Text("Hardware Radios")
                 }
                 
-                // Section 4: App Information
+                // Section 4: SwiftData Local Storage & Cloud Sync
+                Section {
+                    HStack {
+                        SettingsIconBadge(systemName: "icloud.and.arrow.up.fill", backgroundColor: .blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Cloud Sync Status")
+                                .font(.body)
+                            Text(cloudSyncService.syncStatusMessage)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "externaldrive.fill", backgroundColor: .orange)
+                        Text("Unsynced Off-Grid Items")
+                            .font(.body)
+                        Spacer()
+                        Text("\(swiftDataService.totalUnsyncedCount) pending")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Button(action: {
+                        cloudSyncService.syncPendingDataToCloud()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text(cloudSyncService.isSyncing ? "Syncing..." : "Sync SwiftData to Cloud Now")
+                        }
+                        .font(.subheadline.bold())
+                        .foregroundColor(cloudSyncService.isInternetAvailable ? .orange : .gray)
+                    }
+                    .disabled(!cloudSyncService.isInternetAvailable || cloudSyncService.isSyncing)
+                } header: {
+                    Text("SwiftData Storage & Cloud Sync")
+                } footer: {
+                    Text("Off-grid transcripts and messages are saved in SwiftData local storage. When internet is available, data automatically syncs to your logged-in device cloud account.")
+                }
+
+                // Section 5: App Information
                 Section {
                     HStack {
                         SettingsIconBadge(systemName: "info.circle.fill", backgroundColor: .gray)
@@ -129,7 +172,7 @@ struct SettingsView: View {
                         SettingsIconBadge(systemName: "shield.fill", backgroundColor: .teal)
                         Text("Security & Encryption")
                         Spacer()
-                        Text("Apple P2P TLS")
+                        Text("Apple P2P TLS & SwiftData")
                             .foregroundColor(.secondary)
                     }
                 } header: {
@@ -143,6 +186,7 @@ struct SettingsView: View {
                     .padding(.top, 8)
                 }
             }
+
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
         }

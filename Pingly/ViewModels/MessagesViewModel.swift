@@ -37,8 +37,9 @@ final class MessagesViewModel: ObservableObject {
         self.multipeerService = multipeerService
         self.locationService = locationService
         setupSubscriptions()
-        loadDemoSampleConversations()
+        loadSwiftDataConversations()
     }
+
     
     private func setupSubscriptions() {
         multipeerService.receivedMessagePublisher
@@ -84,6 +85,9 @@ final class MessagesViewModel: ObservableObject {
             }
         }
         
+        // Persist message to SwiftData local storage
+        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: conversation.displayName, text: trimmed)
+        
         multipeerService.broadcast(message: newMessage)
         messageText = ""
         HapticManager.lightImpact()
@@ -109,6 +113,7 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(newMessage)
+        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: "GENERAL MESH", text: trimmed)
         multipeerService.broadcast(message: newMessage)
         messageText = ""
         HapticManager.lightImpact()
@@ -121,10 +126,11 @@ final class MessagesViewModel: ObservableObject {
         let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
         let location = locationService.currentLocation
         
+        let sosText = "🚨 EMERGENCY DISTRESS BEACON: Need immediate assistance! Status: \(status.rawValue)"
         let sosMessage = Message(
             senderID: handle,
             senderName: handle,
-            text: "🚨 EMERGENCY DISTRESS BEACON: Need immediate assistance! Status: \(status.rawValue)",
+            text: sosText,
             timestamp: Date(),
             latitude: location?.latitude,
             longitude: location?.longitude,
@@ -134,6 +140,7 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(sosMessage)
+        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: "EMERGENCY BEACON", text: sosText)
         multipeerService.broadcast(message: sosMessage)
         HapticManager.warningFeedback()
         AppLogger.emergency.critical("Triggered Emergency SOS Beacon with status: \(status.rawValue)")
@@ -150,38 +157,34 @@ final class MessagesViewModel: ObservableObject {
                 conversations[index].messages.append(relayedMessage)
             }
             
+            _ = SwiftDataService.shared.saveChatMessage(senderName: message.senderName, channel: message.senderName, text: message.text)
+            
             if relayedMessage.hopsCount <= Constants.Emergency.broadcastTTL {
                 multipeerService.broadcast(message: relayedMessage)
             }
         }
     }
+
     
-    private func loadDemoSampleConversations() {
-        let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-        
-        let msg1 = Message(senderID: "JD_01", senderName: "John Doe", text: "Met you at the conference. Signal strong!", timestamp: Date().addingTimeInterval(-600))
-        let msg2 = Message(senderID: "AM_02", senderName: "Alex Miller", text: "Thanks for the help!", timestamp: Date().addingTimeInterval(-86400))
-        
-        self.conversations = [
-            Conversation(
-                id: "JD_01",
-                displayName: "John Doe",
-                isOnline: true,
-                lastMessage: "Met you at the conference...",
-                lastTimestamp: "10:42 AM",
-                messages: [msg1]
-            ),
-            Conversation(
-                id: "AM_02",
-                displayName: "Alex Miller",
-                isOnline: false,
-                lastMessage: "Thanks for the help!",
-                lastTimestamp: "Yesterday",
-                messages: [msg2]
-            )
-        ]
-        
-        self.messages = [msg1, msg2]
+    private func loadSwiftDataConversations() {
+        let saved = SwiftDataService.shared.fetchChatMessages(for: "GENERAL MESH")
+        if !saved.isEmpty {
+            let chatMessages = saved.map { item in
+                Message(
+                    id: item.id,
+                    senderID: item.senderName,
+                    senderName: item.senderName,
+                    text: item.text,
+                    timestamp: item.timestamp,
+                    hopsCount: 0
+                )
+            }
+            self.messages = chatMessages
+        } else {
+            self.conversations = []
+            self.messages = []
+        }
     }
 }
+
 

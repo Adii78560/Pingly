@@ -173,7 +173,9 @@ extension View {
 extension Notification.Name {
     static let didReceiveRawPTTPacket = Notification.Name("didReceiveRawPTTPacket")
     static let didReceiveChannelSync = Notification.Name("didReceiveChannelSync")
+    static let didSaveVoiceTranscript = Notification.Name("didSaveVoiceTranscript")
 }
+
 
 
 

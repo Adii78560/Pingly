@@ -44,11 +44,15 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     
     override init() {
         let storedHandle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+        let deviceID = String(abs(storedHandle.hashValue ^ Int(Date().timeIntervalSinceReferenceDate)) % 10000)
+        let peerDisplayName = "\(storedHandle)_\(deviceID)"
         self.currentHandle = storedHandle
-        self.myPeerID = MCPeerID(displayName: storedHandle)
+        self.myPeerID = MCPeerID(displayName: peerDisplayName)
         super.init()
         setupSession()
     }
+
+
     
     private func setupSession() {
         let session = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)

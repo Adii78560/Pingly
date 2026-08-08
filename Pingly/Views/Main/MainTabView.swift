@@ -10,11 +10,11 @@ import SwiftUI
 /// Main Tab Navigation Host View for RadioFy / Pingly
 struct MainTabView: View {
     
-    // MARK: - Core Services (Singletons / StateObjects)
-    @StateObject private var multipeerService = MultipeerService()
-    @StateObject private var bleBeaconService = BLEBeaconService()
-    @StateObject private var radioAudioService = RadioAudioService()
-    @StateObject private var locationService = LocationService()
+    // MARK: - Core Services (Singletons)
+    @StateObject private var multipeerService = MultipeerService.shared
+    @StateObject private var bleBeaconService = BLEBeaconService.shared
+    @StateObject private var radioAudioService = RadioAudioService.shared
+    @StateObject private var locationService = LocationService.shared
     
     // MARK: - ViewModels
     @StateObject private var radarViewModel: RadarViewModel
@@ -29,21 +29,18 @@ struct MainTabView: View {
     @State private var selectedTab = 0
     
     init() {
-        let mpService = MultipeerService()
-        let bleService = BLEBeaconService()
-        let audioService = RadioAudioService()
-        let locService = LocationService()
+        let mp = MultipeerService.shared
+        let ble = BLEBeaconService.shared
+        let audio = RadioAudioService.shared
+        let loc = LocationService.shared
         
-        _multipeerService = StateObject(wrappedValue: mpService)
-        _bleBeaconService = StateObject(wrappedValue: bleService)
-        _radioAudioService = StateObject(wrappedValue: audioService)
-        _locationService = StateObject(wrappedValue: locService)
-        
-        _radarViewModel = StateObject(wrappedValue: RadarViewModel(multipeerService: mpService, bleBeaconService: bleService))
-        _messagesViewModel = StateObject(wrappedValue: MessagesViewModel(multipeerService: mpService, locationService: locService))
-        _radioCallViewModel = StateObject(wrappedValue: RadioCallViewModel(multipeerService: mpService, audioService: audioService))
-        _settingsViewModel = StateObject(wrappedValue: SettingsViewModel(multipeerService: mpService, bleBeaconService: bleService))
+        _radarViewModel = StateObject(wrappedValue: RadarViewModel(multipeerService: mp, bleBeaconService: ble))
+        _messagesViewModel = StateObject(wrappedValue: MessagesViewModel(multipeerService: mp, locationService: loc))
+        _radioCallViewModel = StateObject(wrappedValue: RadioCallViewModel(multipeerService: mp, audioService: audio))
+        _settingsViewModel = StateObject(wrappedValue: SettingsViewModel(multipeerService: mp, bleBeaconService: ble))
     }
+
+
     
     var body: some View {
         ZStack {
