@@ -47,18 +47,126 @@ extension CLLocationCoordinate2D {
     }
 }
 
-// MARK: - View Modifiers
-extension View {
-    /// Glassmorphism tactical card style
-    func glassCardStyle(backgroundColor: Color = Constants.UI.Colors.cardBackground) -> some View {
-        self
-            .padding(Constants.UI.Layout.cardPadding)
-            .background(backgroundColor.opacity(0.85))
-            .clipShape(RoundedRectangle(cornerRadius: Constants.UI.Layout.cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Constants.UI.Layout.cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+// MARK: - String Initials Extension
+extension String {
+    /// Extract initials from device or user name (e.g. "John Doe" -> "JD", "Alex's Mac" -> "AM")
+    var initials: String {
+        let clean = self.replacingOccurrences(of: "'s", with: "")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        if clean.isEmpty {
+            return String(self.prefix(2)).uppercased()
+        }
+        if clean.count == 1 {
+            return String(clean[0].prefix(2)).uppercased()
+        }
+        let first = clean[0].prefix(1)
+        let last = clean[1].prefix(1)
+        return "\(first)\(last)".uppercased()
     }
 }
+
+// MARK: - Tactical Haptic Generator Manager
+enum HapticManager {
+    static func lightImpact() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+    
+    static func mediumImpact() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+    
+    static func heavyImpact() {
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+    
+    static func successFeedback() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.success)
+    }
+    
+    static func warningFeedback() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.warning)
+    }
+}
+
+// MARK: - Native iOS Settings Icon Badge (Colored rounded square with SF Symbol)
+struct SettingsIconBadge: View {
+    let systemName: String
+    let backgroundColor: Color
+    
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(backgroundColor)
+                .frame(width: 30, height: 30)
+            
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+}
+
+// MARK: - Glassmorphic Card View Modifier
+struct GlassmorphicCardModifier: ViewModifier {
+    var cornerRadius: CGFloat
+    var borderWidth: CGFloat
+    var borderGradientColors: [Color]
+    var shadowOpacity: Double
+    
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Constants.UI.Colors.glassOverlay)
+            )
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            gradient: Gradient(colors: borderGradientColors),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: borderWidth
+                    )
+            )
+            .shadow(color: Color.black.opacity(shadowOpacity), radius: 8, x: 0, y: 4)
+    }
+}
+
+extension View {
+    /// Glassmorphic Card Spec modifier conforming to Section 2 specification
+    func glassCardStyle(
+        cornerRadius: CGFloat = Constants.UI.Metrics.radiusMedium,
+        borderWidth: CGFloat = 1.0,
+        borderGradientColors: [Color] = [Color.white.opacity(0.18), Color.white.opacity(0.03)],
+        shadowOpacity: Double = 0.10
+    ) -> some View {
+        self.modifier(
+            GlassmorphicCardModifier(
+                cornerRadius: cornerRadius,
+                borderWidth: borderWidth,
+                borderGradientColors: borderGradientColors,
+                shadowOpacity: shadowOpacity
+            )
+        )
+    }
+}
+
+

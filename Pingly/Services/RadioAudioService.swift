@@ -32,14 +32,18 @@ final class RadioAudioService: ObservableObject {
     }
     
     private func setupAudioSession() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-            try session.setActive(true)
-        } catch {
-            AppLogger.audio.error("Failed to configure AVAudioSession: \(error.localizedDescription)")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+                try session.setActive(true, options: .notifyOthersOnDeactivation)
+                AppLogger.audio.info("AVAudioSession configured asynchronously")
+            } catch {
+                AppLogger.audio.error("Failed to configure AVAudioSession: \(error.localizedDescription)")
+            }
         }
     }
+
     
     func startRecordingPTT() {
         guard !isRecording else { return }

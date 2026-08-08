@@ -7,119 +7,145 @@
 
 import SwiftUI
 
-/// Settings & Emergency SOS Profile View
+////
+//  SettingsView.swift
+//  Pingly
+//
+//  Created by Senior iOS Developer on 09/08/26.
+//
+
+import SwiftUI
+
+/// Native Apple iOS Settings View conforming to HIG
 struct SettingsView: View {
     @StateObject var viewModel: SettingsViewModel
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Constants.UI.Colors.backgroundDark
-                    .ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(spacing: 20) {
-                        // Profile Identity Section
-                        profileSection
+            Form {
+                // Section 1: Profile & Node Identity
+                Section {
+                    HStack(spacing: 14) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.accentColor.opacity(0.15))
+                                .frame(width: 54, height: 54)
+                            Text(viewModel.userHandle.initials)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.accentColor)
+                        }
                         
-                        // Default Emergency Status
-                        statusSection
-                        
-                        // Hardware Radios & Battery Optimization
-                        radioSettingsSection
-                        
-                        // About & Version Info
-                        aboutSection
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(viewModel.userHandle)
+                                .font(.headline)
+                            Text("Off-Grid P2P Mesh Node")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    .padding()
-                }
-            }
-            .navigationTitle("Emergency Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Constants.UI.Colors.backgroundDark, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-        }
-    }
-    
-    private var profileSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("OFF-GRID NODE IDENTITY", systemImage: "person.crop.circle.badge.checkmark")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(Constants.UI.Colors.primaryAccent)
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Device / Survivor Handle")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Constants.UI.Colors.textSecondary)
-                
-                HStack {
-                    TextField("Enter callsign", text: $viewModel.userHandle)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(Constants.UI.Colors.textPrimary)
+                    .padding(.vertical, 4)
                     
-                    Button("Save") {
-                        viewModel.applySettings()
+                    HStack {
+                        SettingsIconBadge(systemName: "person.crop.circle", backgroundColor: .blue)
+                        Text("Broadcast Handle")
+                            .font(.body)
+                        Spacer()
+                        TextField("Callsign", text: $viewModel.userHandle)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundColor(.secondary)
+                            .onSubmit {
+                                viewModel.applySettings()
+                                HapticManager.successFeedback()
+                            }
                     }
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(Constants.UI.Colors.primaryAccent)
+                } header: {
+                    Text("Identity")
                 }
-                .padding(10)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .glassCardStyle()
-    }
-    
-    private var statusSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("DEFAULT EMERGENCY CATEGORY", systemImage: "shield.trianglebadge.exclamationmark")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(Constants.UI.Colors.warningOrange)
-            
-            Picker("Status", selection: $viewModel.selectedEmergencyStatus) {
-                ForEach(EmergencyStatus.allCases) { status in
-                    Text(status.rawValue).tag(status)
+                
+                // Section 2: Emergency Category
+                Section {
+                    HStack {
+                        SettingsIconBadge(systemName: "exclamationmark.shield.fill", backgroundColor: .orange)
+                        Picker("Default Status", selection: $viewModel.selectedEmergencyStatus) {
+                            ForEach(EmergencyStatus.allCases) { status in
+                                Text(status.rawValue).tag(status)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                } header: {
+                    Text("Distress Profile")
+                } footer: {
+                    Text("Default status broadcasted to nearby emergency nodes when scanning.")
+                }
+                
+                // Section 3: Radios & Battery Optimization
+                Section {
+                    Toggle(isOn: $viewModel.isLowPowerModeEnabled) {
+                        HStack(spacing: 12) {
+                            SettingsIconBadge(systemName: "battery.100.bolt", backgroundColor: .green)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Low Power Mode")
+                                    .font(.body)
+                                Text("Reduce BLE scan frequency to preserve battery")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .tint(.green)
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "antenna.radiowaves.left.and.right", backgroundColor: .indigo)
+                        Text("Multipeer Wi-Fi Direct")
+                        Spacer()
+                        Text("Active")
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "bolt.horizontal.fill", backgroundColor: .blue)
+                        Text("CoreBluetooth BLE Mesh")
+                        Spacer()
+                        Text("Active")
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("Hardware Radios")
+                }
+                
+                // Section 4: App Information
+                Section {
+                    HStack {
+                        SettingsIconBadge(systemName: "info.circle.fill", backgroundColor: .gray)
+                        Text("Version")
+                        Spacer()
+                        Text("\(Constants.App.version) (\(Constants.App.build))")
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "shield.fill", backgroundColor: .teal)
+                        Text("Security & Encryption")
+                        Spacer()
+                        Text("Apple P2P TLS")
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("About")
+                } footer: {
+                    VStack(spacing: 4) {
+                        Text("RadioFy / Pingly • Off-Grid Walkie-Talkie & P2P")
+                        Text("Designed for emergency mesh communication.")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 8)
                 }
             }
-            .pickerStyle(.menu)
-            .tint(Constants.UI.Colors.warningOrange)
+            .listStyle(.insetGrouped)
+            .navigationTitle("Settings")
         }
-        .glassCardStyle()
-    }
-    
-    private var radioSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("MESH PROTOCOLS & BATTERY", systemImage: "bolt.batteryblock.fill")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(Constants.UI.Colors.textSecondary)
-            
-            Toggle(isOn: $viewModel.isLowPowerModeEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Low Power BLE Beacon Mode")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(Constants.UI.Colors.textPrimary)
-                    Text("Reduces BLE scan frequency to save battery on long mountain treks.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Constants.UI.Colors.textMuted)
-                }
-            }
-            .tint(Constants.UI.Colors.primaryAccent)
-        }
-        .glassCardStyle()
-    }
-    
-    private var aboutSection: some View {
-        VStack(spacing: 8) {
-            Text("Pingly Mesh v\(Constants.App.version) (\(Constants.App.build))")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundColor(Constants.UI.Colors.textSecondary)
-            Text("Infrastructure-Independent Off-Grid Emergency Communication System")
-                .font(.system(size: 11))
-                .foregroundColor(Constants.UI.Colors.textMuted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 12)
     }
 }
+
+

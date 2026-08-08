@@ -18,6 +18,8 @@ protocol MultipeerServiceProtocol: AnyObject {
     
     func startAdvertisingAndBrowsing(userHandle: String, status: EmergencyStatus)
     func stopAdvertisingAndBrowsing()
+    func connectToPeer(peerID: MCPeerID)
     func broadcast(message: Message)
     func sendAudioStream(data: Data)
 }
+

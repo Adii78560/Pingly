@@ -92,6 +92,13 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         browser = nil
     }
     
+    func connectToPeer(peerID: MCPeerID) {
+        guard let session = session, let browser = browser else { return }
+        browser.invitePeer(peerID, to: session, withContext: nil, timeout: Constants.Multipeer.connectionTimeoutSeconds)
+        AppLogger.multipeer.info("Inviting peer: \(peerID.displayName)")
+    }
+
+    
     func broadcast(message: Message) {
         guard let session = session, !session.connectedPeers.isEmpty else { return }
         do {

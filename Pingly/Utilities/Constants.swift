@@ -63,32 +63,78 @@ enum Constants {
         static let savedMessages = "pingly_saved_messages"
     }
     
-    // MARK: - UI Design System (Colors & Layout)
+    // MARK: - UI Design System (Colors, Metrics, Typography & Tokens)
     enum UI {
         enum Colors {
-            static let backgroundDark = Color(red: 0.07, green: 0.09, blue: 0.12) // #12171F Tactical Dark
-            static let cardBackground = Color(red: 0.12, green: 0.15, blue: 0.20) // #1F2633 Glass Card
-            static let primaryAccent = Color(red: 0.18, green: 0.80, blue: 0.44)  // Emerald Green Mesh Online
-            static let sosDanger = Color(red: 0.93, green: 0.26, blue: 0.26)       // Crimson Red Emergency
-            static let radioActive = Color(red: 0.20, green: 0.60, blue: 1.00)     // Electric Blue PTT Radio
-            static let warningOrange = Color(red: 1.00, green: 0.60, blue: 0.00)   // Tactical Amber Warning
-            static let textPrimary = Color.white
-            static let textSecondary = Color(white: 0.70)
-            static let textMuted = Color(white: 0.45)
+            // Adaptive Light & Dark Mode Surfaces
+            static let primaryBackground = Color(UIColor.systemBackground)
+            static let secondarySurface = Color(UIColor.secondarySystemBackground)
+            static let tertiarySurface = Color(UIColor.tertiarySystemBackground)
+            static let glassOverlay = Color(UIColor.tertiarySystemBackground).opacity(0.40)
+            
+            // Text Colors
+            static let textPrimary = Color.primary
+            static let textSecondary = Color.secondary
+            static let textMuted = Color.secondary.opacity(0.6)
+            
+            // Brand & Tactical Status Tints
+            static let systemAccent = Color(UIColor.systemBlue)
+            static let statusTransmitting = Color(UIColor.systemBlue)
+            static let statusListening = Color(UIColor.systemGreen)
+            static let statusWarning = Color(UIColor.systemOrange)
+            static let statusDanger = Color(UIColor.systemRed)
+            
+            // PTT Idle & Active Dial Colors
+            static let pttIdleDark = Color(red: 0.18, green: 0.18, blue: 0.18) // #2E2E2E Tactical Idle
+            static let pttActiveBlue = Color(UIColor.systemBlue)
+            
+            // Border Gradients
+            static let glassBorderGradient = LinearGradient(
+                gradient: Gradient(colors: [Color.white.opacity(0.18), Color.white.opacity(0.03)]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            
+            // Backward-Compatibility Aliases
+            static var backgroundDark: Color { primaryBackground }
+            static var cardBackground: Color { secondarySurface }
+            static var primaryAccent: Color { systemAccent }
+            static var sosDanger: Color { statusDanger }
+            static var radioActive: Color { statusTransmitting }
+            static var warningOrange: Color { statusWarning }
         }
+
         
-        enum Layout {
-            static let cornerRadius: CGFloat = 16.0
-            static let cardPadding: CGFloat = 16.0
-            static let standardSpacing: CGFloat = 12.0
-            static let iconSizeLarge: CGFloat = 28.0
-            static let radarDiameter: CGFloat = 280.0
+        enum Metrics {
+            // Spacing
+            static let spacingTiny: CGFloat = 4.0
+            static let spacingSmall: CGFloat = 8.0
+            static let spacingMedium: CGFloat = 16.0
+            static let spacingLarge: CGFloat = 24.0
+            static let spacingExtraLarge: CGFloat = 32.0
+            
+            // Corner Radii
+            static let radiusSmall: CGFloat = 8.0
+            static let radiusMedium: CGFloat = 12.0
+            static let radiusLarge: CGFloat = 20.0
+            static let radiusPill: CGFloat = 9999.0
+            
+            // Dimensions
+            static let radarCenterDiameter: CGFloat = 100.0
+            static let radarOuterRingDiameter: CGFloat = 180.0
+            static let peerAvatarDiameter: CGFloat = 56.0
+            static let callAvatarDiameter: CGFloat = 90.0
+            static let pttTouchAreaDiameter: CGFloat = 160.0
+            static let pttDialDiameter: CGFloat = 120.0
+            static let actionButtonDiameter: CGFloat = 72.0
         }
         
         enum Animation {
-            static let defaultSpring = SwiftUI.Animation.spring(response: 0.4, dampingFraction: 0.75)
-            static let radarPulse = SwiftUI.Animation.linear(duration: 2.5).repeatForever(autoreverses: false)
-            static let pttGlow = SwiftUI.Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+            static let defaultSpring = SwiftUI.Animation.spring(response: 0.4, dampingFraction: 0.82)
+            static let radarBreathingPulse = SwiftUI.Animation.easeInOut(duration: 2.0).repeatForever(autoreverses: false)
+            static let pttPressSpring = SwiftUI.Animation.spring(response: 0.25, dampingFraction: 0.6)
+            static let callPulse = SwiftUI.Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: false)
         }
     }
 }
+

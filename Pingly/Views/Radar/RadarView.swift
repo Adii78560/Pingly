@@ -7,218 +7,206 @@
 
 import SwiftUI
 
-/// Tactical Proximity Radar screen displaying nearby mesh nodes
+//
+//  RadarView.swift
+//  Pingly
+//
+//  Created by Senior iOS Developer on 09/08/26.
+//
+
+import SwiftUI
+
+/// AirDrop / Find My inspired Proximity Radar View conforming to Apple HIG
 struct RadarView: View {
     @StateObject var viewModel: RadarViewModel
-    @State private var pulseAnimation = false
+    
+    @State private var isBreathing = false
+    @State private var showEditNameAlert = false
+    @State private var newBroadcastNameText = ""
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Constants.UI.Colors.backgroundDark
-                    .ignoresSafeArea()
+            VStack(spacing: 20) {
+                // Central AirDrop Pulse Radar Display
+                airDropRadarScanner
+                    .padding(.top, 10)
                 
-                VStack(spacing: Constants.UI.Layout.standardSpacing) {
-                    // Header Bar
-                    headerView
+                // Status Subtitle
+                VStack(spacing: 4) {
+                    Text(viewModel.isScanning ? "Scanning for nearby devices..." : "Scanning Paused")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.primary)
                     
-                    // Radar Display Sweep
-                    radarDisplay
-                        .padding(.vertical, 8)
-                    
-                    // Peer List Header
-                    HStack {
-                        Text("NEARBY NODES (\(viewModel.nearbyPeers.count))")
-                            .font(.system(size: 13, weight: .bold, design: .monospaced))
-                            .foregroundColor(Constants.UI.Colors.textSecondary)
-                        Spacer()
-                        
-                        Button(action: {
-                            viewModel.toggleScanning()
-                        }) {
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(viewModel.isScanning ? Constants.UI.Colors.primaryAccent : Color.gray)
-                                    .frame(width: 8, height: 8)
-                                Text(viewModel.isScanning ? "SCANNING" : "PAUSED")
-                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                    .foregroundColor(viewModel.isScanning ? Constants.UI.Colors.primaryAccent : Color.gray)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.08))
-                            .clipShape(Capsule())
+                    Text("Make sure Wi-Fi & Bluetooth are turned on.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 24)
+                
+                Spacer()
+                
+                // Discovered Devices Section (AirDrop / Find My Card Tray)
+                discoveredPeersSection
+                    .padding(.bottom, 12)
+            }
+            .navigationTitle("Radar")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        newBroadcastNameText = viewModel.broadcastName
+                        showEditNameAlert = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Text(viewModel.broadcastName)
+                                .font(.system(size: 13, weight: .semibold))
+                            Image(systemName: "pencil")
+                                .font(.system(size: 12))
                         }
-                    }
-                    .padding(.horizontal)
-                    
-                    // Peer Node List
-                    if viewModel.nearbyPeers.isEmpty {
-                        emptyStateView
-                    } else {
-                        peerListView
+                        .foregroundColor(.blue)
                     }
                 }
             }
-            .navigationTitle("Proximity Radar")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Constants.UI.Colors.backgroundDark, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-        }
-    }
-    
-    // MARK: - Header
-    private var headerView: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("P2P MESH DISCOVERY")
-                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                    .foregroundColor(Constants.UI.Colors.primaryAccent)
-                Text("BLE & Local Wi-Fi Radio")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Constants.UI.Colors.textPrimary)
+            .alert("Edit Broadcast Name", isPresented: $showEditNameAlert) {
+                TextField("Enter handle", text: $newBroadcastNameText)
+                Button("Save") {
+                    viewModel.updateBroadcastName(newBroadcastNameText)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This name will be visible to nearby off-grid Pingly devices.")
             }
-            Spacer()
-            
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 22))
-                .foregroundColor(viewModel.isScanning ? Constants.UI.Colors.primaryAccent : Color.gray)
+            .onAppear {
+                newBroadcastNameText = viewModel.broadcastName
+                withAnimation(Animation.easeInOut(duration: 2.0).repeatForever(autoreverses: false)) {
+                    isBreathing = true
+                }
+            }
         }
-        .glassCardStyle()
-        .padding(.horizontal)
     }
     
-    // MARK: - Radar Visual Sweep
-    private var radarDisplay: some View {
+    // MARK: - Central AirDrop Radar Scanner
+    private var airDropRadarScanner: some View {
         ZStack {
-            // Concentric Distance Rings
-            ForEach([0.3, 0.6, 0.9], id: \.self) { scale in
-                Circle()
-                    .stroke(Constants.UI.Colors.primaryAccent.opacity(0.25), lineWidth: 1)
-                    .frame(width: Constants.UI.Layout.radarDiameter * scale, height: Constants.UI.Layout.radarDiameter * scale)
-            }
+            // Concentric AirDrop Breathing Pulse Rings
+            Circle()
+                .stroke(Color.blue.opacity(0.4), lineWidth: 1.5)
+                .frame(width: 200, height: 200)
+                .scaleEffect(isBreathing ? 1.3 : 1.0)
+                .opacity(isBreathing ? 0.0 : 0.5)
             
-            // Crosshairs
-            Rectangle()
-                .fill(Constants.UI.Colors.primaryAccent.opacity(0.15))
-                .frame(width: 1, height: Constants.UI.Layout.radarDiameter)
-            Rectangle()
-                .fill(Constants.UI.Colors.primaryAccent.opacity(0.15))
-                .frame(width: Constants.UI.Layout.radarDiameter, height: 1)
+            Circle()
+                .stroke(Color.blue.opacity(0.25), lineWidth: 1)
+                .frame(width: 150, height: 150)
+                .scaleEffect(isBreathing ? 1.18 : 0.95)
+                .opacity(isBreathing ? 0.1 : 0.4)
             
-            // Pulse Wave
-            if viewModel.isScanning {
-                Circle()
-                    .stroke(Constants.UI.Colors.primaryAccent.opacity(0.5), lineWidth: 2)
-                    .frame(width: Constants.UI.Layout.radarDiameter, height: Constants.UI.Layout.radarDiameter)
-                    .scaleEffect(pulseAnimation ? 1.0 : 0.1)
-                    .opacity(pulseAnimation ? 0.0 : 0.8)
-                    .onAppear {
-                        withAnimation(Constants.UI.Animation.radarPulse) {
-                            pulseAnimation = true
-                        }
-                    }
-            }
-            
-            // Center Local Self Marker
+            // Center Node ("YOU")
             ZStack {
                 Circle()
-                    .fill(Constants.UI.Colors.primaryAccent)
-                    .frame(width: 16, height: 16)
-                Circle()
-                    .stroke(Color.white, lineWidth: 2)
-                    .frame(width: 22, height: 22)
+                    .fill(Color(UIColor.secondarySystemGroupedBackground))
+                    .frame(width: 96, height: 96)
+                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                
+                VStack(spacing: 4) {
+                    Image(systemName: "wifi")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(.blue)
+                    
+                    Text("YOU")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.primary)
+                }
             }
-            
-            // Nearby Peer Dots plotted around center
-            ForEach(Array(viewModel.nearbyPeers.prefix(6).enumerated()), id: \.element.id) { index, peer in
-                let angle = Double(index) * (2.0 * .pi / Double(max(viewModel.nearbyPeers.prefix(6).count, 1)))
-                let radius = min(CGFloat(peer.estimatedDistanceMeters) * 12.0 + 40, Constants.UI.Layout.radarDiameter / 2.0 - 20)
-                let x = cos(angle) * radius
-                let y = sin(angle) * radius
+        }
+        .frame(height: 220)
+    }
+    
+    // MARK: - Discovered Devices AirDrop Tray
+    private var discoveredPeersSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("NEARBY DEVICES")
+                    .font(.caption.bold())
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 16)
+                
+                Spacer()
                 
                 Button(action: {
-                    viewModel.selectedPeer = peer
+                    viewModel.toggleScanning()
                 }) {
-                    ZStack {
-                        Circle()
-                            .fill(peer.emergencyStatus.themeColor)
-                            .frame(width: 14, height: 14)
-                        Circle()
-                            .stroke(Color.white.opacity(0.8), lineWidth: 1.5)
-                            .frame(width: 18, height: 18)
-                    }
+                    Text(viewModel.isScanning ? "Pause" : "Resume")
+                        .font(.caption.bold())
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 16)
                 }
-                .offset(x: x, y: y)
-            }
-        }
-        .frame(width: Constants.UI.Layout.radarDiameter, height: Constants.UI.Layout.radarDiameter)
-    }
-    
-    // MARK: - Peer Node List
-    private var peerListView: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(viewModel.nearbyPeers) { peer in
-                    peerCardRow(peer: peer)
-                }
-            }
-            .padding(.horizontal)
-        }
-    }
-    
-    private func peerCardRow(peer: PeerDevice) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(peer.emergencyStatus.themeColor.opacity(0.2))
-                    .frame(width: 44, height: 44)
-                Image(systemName: peer.emergencyStatus.iconName)
-                    .foregroundColor(peer.emergencyStatus.themeColor)
-                    .font(.system(size: 20))
             }
             
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(peer.displayName)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(Constants.UI.Colors.textPrimary)
-                    Spacer()
-                    Text("\(peer.rssi) dBm")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundColor(Constants.UI.Colors.primaryAccent)
+            if viewModel.nearbyPeers.isEmpty {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Searching for nearby devices...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
-                
-                HStack {
-                    Text(peer.emergencyStatus.rawValue)
-                        .font(.system(size: 12))
-                        .foregroundColor(Constants.UI.Colors.textSecondary)
-                    Spacer()
-                    Text(String(format: "%.1fm away", peer.estimatedDistanceMeters))
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(Constants.UI.Colors.textMuted)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+                .cornerRadius(12)
+                .padding(.horizontal, 16)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(viewModel.nearbyPeers) { peer in
+                            airDropPeerCard(peer: peer)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
                 }
             }
         }
-        .glassCardStyle()
     }
     
-    // MARK: - Empty State
-    private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.shield")
-                .font(.system(size: 40))
-                .foregroundColor(Constants.UI.Colors.textMuted)
-            Text("No Nearby Pingly Nodes Detected")
-                .font(.headline)
-                .foregroundColor(Constants.UI.Colors.textSecondary)
-            Text("Ensure Bluetooth and local Wi-Fi are enabled. Scanning for off-grid devices...")
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .foregroundColor(Constants.UI.Colors.textMuted)
-                .padding(.horizontal, 32)
+    private func airDropPeerCard(peer: PeerDevice) -> some View {
+        Button(action: {
+            viewModel.connectToPeer(peer)
+        }) {
+            VStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                        .frame(width: 60, height: 60)
+                        .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+                    
+                    Text(peer.displayName.initials)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.primary)
+                    
+                    Circle()
+                        .stroke(peer.isConnected ? Color.green : Color.blue, lineWidth: 2)
+                        .frame(width: 66, height: 66)
+                }
+                
+                VStack(spacing: 2) {
+                    Text(peer.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                        .frame(width: 90)
+                    
+                    Text("\(peer.rssi) dBm")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(16)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 24)
+        .buttonStyle(.plain)
     }
 }
+
+
