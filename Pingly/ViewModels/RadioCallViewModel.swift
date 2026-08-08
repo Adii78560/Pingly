@@ -20,18 +20,34 @@ final class RadioCallViewModel: ObservableObject {
     @Published var connectedPeerRSSI: Int = -42
     @Published var isConnected: Bool = true
     @Published var isAddedToMessages: Bool = false
-    @Published var latestTextSnippet: String = "You: \"Roger that, standing by.\""
+    @Published var latestTextSnippet: String = "Standing by for live voice transcripts..."
+    @Published var transcriptHistory: [VoiceTranscript] = []
     
-    let availableChannels = ["CH-1 EMERGENCY", "CH-2 RESCUE MESH", "CH-3 MOUNTAIN OPS", "CH-4 GENERAL P2P"]
+    var localUserHandle: String {
+        return UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+    }
+    
+    @Published var availableChannels: [String] = {
+        let saved = UserDefaults.standard.stringArray(forKey: "Pingly.CustomChannels") ?? []
+        let defaultChannels = ["CH-1 EMERGENCY", "CH-2 RESCUE MESH", "CH-3 MOUNTAIN OPS", "CH-4 GENERAL P2P"]
+        let set = Set(defaultChannels + saved)
+        return Array(set).sorted()
+    }()
+    
+    var filteredTranscripts: [VoiceTranscript] {
+        transcriptHistory.filter { $0.channel.uppercased() == selectedChannel.uppercased() }
+    }
     
     private let multipeerService: MultipeerService
     private let audioService: RadioAudioService
+    private let networkManager = WalkieTalkieNetworkManager.shared
+    private let speechTranscriber = SpeechTranscriberManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     var activeStatusText: String {
         if !isConnected { return "OFFLINE" }
-        if isPTTPressed { return "TRANSMITTING" }
-        if session.isReceivingAudio { return "RECEIVING" }
+        if networkManager.isFloorLockedBySelf { return "TRANSMITTING" }
+        if networkManager.activeFloorSenderID != nil { return "RECEIVING" }
         return "READY"
     }
     
@@ -41,7 +57,98 @@ final class RadioCallViewModel: ObservableObject {
         setupSubscriptions()
     }
     
+    func createChannel(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !trimmed.isEmpty else { return }
+        let channelName = trimmed.hasPrefix("CH-") ? trimmed : "CH- " + trimmed
+        if !availableChannels.contains(channelName) {
+            availableChannels.append(channelName)
+            var saved = UserDefaults.standard.stringArray(forKey: "Pingly.CustomChannels") ?? []
+            saved.append(channelName)
+            UserDefaults.standard.set(saved, forKey: "Pingly.CustomChannels")
+        }
+        selectedChannel = channelName
+        multipeerService.broadcastChannelSync(channelName: channelName)
+        HapticManager.successFeedback()
+        AppLogger.multipeer.info("Created and broadcasted custom Walkie-Talkie channel: \(channelName)")
+    }
+    
+    func shareActiveChannel() {
+        multipeerService.broadcastChannelSync(channelName: selectedChannel)
+        HapticManager.successFeedback()
+    }
+    
     private func setupSubscriptions() {
+        // Observe channel sync invites from nearby P2P peers
+        NotificationCenter.default.publisher(for: .didReceiveChannelSync)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self = self,
+                      let channelName = notification.userInfo?["channelName"] as? String,
+                      let creator = notification.userInfo?["creator"] as? String else { return }
+                
+                if !self.availableChannels.contains(channelName) {
+                    self.availableChannels.append(channelName)
+                    var saved = UserDefaults.standard.stringArray(forKey: "Pingly.CustomChannels") ?? []
+                    saved.append(channelName)
+                    UserDefaults.standard.set(saved, forKey: "Pingly.CustomChannels")
+                }
+                self.latestTextSnippet = "\(creator) shared channel: \(channelName)"
+                HapticManager.successFeedback()
+                AppLogger.multipeer.info("Auto-synced custom channel \(channelName) from \(creator)")
+            }
+            .store(in: &cancellables)
+        
+        // Observe SpeechTranscriberManager transcript updates
+        speechTranscriber.$transcriptHistory
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] history in
+                guard let self = self else { return }
+                self.transcriptHistory = history
+                if let last = self.filteredTranscripts.last {
+                    self.latestTextSnippet = "\(last.speakerName): \"\(last.text)\""
+                }
+            }
+            .store(in: &cancellables)
+
+            
+        // Live speech recognition snippet preview
+        speechTranscriber.$currentTranscriptText
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] liveText in
+                guard let self = self, !liveText.isEmpty else { return }
+                let speaker = self.isPTTPressed ? self.localUserHandle : self.connectedPeerName
+                self.latestTextSnippet = "\(speaker): \"\(liveText)...\""
+            }
+            .store(in: &cancellables)
+        
+        // Observe WalkieTalkieNetworkManager floor locks
+        networkManager.$isFloorLockedBySelf
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isLocked in
+                self?.isPTTPressed = isLocked
+                self?.session.isBroadcasting = isLocked
+            }
+            .store(in: &cancellables)
+        
+        networkManager.$activeFloorSenderID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] senderID in
+                guard let self = self else { return }
+                if let senderID = senderID, senderID != "LOCAL_SELF" {
+                    self.session.isReceivingAudio = true
+                    self.session.activeSpeakerName = self.connectedPeerName
+                    self.speechTranscriber.startTranscribing(speakerName: self.connectedPeerName, channel: self.selectedChannel)
+                } else {
+                    if self.session.isReceivingAudio {
+                        self.speechTranscriber.stopTranscribing()
+                    }
+                    self.session.isReceivingAudio = false
+                    self.session.activeSpeakerName = nil
+                }
+            }
+            .store(in: &cancellables)
+        
         // Microphone PCM audio stream -> send via MultipeerConnectivity
         audioService.audioChunkPublisher
             .sink { [weak self] audioData in
@@ -57,16 +164,13 @@ final class RadioCallViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Incoming audio stream from remote peer
-        multipeerService.receivedAudioDataPublisher
+        AudioStreamEngine.shared.$currentAudioLevel
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] audioData in
-                guard let self = self else { return }
-                self.session.isReceivingAudio = true
-                self.session.activeSpeakerName = self.connectedPeerName
-                self.audioService.playReceivedAudioChunk(audioData)
+            .sink { [weak self] level in
+                self?.session.audioLevel = level
             }
             .store(in: &cancellables)
+
         
         // Connected peer count updates
         multipeerService.connectedPeersPublisher
@@ -89,6 +193,9 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     func disconnect() {
+        if isPTTPressed {
+            stopTransmittingVoice()
+        }
         isConnected = false
         multipeerService.stopAdvertisingAndBrowsing()
         HapticManager.warningFeedback()
@@ -96,22 +203,27 @@ final class RadioCallViewModel: ObservableObject {
     
     func startTransmittingVoice() {
         guard isConnected else { return }
-        isPTTPressed = true
-        session.isBroadcasting = true
-        let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+        let handle = localUserHandle
         session.activeSpeakerName = handle
-        audioService.startRecordingPTT()
-        HapticManager.mediumImpact()
-        AppLogger.audio.info("Transmitting PTT radio voice call on \(self.selectedChannel)")
+        let acquired = networkManager.acquireFloor()
+        if acquired {
+            speechTranscriber.startTranscribing(speakerName: handle, channel: selectedChannel)
+            HapticManager.mediumImpact()
+            AppLogger.audio.info("Acquired floor lock; transmitting PTT voice call on \(self.selectedChannel)")
+        } else {
+            HapticManager.warningFeedback()
+        }
     }
     
     func stopTransmittingVoice() {
-        isPTTPressed = false
-        session.isBroadcasting = false
+        speechTranscriber.stopTranscribing()
+        networkManager.releaseFloor()
         session.activeSpeakerName = nil
-        audioService.stopRecordingPTT()
         HapticManager.lightImpact()
-        AppLogger.audio.info("Stopped transmitting PTT radio voice call")
+        AppLogger.audio.info("Released floor lock; stopped transmitting PTT voice call")
     }
 }
+
+
+
 

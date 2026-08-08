@@ -169,4 +169,12 @@ extension View {
     }
 }
 
+// MARK: - Notification Name Extensions
+extension Notification.Name {
+    static let didReceiveRawPTTPacket = Notification.Name("didReceiveRawPTTPacket")
+    static let didReceiveChannelSync = Notification.Name("didReceiveChannelSync")
+}
+
+
+
 

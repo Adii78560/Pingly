@@ -30,8 +30,11 @@
 	<string>Pingly uses local peer-to-peer Wi-Fi network protocols to transfer message drops and broadcast real-time Push-To-Talk radio voice calls.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Pingly requires microphone access to record and transmit live Push-To-Talk (PTT) radio voice communications.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Pingly uses Speech Recognition to transcribe Walkie-Talkie voice broadcasts in real-time so you can read missed messages.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Pingly attaches offline GPS coordinates to emergency SOS distress pings for search and rescue operations.</string>
+
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Pingly uses background location updates to keep your SOS beacon location updated in emergency situations.</string>
 
@@ -40,6 +43,24 @@
 	<array>
 		<string>_pingly-mesh._tcp</string>
 		<string>_pingly-mesh._udp</string>
+		<string>_radiofy-ptt._tcp</string>
+		<string>_radiofy-ptt._udp</string>
+	</array>
+
+	<!-- Background Modes & Task Identifiers -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>voip</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.RaiEnterprise.Pingly.refresh</string>
+		<string>com.RaiEnterprise.Pingly.pttsync</string>
+		<string>com.RaiEnterprise.RadioFy.refresh</string>
+		<string>com.RaiEnterprise.RadioFy.pttsync</string>
 	</array>
 
 	<key>UIApplicationSceneManifest</key>

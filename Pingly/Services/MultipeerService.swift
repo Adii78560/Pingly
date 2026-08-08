@@ -13,6 +13,8 @@ import os
 /// Production MultipeerConnectivity Service managing AirDrop/Wi-Fi/Bluetooth peer mesh networking
 final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObject {
     
+    static let shared = MultipeerService()
+    
     // MARK: - Published Properties
     @Published private(set) var connectedPeers: [PeerDevice] = []
     
@@ -111,13 +113,40 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     }
     
     func sendAudioStream(data: Data) {
+        sendRawPTTPacket(data)
+    }
+    
+    func sendRawPTTPacket(_ packet: Data) {
         guard let session = session, !session.connectedPeers.isEmpty else { return }
         do {
             // PTT voice stream uses un-reliable mode for minimum latency
-            try session.send(data, toPeers: session.connectedPeers, with: .unreliable)
+            try session.send(packet, toPeers: session.connectedPeers, with: .unreliable)
         } catch {
-            AppLogger.multipeer.error("Failed to send PTT audio stream chunk: \(error.localizedDescription)")
+            AppLogger.multipeer.error("Failed to send PTT packet: \(error.localizedDescription)")
         }
+    }
+    func broadcastChannelSync(channelName: String) {
+        guard let session = session, !session.connectedPeers.isEmpty else { return }
+        let invite = ChannelInvite(channelName: channelName, creatorHandle: currentHandle)
+        do {
+            let data = try JSONEncoder().encode(invite)
+            try session.send(data, toPeers: session.connectedPeers, with: .reliable)
+            AppLogger.multipeer.info("Broadcasted channel sync for \(channelName) to \(session.connectedPeers.count) peers")
+        } catch {
+            AppLogger.multipeer.error("Failed to send channel sync: \(error.localizedDescription)")
+        }
+    }
+}
+
+struct ChannelInvite: Codable {
+    let type: String
+    let channelName: String
+    let creatorHandle: String
+    
+    init(channelName: String, creatorHandle: String) {
+        self.type = "CHANNEL_SYNC"
+        self.channelName = channelName
+        self.creatorHandle = creatorHandle
     }
 }
 
@@ -152,18 +181,35 @@ extension MultipeerService: MCSessionDelegate {
     }
     
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        // Try decoding as emergency JSON Message first
+        // Try decoding as ChannelInvite first
+        if let invite = try? JSONDecoder().decode(ChannelInvite.self, from: data), invite.type == "CHANNEL_SYNC" {
+            NotificationCenter.default.post(
+                name: .didReceiveChannelSync,
+                object: self,
+                userInfo: ["channelName": invite.channelName, "creator": invite.creatorHandle]
+            )
+            AppLogger.multipeer.info("Received channel sync invite: \(invite.channelName) from \(invite.creatorHandle)")
+            return
+        }
+        
+        // Try decoding as emergency JSON Message next
         if let message = try? JSONDecoder().decode(Message.self, from: data) {
             DispatchQueue.main.async {
                 self.receivedMessageSubject.send(message)
             }
         } else {
-            // Treat raw byte stream as live PTT audio chunk
+            // Treat raw byte stream as live PTT audio chunk & post notification
+            NotificationCenter.default.post(
+                name: .didReceiveRawPTTPacket,
+                object: self,
+                userInfo: ["packet": data, "peerID": peerID]
+            )
             DispatchQueue.main.async {
                 self.receivedAudioDataSubject.send(data)
             }
         }
     }
+
     
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
     func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {}
