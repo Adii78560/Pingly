@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	
+	<!-- Off-Grid Mesh & Radio Permissions -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Pingly requires Bluetooth access to discover nearby emergency peer devices, scan RSSI signal proximity, and relay off-grid SOS mesh messages.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Pingly uses Bluetooth to advertise emergency beacon signals to nearby rescue nodes.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Pingly uses local peer-to-peer Wi-Fi network protocols to transfer message drops and broadcast real-time Push-To-Talk radio voice calls.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Pingly requires microphone access to record and transmit live Push-To-Talk (PTT) radio voice communications.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Pingly attaches offline GPS coordinates to emergency SOS distress pings for search and rescue operations.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Pingly uses background location updates to keep your SOS beacon location updated in emergency situations.</string>
+
+	<!-- Bonjour Services for P2P Multipeer Connectivity -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_pingly-mesh._tcp</string>
+		<string>_pingly-mesh._udp</string>
+	</array>
+
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+		<string>bluetooth-le</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>
