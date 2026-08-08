@@ -63,7 +63,7 @@ struct RadarView: View {
                             Image(systemName: "pencil")
                                 .font(.system(size: 12))
                         }
-                        .foregroundColor(.blue)
+                        .foregroundColor(.orange)
                     }
                 }
             }
@@ -90,13 +90,13 @@ struct RadarView: View {
         ZStack {
             // Concentric AirDrop Breathing Pulse Rings
             Circle()
-                .stroke(Color.blue.opacity(0.4), lineWidth: 1.5)
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1.5)
                 .frame(width: 200, height: 200)
                 .scaleEffect(isBreathing ? 1.3 : 1.0)
                 .opacity(isBreathing ? 0.0 : 0.5)
             
             Circle()
-                .stroke(Color.blue.opacity(0.25), lineWidth: 1)
+                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
                 .frame(width: 150, height: 150)
                 .scaleEffect(isBreathing ? 1.18 : 0.95)
                 .opacity(isBreathing ? 0.1 : 0.4)
@@ -111,7 +111,7 @@ struct RadarView: View {
                 VStack(spacing: 4) {
                     Image(systemName: "wifi")
                         .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(.blue)
+                        .foregroundColor(.orange)
                     
                     Text("YOU")
                         .font(.system(size: 11, weight: .bold))
@@ -138,7 +138,7 @@ struct RadarView: View {
                 }) {
                     Text(viewModel.isScanning ? "Pause" : "Resume")
                         .font(.caption.bold())
-                        .foregroundColor(.blue)
+                        .foregroundColor(.orange)
                         .padding(.horizontal, 16)
                 }
             }
@@ -185,7 +185,7 @@ struct RadarView: View {
                         .foregroundColor(.primary)
                     
                     Circle()
-                        .stroke(peer.isConnected ? Color.green : Color.blue, lineWidth: 2)
+                        .stroke(peer.isConnected ? Color.green : Color.orange, lineWidth: 2)
                         .frame(width: 66, height: 66)
                 }
                 
@@ -207,6 +207,7 @@ struct RadarView: View {
         }
         .buttonStyle(.plain)
     }
+
 }
 
 

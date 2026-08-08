@@ -28,11 +28,11 @@ struct SettingsView: View {
                     HStack(spacing: 14) {
                         ZStack {
                             Circle()
-                                .fill(Color.accentColor.opacity(0.15))
+                                .fill(Color.orange.opacity(0.15))
                                 .frame(width: 54, height: 54)
                             Text(viewModel.userHandle.initials)
                                 .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.accentColor)
+                                .foregroundColor(.orange)
                         }
                         
                         VStack(alignment: .leading, spacing: 2) {
@@ -46,7 +46,7 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                     
                     HStack {
-                        SettingsIconBadge(systemName: "person.crop.circle", backgroundColor: .blue)
+                        SettingsIconBadge(systemName: "person.crop.circle", backgroundColor: .orange)
                         Text("Broadcast Handle")
                             .font(.body)
                         Spacer()
@@ -58,7 +58,8 @@ struct SettingsView: View {
                                 HapticManager.successFeedback()
                             }
                     }
-                } header: {
+                }
+ header: {
                     Text("Identity")
                 }
                 

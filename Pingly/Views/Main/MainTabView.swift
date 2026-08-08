@@ -22,7 +22,8 @@ struct MainTabView: View {
     @StateObject private var radioCallViewModel: RadioCallViewModel
     @StateObject private var settingsViewModel: SettingsViewModel
     
-    // Incoming Call Modal Trigger State
+    // Splash Screen State
+    @State private var isSplashFinished = false
     @State private var showIncomingCallSheet = false
     @State private var incomingPeerName = "Rahul's iPhone"
     @State private var selectedTab = 0
@@ -45,33 +46,41 @@ struct MainTabView: View {
     }
     
     var body: some View {
-        TabView(selection: $selectedTab) {
-            RadarView(viewModel: radarViewModel)
-                .tabItem {
-                    Label("Radar", systemImage: "dot.radiowaves.left.and.right")
-                }
-                .tag(0)
-            
-            RadioCallView(viewModel: radioCallViewModel)
-                .tabItem {
-                    Label("Walkie-Talkie", systemImage: "waveform")
-                }
-                .tag(1)
-            
-            MessagesView(viewModel: messagesViewModel)
-                .tabItem {
-                    Label("Messages", systemImage: "message.fill")
-                }
-                .tag(2)
-            
-            SettingsView(viewModel: settingsViewModel)
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape.fill")
-                }
-                .tag(3)
-        }
-        .tint(.blue)
+        ZStack {
+            TabView(selection: $selectedTab) {
+                RadarView(viewModel: radarViewModel)
+                    .tabItem {
+                        Label("Radar", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                    .tag(0)
+                
+                RadioCallView(viewModel: radioCallViewModel)
+                    .tabItem {
+                        Label("Walkie-Talkie", systemImage: "waveform")
+                    }
+                    .tag(1)
+                
+                MessagesView(viewModel: messagesViewModel)
+                    .tabItem {
+                        Label("Messages", systemImage: "message.fill")
+                    }
+                    .tag(2)
+                
+                SettingsView(viewModel: settingsViewModel)
+                    .tabItem {
+                        Label("Settings", systemImage: "gearshape.fill")
+                    }
+                    .tag(3)
+            }
+            .tint(.orange)
 
+            
+            if !isSplashFinished {
+                AnimatedSplashScreenView(isFinished: $isSplashFinished)
+                    .transition(.opacity)
+                    .zIndex(100)
+            }
+        }
         .fullScreenCover(isPresented: $showIncomingCallSheet) {
             IncomingRequestView(
                 peerName: incomingPeerName,
@@ -94,4 +103,5 @@ struct MainTabView: View {
         }
     }
 }
+
 
