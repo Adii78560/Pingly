@@ -28,7 +28,27 @@ final class RadioCallViewModel: ObservableObject {
     @Published var transcriptHistory: [VoiceTranscript] = []
 
     
+    var channelPeers: [PeerDevice] {
+        return multipeerService.connectedPeers
+    }
+    
+    func addUserToMessages(peer: PeerDevice) {
+        NotificationCenter.default.post(
+            name: .didAddPeerToMessages,
+            object: nil,
+            userInfo: [
+                "peerName": peer.displayName,
+                "channel": selectedChannel
+            ]
+        )
+        isAddedToMessages = true
+        HapticManager.successFeedback()
+        AppLogger.multipeer.info("Added AirDrop peer '\(peer.displayName)' on \(self.selectedChannel) to Messages directory.")
+    }
+
+    
     var localUserHandle: String {
+
         return UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
     }
     
@@ -155,16 +175,13 @@ final class RadioCallViewModel: ObservableObject {
                 if let senderID = senderID, senderID != "LOCAL_SELF" {
                     self.session.isReceivingAudio = true
                     self.session.activeSpeakerName = self.connectedPeerName
-                    self.speechTranscriber.startTranscribing(speakerName: self.connectedPeerName, channel: self.selectedChannel)
                 } else {
-                    if self.session.isReceivingAudio {
-                        self.speechTranscriber.stopTranscribing()
-                    }
                     self.session.isReceivingAudio = false
                     self.session.activeSpeakerName = nil
                 }
             }
             .store(in: &cancellables)
+
         
         // Microphone PCM audio stream -> send via MultipeerConnectivity
         audioService.audioChunkPublisher
@@ -189,7 +206,7 @@ final class RadioCallViewModel: ObservableObject {
             .store(in: &cancellables)
 
         
-        // Connected peer count updates
+        // Connected peer count updates & delivery status flushing
         multipeerService.connectedPeersPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] peers in
@@ -199,6 +216,14 @@ final class RadioCallViewModel: ObservableObject {
                     self.connectedPeerName = firstPeer.displayName
                     self.connectedPeerRSSI = firstPeer.rssi
                     self.isConnected = true
+                    
+                    // Mark pending offline transcripts as delivered (GREEN) when peers join channel
+                    SwiftDataService.shared.markTranscriptsAsDelivered(for: self.selectedChannel)
+                    NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                } else {
+                    self.connectedPeerName = "Searching for Peers..."
+                    self.connectedPeerRSSI = 0
+                    self.isConnected = false
                 }
             }
             .store(in: &cancellables)
@@ -219,7 +244,6 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     func startTransmittingVoice() {
-        guard isConnected else { return }
         let handle = localUserHandle
         session.activeSpeakerName = handle
         let acquired = networkManager.acquireFloor()
@@ -231,6 +255,7 @@ final class RadioCallViewModel: ObservableObject {
             HapticManager.warningFeedback()
         }
     }
+
     
     func stopTransmittingVoice() {
         speechTranscriber.stopTranscribing()

@@ -25,8 +25,9 @@ struct MainTabView: View {
     // Splash Screen State
     @State private var isSplashFinished = false
     @State private var showIncomingCallSheet = false
-    @State private var incomingPeerName = "Rahul's iPhone"
+    @State private var incomingPeerName = "Nearby Pingly Node"
     @State private var selectedTab = 0
+
     
     init() {
         let mp = MultipeerService.shared

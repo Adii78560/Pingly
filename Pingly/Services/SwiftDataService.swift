@@ -25,35 +25,60 @@ final class SwiftDataService: ObservableObject {
     @Published private(set) var totalUnsyncedCount: Int = 0
     
     private init() {
+        let schema = Schema([
+            SDVoiceTranscript.self,
+            SDChatMessage.self,
+            SDPendingMessage.self
+        ])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        
         do {
-            let schema = Schema([
-                SDVoiceTranscript.self,
-                SDChatMessage.self
-            ])
-            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             self.container = try ModelContainer(for: schema, configurations: [config])
             AppLogger.multipeer.info("SwiftData ModelContainer initialized successfully.")
             updateUnsyncedCount()
         } catch {
-            fatalError("Failed to initialize SwiftData ModelContainer: \(error.localizedDescription)")
+            AppLogger.multipeer.error("SwiftData schema migration error: \(error.localizedDescription). Purging legacy SQLite store for clean recovery...")
+            Self.purgeLegacyStore()
+            do {
+                self.container = try ModelContainer(for: schema, configurations: [config])
+                AppLogger.multipeer.info("SwiftData ModelContainer successfully re-initialized after store purge.")
+                updateUnsyncedCount()
+            } catch {
+                fatalError("Critical: Failed to re-initialize SwiftData ModelContainer: \(error.localizedDescription)")
+            }
         }
     }
+    
+    private static func purgeLegacyStore() {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let storeURL = appSupport.appendingPathComponent("default.store")
+        let shmURL = appSupport.appendingPathComponent("default.store-shm")
+        let walURL = appSupport.appendingPathComponent("default.store-wal")
+        
+        try? FileManager.default.removeItem(at: storeURL)
+        try? FileManager.default.removeItem(at: shmURL)
+        try? FileManager.default.removeItem(at: walURL)
+        AppLogger.multipeer.info("Purged incompatible legacy SwiftData SQLite store files.")
+    }
+
+
     
     // MARK: - Voice Transcripts Operations
     
     /// Persists a voice transcript to SwiftData local storage.
-    func saveVoiceTranscript(speakerName: String, text: String, channel: String) -> SDVoiceTranscript {
+    func saveVoiceTranscript(speakerName: String, text: String, channel: String, isDelivered: Bool = false) -> SDVoiceTranscript {
         let transcript = SDVoiceTranscript(
             speakerName: speakerName,
             text: text,
             channel: channel,
             timestamp: Date(),
-            isSynced: false
+            isSynced: false,
+            isDelivered: isDelivered
         )
         context.insert(transcript)
         saveContext()
         updateUnsyncedCount()
-        AppLogger.audio.info("Persisted Voice Transcript to SwiftData: [\(channel)] \(speakerName): \"\(text)\"")
+        AppLogger.audio.info("Persisted Voice Transcript (Delivered: \(isDelivered)): [\(channel)] \(speakerName): \"\(text)\"")
         return transcript
     }
     
@@ -73,7 +98,8 @@ final class SwiftDataService: ObservableObject {
                     speakerName: item.speakerName,
                     text: item.text,
                     channel: item.channel,
-                    timestamp: item.timestamp
+                    timestamp: item.timestamp,
+                    isDelivered: item.isDelivered
                 )
             }
         } catch {
@@ -82,23 +108,41 @@ final class SwiftDataService: ObservableObject {
         }
     }
     
+    /// Marks pending transcripts for a channel as delivered when peers join.
+    func markTranscriptsAsDelivered(for channel: String) {
+        let targetChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDVoiceTranscript>(
+            predicate: #Predicate { $0.channel == targetChannel && !$0.isDelivered }
+        )
+        if let results = try? context.fetch(descriptor) {
+            for item in results {
+                item.isDelivered = true
+            }
+            saveContext()
+            AppLogger.multipeer.info("Marked \(results.count) transcripts on '\(channel)' as delivered.")
+        }
+    }
+
+    
     // MARK: - Chat Messages Operations
     
     /// Persists a chat message to SwiftData local storage.
-    func saveChatMessage(senderName: String, channel: String, text: String) -> SDChatMessage {
+    func saveChatMessage(senderName: String, channel: String, text: String, isDelivered: Bool = false) -> SDChatMessage {
         let message = SDChatMessage(
             senderName: senderName,
             channel: channel,
             text: text,
             timestamp: Date(),
-            isSynced: false
+            isSynced: false,
+            isDelivered: isDelivered
         )
         context.insert(message)
         saveContext()
         updateUnsyncedCount()
-        AppLogger.multipeer.info("Persisted Chat Message to SwiftData: [\(channel)] \(senderName): \"\(text)\"")
+        AppLogger.multipeer.info("Persisted Chat Message (Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
         return message
     }
+
     
     /// Fetches all stored chat messages for a specific channel sorted by timestamp.
     func fetchChatMessages(for channel: String) -> [SDChatMessage] {
@@ -149,7 +193,115 @@ final class SwiftDataService: ObservableObject {
         AppLogger.multipeer.info("Marked \(transcriptIDs.count) transcripts & \(messageIDs.count) messages as synced to Cloud.")
     }
     
+    // MARK: - Store-and-Forward Mesh Queue Operations
+    
+    func enqueuePendingMessage(
+        messageID: UUID = UUID(),
+        recipientName: String,
+        senderName: String,
+        text: String,
+        channel: String = "CH-1 EMERGENCY"
+    ) -> SDPendingMessage {
+        let existingDescriptor = FetchDescriptor<SDPendingMessage>(
+            predicate: #Predicate { $0.messageID == messageID }
+        )
+        if let existing = try? context.fetch(existingDescriptor).first {
+            return existing
+        }
+        
+        let pending = SDPendingMessage(
+            messageID: messageID,
+            recipientName: recipientName,
+            senderName: senderName,
+            text: text,
+            channel: channel,
+            timestamp: Date(),
+            status: .queued
+        )
+        context.insert(pending)
+        saveContext()
+        AppLogger.multipeer.info("Enqueued offline pending message \(messageID) for recipient '\(recipientName)': \"\(text)\"")
+        return pending
+    }
+    
+    func fetchPendingMessages() -> [SDPendingMessage] {
+        let descriptor = FetchDescriptor<SDPendingMessage>(
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus) {
+        let descriptor = FetchDescriptor<SDPendingMessage>(
+            predicate: #Predicate { $0.messageID == messageID }
+        )
+        if let pending = (try? context.fetch(descriptor))?.first {
+            pending.status = status
+            pending.lastAttemptTimestamp = Date()
+            if status == .failed || status == .sending {
+                pending.retryCount += 1
+            }
+            saveContext()
+            AppLogger.multipeer.info("Updated pending message \(messageID) status to '\(status.rawValue)' (Attempt \(pending.retryCount))")
+        }
+    }
+    
+    func markPendingMessageAsACKed(messageID: UUID) {
+        // Mark SDChatMessage as delivered (GREEN)
+        let chatDescriptor = FetchDescriptor<SDChatMessage>(
+            predicate: #Predicate { $0.id == messageID }
+        )
+        if let chat = (try? context.fetch(chatDescriptor))?.first {
+            chat.isDelivered = true
+        }
+        
+        // Mark SDVoiceTranscript as delivered (GREEN)
+        let voiceDescriptor = FetchDescriptor<SDVoiceTranscript>(
+            predicate: #Predicate { $0.id == messageID }
+        )
+        if let voice = (try? context.fetch(voiceDescriptor))?.first {
+            voice.isDelivered = true
+        }
+        
+        // Delete from pending store-and-forward queue
+        let pendingDescriptor = FetchDescriptor<SDPendingMessage>(
+            predicate: #Predicate { $0.messageID == messageID }
+        )
+        if let pendingList = try? context.fetch(pendingDescriptor) {
+            for pending in pendingList {
+                context.delete(pending)
+            }
+        }
+        
+        saveContext()
+        AppLogger.multipeer.info("ACK Received: Marked message \(messageID) as delivered (GREEN) and purged from pending queue.")
+    }
+    
+    func isMessageAlreadyProcessed(messageID: UUID) -> Bool {
+        let chatDescriptor = FetchDescriptor<SDChatMessage>(
+            predicate: #Predicate { $0.id == messageID }
+        )
+        if (try? context.fetch(chatDescriptor))?.isEmpty == false {
+            return true
+        }
+        let voiceDescriptor = FetchDescriptor<SDVoiceTranscript>(
+            predicate: #Predicate { $0.id == messageID }
+        )
+        if (try? context.fetch(voiceDescriptor))?.isEmpty == false {
+            return true
+        }
+        return false
+    }
+    
+    func deletePendingMessage(_ item: SDPendingMessage) {
+        context.delete(item)
+        saveContext()
+        AppLogger.multipeer.info("Deleted delivered pending message for recipient '\(item.recipientName)'")
+    }
+
+    
     // MARK: - Private Helpers
+
     
     private func saveContext() {
         do {

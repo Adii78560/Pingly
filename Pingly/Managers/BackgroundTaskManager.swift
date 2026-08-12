@@ -78,7 +78,9 @@ final class BackgroundTaskManager {
             AudioStreamEngine.shared.stopCapture()
         }
         
-        // Execute background peer maintenance or message sync
+        // Execute background peer discovery maintenance & flush pending store-and-forward mesh queue
+        MultipeerService.shared.flushPendingStoreAndForwardQueue()
         task.setTaskCompleted(success: true)
     }
+
 }

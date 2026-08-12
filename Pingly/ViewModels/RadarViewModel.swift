@@ -29,30 +29,44 @@ final class RadarViewModel: ObservableObject {
     }
     
     private func setupBindings() {
-        // Merge peers discovered via MultipeerConnectivity & CoreBluetooth BLE scanning
+        // Merge peers discovered via MultipeerConnectivity & CoreBluetooth BLE scanning with base handle deduplication
         Publishers.CombineLatest(multipeerService.connectedPeersPublisher, bleBeaconService.$discoveredBLEPeers)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (mcPeers, blePeers) in
                 guard let self = self else { return }
-                var merged = mcPeers
+                var merged = [PeerDevice]()
+                
+                // Add active MultipeerConnectivity peers first
+                for mc in mcPeers {
+                    let mcBase = self.cleanBaseName(mc.displayName)
+                    if !merged.contains(where: { self.cleanBaseName($0.displayName) == mcBase }) {
+                        merged.append(mc)
+                    }
+                }
+                
+                // Add BLE peers if not already present from MultipeerConnectivity
                 for ble in blePeers {
-                    if !merged.contains(where: { $0.id == ble.id || $0.displayName == ble.displayName }) {
+                    let bleBase = self.cleanBaseName(ble.displayName)
+                    if !merged.contains(where: { self.cleanBaseName($0.displayName) == bleBase }) {
                         merged.append(ble)
                     }
                 }
-                // If demo empty in simulator, provide sample peers for rich demonstration
-                if merged.isEmpty {
-                    merged = [
-                        PeerDevice(displayName: "John's iPhone", rssi: -45, isConnected: true),
-                        PeerDevice(displayName: "Alex's Mac", rssi: -62, isConnected: false),
-                        PeerDevice(displayName: "Sarah's Phone", rssi: -78, isConnected: false)
-                    ]
-                }
+                
                 // Sort by RSSI signal strength (strongest first)
                 self.nearbyPeers = merged.sorted(by: { $0.rssi > $1.rssi })
             }
             .store(in: &cancellables)
     }
+    
+    private func cleanBaseName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = trimmed.range(of: #"_\d{4}$"#, options: .regularExpression) {
+            return String(trimmed[..<range.lowerBound]).lowercased()
+        }
+        return trimmed.lowercased()
+    }
+
+
     
     func updateBroadcastName(_ newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)

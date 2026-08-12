@@ -8,16 +8,18 @@
 import SwiftUI
 import Combine
 import CoreLocation
+import SwiftData
 import os
 
 struct Conversation: Identifiable, Hashable {
     let id: String
     let displayName: String
-    let isOnline: Bool
-    let lastMessage: String
-    let lastTimestamp: String
+    var isOnline: Bool
+    var lastMessage: String
+    var lastTimestamp: String
     var messages: [Message]
 }
+
 
 /// View model driving the Offline Messages & Chat Directory
 final class MessagesViewModel: ObservableObject {
@@ -48,7 +50,33 @@ final class MessagesViewModel: ObservableObject {
                 self?.handleIncomingMessage(message)
             }
             .store(in: &cancellables)
+            
+        NotificationCenter.default.publisher(for: .didAddPeerToMessages)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] note in
+                guard let self = self, let peerName = note.userInfo?["peerName"] as? String else { return }
+                let channelName = (note.userInfo?["channel"] as? String) ?? "CH-1 EMERGENCY"
+                self.addPeerConversation(peerName: peerName, channelName: channelName)
+            }
+            .store(in: &cancellables)
     }
+    
+    func addPeerConversation(peerName: String, channelName: String = "CH-1 EMERGENCY") {
+        let convID = "\(peerName)_\(channelName)"
+        if !conversations.contains(where: { $0.id == convID || ($0.displayName == peerName && $0.lastMessage.contains(channelName)) }) {
+            let newConv = Conversation(
+                id: convID,
+                displayName: peerName,
+                isOnline: multipeerService.connectedPeers.contains(where: { $0.displayName == peerName }),
+                lastMessage: "Off-grid conversation on \(channelName)",
+                lastTimestamp: Date().logTimeString,
+                messages: []
+            )
+            conversations.append(newConv)
+            AppLogger.multipeer.info("Added user '\(peerName)' on channel '\(channelName)' to Messages directory")
+        }
+    }
+
     
     func sendMessageToConversation(_ text: String, in conversation: Conversation) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -88,10 +116,34 @@ final class MessagesViewModel: ObservableObject {
         // Persist message to SwiftData local storage
         _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: conversation.displayName, text: trimmed)
         
-        multipeerService.broadcast(message: newMessage)
+        // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
+        _ = SwiftDataService.shared.enqueuePendingMessage(
+            messageID: newMessage.id,
+            recipientName: conversation.displayName,
+            senderName: handle,
+            text: trimmed,
+            channel: conversation.displayName
+        )
+        
+        if !multipeerService.connectedPeers.isEmpty {
+            multipeerService.broadcast(message: newMessage)
+            SwiftDataService.shared.updatePendingMessageStatus(messageID: newMessage.id, status: .waitingForACK)
+            AppLogger.multipeer.info("Broadcasted P2P message \(newMessage.id) for '\(conversation.displayName)' (waiting for ACK).")
+        } else {
+            AppLogger.multipeer.info("Peer '\(conversation.displayName)' is offline. Enqueued message \(newMessage.id) to store-and-forward queue.")
+        }
+
+        
         messageText = ""
         HapticManager.lightImpact()
     }
+    
+    private func cleanBaseName(_ name: String) -> String {
+        return name.replacingOccurrences(of: #"_([A-Fa-f0-9]{4}_[A-Fa-f0-9]{4}|\d{4}|[A-Fa-f0-9]{8})$"#, with: "", options: .regularExpression)
+                   .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+
     
     func sendMessageDrop() {
         let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -147,30 +199,57 @@ final class MessagesViewModel: ObservableObject {
     }
     
     private func handleIncomingMessage(_ message: Message) {
+        let cleanSender = cleanBaseName(message.senderName)
+        let localUserHandle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+        guard cleanSender != cleanBaseName(localUserHandle) else { return } // Avoid self-echo
+        
+        var relayedMessage = message
+        relayedMessage.hopsCount += 1
+        
         if !messages.contains(where: { $0.id == message.id }) {
-            var relayedMessage = message
-            relayedMessage.hopsCount += 1
             messages.append(relayedMessage)
-            
-            // Relayed to matching conversation if applicable
-            if let index = conversations.firstIndex(where: { $0.displayName == message.senderName }) {
+        }
+        
+        // Find existing conversation or AUTOMATICALLY create conversation card for incoming sender
+        if let index = conversations.firstIndex(where: { cleanBaseName($0.displayName) == cleanSender || $0.id.contains(cleanSender) }) {
+            if !conversations[index].messages.contains(where: { $0.id == message.id }) {
                 conversations[index].messages.append(relayedMessage)
             }
-            
-            _ = SwiftDataService.shared.saveChatMessage(senderName: message.senderName, channel: message.senderName, text: message.text)
-            
-            if relayedMessage.hopsCount <= Constants.Emergency.broadcastTTL {
-                multipeerService.broadcast(message: relayedMessage)
-            }
+            conversations[index].lastMessage = message.text
+            conversations[index].lastTimestamp = message.timestamp.logTimeString
+            conversations[index].isOnline = true
+        } else {
+            let newConv = Conversation(
+                id: "\(cleanSender)_AUTO",
+                displayName: message.senderName,
+                isOnline: true,
+                lastMessage: message.text,
+                lastTimestamp: message.timestamp.logTimeString,
+                messages: [relayedMessage]
+            )
+            conversations.append(newConv)
+            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName)")
+        }
+        
+        _ = SwiftDataService.shared.saveChatMessage(
+            senderName: message.senderName,
+            channel: message.senderName,
+            text: message.text,
+            isDelivered: true
+        )
+        
+        if relayedMessage.hopsCount <= Constants.Emergency.broadcastTTL {
+            multipeerService.broadcast(message: relayedMessage)
         }
     }
 
     
     private func loadSwiftDataConversations() {
-        let saved = SwiftDataService.shared.fetchChatMessages(for: "GENERAL MESH")
-        if !saved.isEmpty {
-            let chatMessages = saved.map { item in
-                Message(
+        let descriptor = FetchDescriptor<SDChatMessage>(sortBy: [SortDescriptor(\.timestamp, order: .forward)])
+        if let saved = try? SwiftDataService.shared.context.fetch(descriptor) {
+            var grouped: [String: [Message]] = [:]
+            for item in saved {
+                let msg = Message(
                     id: item.id,
                     senderID: item.senderName,
                     senderName: item.senderName,
@@ -178,13 +257,32 @@ final class MessagesViewModel: ObservableObject {
                     timestamp: item.timestamp,
                     hopsCount: 0
                 )
+                let base = cleanBaseName(item.senderName)
+                grouped[base, default: []].append(msg)
             }
-            self.messages = chatMessages
-        } else {
-            self.conversations = []
-            self.messages = []
+            
+            for (senderBase, msgList) in grouped {
+                if let last = msgList.last {
+                    if let idx = conversations.firstIndex(where: { cleanBaseName($0.displayName) == senderBase }) {
+                        conversations[idx].messages = msgList
+                        conversations[idx].lastMessage = last.text
+                        conversations[idx].lastTimestamp = last.timestamp.logTimeString
+                    } else {
+                        let conv = Conversation(
+                            id: "\(senderBase)_SAVED",
+                            displayName: last.senderName,
+                            isOnline: multipeerService.connectedPeers.contains(where: { cleanBaseName($0.displayName) == senderBase }),
+                            lastMessage: last.text,
+                            lastTimestamp: last.timestamp.logTimeString,
+                            messages: msgList
+                        )
+                        conversations.append(conv)
+                    }
+                }
+            }
         }
     }
 }
+
 
 

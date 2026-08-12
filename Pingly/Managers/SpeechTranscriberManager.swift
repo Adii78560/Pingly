@@ -17,15 +17,25 @@ struct VoiceTranscript: Identifiable, Equatable {
     let text: String
     let channel: String
     let timestamp: Date
+    var isDelivered: Bool
     
-    init(id: UUID = UUID(), speakerName: String, text: String, channel: String = "CH-1 EMERGENCY", timestamp: Date = Date()) {
+    init(
+        id: UUID = UUID(),
+        speakerName: String,
+        text: String,
+        channel: String = "CH-1 EMERGENCY",
+        timestamp: Date = Date(),
+        isDelivered: Bool = false
+    ) {
         self.id = id
         self.speakerName = speakerName
         self.text = text
         self.channel = channel
         self.timestamp = timestamp
+        self.isDelivered = isDelivered
     }
 }
+
 
 /// Manages real-time speech-to-text transcription during Walkie-Talkie voice broadcasts.
 final class SpeechTranscriberManager: ObservableObject {
@@ -41,6 +51,7 @@ final class SpeechTranscriberManager: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var activeSpeakerName: String = "Unknown"
     private var activeChannel: String = "CH-1 EMERGENCY"
+    private var accumulatedSegments: [String] = []
     
     private init() {
         requestAuthorization()
@@ -67,6 +78,7 @@ final class SpeechTranscriberManager: ObservableObject {
         self.activeSpeakerName = speakerName
         self.activeChannel = channel
         self.currentTranscriptText = ""
+        self.accumulatedSegments.removeAll()
         
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -101,29 +113,26 @@ final class SpeechTranscriberManager: ObservableObject {
             }
             
             if let result = result {
-                let text = result.bestTranscription.formattedString
-                AppLogger.audio.info("SFSpeechRecognitionTask text: \"\(text)\" (isFinal: \(result.isFinal))")
+                let latestString = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
+                AppLogger.audio.info("SFSpeechRecognitionTask text: \"\(latestString)\" (isFinal: \(result.isFinal))")
+                
                 DispatchQueue.main.async {
-                    self.currentTranscriptText = text
+                    var parts = self.accumulatedSegments
+                    if !latestString.isEmpty {
+                        parts.append(latestString)
+                    }
+                    let fullText = parts.joined(separator: " ")
+                    self.currentTranscriptText = fullText
                     
-                    // Refine last logged transcript item if final recognition arrives after audio release
-                    if result.isFinal, !text.isEmpty {
-                        if let lastIndex = self.transcriptHistory.indices.last,
-                           self.transcriptHistory[lastIndex].speakerName == self.activeSpeakerName {
-                            let existing = self.transcriptHistory[lastIndex]
-                            self.transcriptHistory[lastIndex] = VoiceTranscript(
-                                id: existing.id,
-                                speakerName: existing.speakerName,
-                                text: text,
-                                channel: existing.channel,
-                                timestamp: existing.timestamp
-                            )
-                            AppLogger.audio.info("Updated final VoiceTranscript text: \"\(text)\"")
+                    if result.isFinal && !latestString.isEmpty {
+                        if !self.accumulatedSegments.contains(latestString) {
+                            self.accumulatedSegments.append(latestString)
                         }
                     }
                 }
             }
         }
+
 
         
         self.isTranscribing = true
@@ -145,34 +154,82 @@ final class SpeechTranscriberManager: ObservableObject {
         guard isTranscribing else { return }
         
         recognitionRequest?.endAudio()
-        recognitionTask?.finish()
         
         let finalSpeaker = activeSpeakerName
         let channel = activeChannel
-        let rawText = currentTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        let textToSave: String
-        if !rawText.isEmpty {
-            textToSave = rawText
-        } else {
-            textToSave = "Voice call broadcast recorded"
-        }
-        
-        DispatchQueue.main.async {
-            self.isTranscribing = false
-            self.currentTranscriptText = ""
+        // Allow 350ms for final speech recognition segments to arrive from Apple Speech NPU
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self else { return }
             
-            let transcript = VoiceTranscript(speakerName: finalSpeaker, text: textToSave, channel: channel)
+            self.recognitionTask?.finish()
+            self.recognitionTask = nil
+            self.recognitionRequest = nil
+            self.isTranscribing = false
+            
+            let textToSave = self.currentTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.currentTranscriptText = ""
+            self.accumulatedSegments.removeAll()
+            
+            // Only save transcript if actual spoken text was recognized
+            guard !textToSave.isEmpty else {
+                AppLogger.audio.info("No speech detected during PTT broadcast; ignoring empty transcript.")
+                return
+            }
+            
+            let isConnected = !MultipeerService.shared.connectedPeers.isEmpty
+            
+            // Persist VoiceTranscript to SwiftData with initial delivery status indicator (Gray offline)
+            let sdTranscript = SwiftDataService.shared.saveVoiceTranscript(
+                speakerName: finalSpeaker,
+                text: textToSave,
+                channel: channel,
+                isDelivered: false
+            )
+            
+            let transcript = VoiceTranscript(
+                id: sdTranscript.id,
+                speakerName: finalSpeaker,
+                text: textToSave,
+                channel: channel,
+                isDelivered: false
+            )
             self.transcriptHistory.append(transcript)
             
-            // Persist transcript to SwiftData local storage
-            _ = SwiftDataService.shared.saveVoiceTranscript(speakerName: finalSpeaker, text: textToSave, channel: channel)
-            AppLogger.audio.info("Saved VoiceTranscript from \(finalSpeaker) on \(channel): \"\(textToSave)\"")
+            // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
+            _ = SwiftDataService.shared.enqueuePendingMessage(
+                messageID: sdTranscript.id,
+                recipientName: channel,
+                senderName: finalSpeaker,
+                text: "[\(channel)] \(textToSave)",
+                channel: channel
+            )
+            
+            // Broadcast VoiceTranscript payload over P2P mesh network if connected
+            let netMessage = Message(
+                id: sdTranscript.id,
+                senderID: finalSpeaker,
+                senderName: finalSpeaker,
+                text: "[\(channel)] \(textToSave)",
+                timestamp: Date(),
+                hopsCount: 0,
+                type: .transcript
+            )
+            
+            if isConnected {
+                MultipeerService.shared.broadcast(message: netMessage)
+                SwiftDataService.shared.updatePendingMessageStatus(messageID: sdTranscript.id, status: .waitingForACK)
+                AppLogger.audio.info("Saved & broadcasted VoiceTranscript \(sdTranscript.id) on \(channel) (waiting for ACK).")
+            } else {
+                AppLogger.audio.info("Saved offline VoiceTranscript \(sdTranscript.id) on \(channel) to pending store-and-forward queue.")
+            }
+            
+            NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
         }
-        
-        recognitionRequest = nil
-        recognitionTask = nil
     }
+
+
+
 
     
     /// Manually injects a voice transcript (e.g. from received network framing packet or test broadcast).

@@ -173,6 +173,7 @@ extension MultipeerService: MCSessionDelegate {
                     )
                     self.connectedPeers.append(newPeer)
                 }
+                self.flushPendingStoreAndForwardQueue(for: peerID)
             case .notConnected:
                 AppLogger.multipeer.info("Peer disconnected: \(peerID.displayName)")
                 self.connectedPeers.removeAll(where: { $0.id == peerID.displayName })
@@ -183,6 +184,56 @@ extension MultipeerService: MCSessionDelegate {
             }
         }
     }
+    
+    /// Flushes queued offline store-and-forward messages when peer nodes enter network range.
+    func flushPendingStoreAndForwardQueue(for peerID: MCPeerID? = nil) {
+        Task { @MainActor in
+            guard !connectedPeers.isEmpty else { return }
+            
+            let pendingList = SwiftDataService.shared.fetchPendingMessages()
+            guard !pendingList.isEmpty else { return }
+            
+            for pending in pendingList {
+                guard pending.retryCount < pending.maxRetries else {
+                    AppLogger.multipeer.warning("Pending message \(pending.messageID) reached max retries (\(pending.maxRetries)). Skipping.")
+                    continue
+                }
+                
+                // Backoff delay check (wait 3s between retries if previously failed)
+                if let lastAttempt = pending.lastAttemptTimestamp, Date().timeIntervalSince(lastAttempt) < 3.0 {
+                    continue
+                }
+                
+                SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .sending)
+                
+                let isTranscript = pending.text.hasPrefix("[")
+                let msg = Message(
+                    id: pending.messageID,
+                    senderID: pending.senderName,
+                    senderName: pending.senderName,
+                    text: isTranscript ? pending.text : "[\(pending.channel)] \(pending.text)",
+                    timestamp: pending.timestamp,
+                    hopsCount: 0,
+                    type: isTranscript ? .transcript : .chat
+                )
+                
+                self.broadcast(message: msg)
+                SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .waitingForACK)
+                AppLogger.multipeer.info("Dispatched store-and-forward message \(pending.messageID) for '\(pending.recipientName)' (waiting for ACK)")
+                
+                // Schedule ACK timeout verification (5 seconds)
+                Task {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    let checkList = SwiftDataService.shared.fetchPendingMessages()
+                    if let item = checkList.first(where: { $0.messageID == pending.messageID }), item.status == .waitingForACK {
+                        SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .failed)
+                        AppLogger.multipeer.warning("ACK Timeout (5s) for pending message \(pending.messageID). Set status to FAILED.")
+                    }
+                }
+            }
+        }
+    }
+
     
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         // Try decoding as ChannelInvite first
@@ -196,10 +247,62 @@ extension MultipeerService: MCSessionDelegate {
             return
         }
         
-        // Try decoding as emergency JSON Message next
+        // Try decoding as emergency / P2P text or voice transcript JSON Message next
         if let message = try? JSONDecoder().decode(Message.self, from: data) {
             DispatchQueue.main.async {
-                self.receivedMessageSubject.send(message)
+                let localUserHandle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+                
+                // Handle incoming Delivery ACK frame
+                if message.type == .ack {
+                    SwiftDataService.shared.markPendingMessageAsACKed(messageID: message.id)
+                    NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                    NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
+                    AppLogger.multipeer.info("Received MessageDeliveryACK for message ID \(message.id) from \(message.senderName)")
+                    return
+                }
+                
+                // Process chat message / voice transcript with Deduplication Engine
+                let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
+                if !alreadyProcessed {
+                    self.receivedMessageSubject.send(message)
+                    
+                    if message.text.hasPrefix("["), let closingBracket = message.text.firstIndex(of: "]") {
+                        let channel = String(message.text[message.text.index(after: message.text.startIndex)..<closingBracket])
+                        let body = String(message.text[message.text.index(after: closingBracket)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        
+                        _ = SwiftDataService.shared.saveVoiceTranscript(
+                            speakerName: message.senderName,
+                            text: body,
+                            channel: channel,
+                            isDelivered: true
+                        )
+                        NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                        AppLogger.multipeer.info("Received P2P Voice Transcript for channel [\(channel)] from \(message.senderName)")
+                    } else {
+                        _ = SwiftDataService.shared.saveChatMessage(
+                            senderName: message.senderName,
+                            channel: message.senderName,
+                            text: message.text,
+                            isDelivered: true
+                        )
+                        NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
+                        AppLogger.multipeer.info("Received P2P Chat Message from \(message.senderName)")
+                    }
+                } else {
+                    AppLogger.multipeer.info("Deduplication Engine: Message \(message.id) already processed. Re-issuing ACK.")
+                }
+                
+                // Send Delivery ACK back to sender
+                let ackMessage = Message(
+                    id: message.id,
+                    senderID: localUserHandle,
+                    senderName: localUserHandle,
+                    text: "ACK",
+                    timestamp: Date(),
+                    hopsCount: 0,
+                    type: .ack
+                )
+                self.broadcast(message: ackMessage)
             }
         } else {
             // Treat raw byte stream as live PTT audio chunk & post notification
@@ -213,6 +316,7 @@ extension MultipeerService: MCSessionDelegate {
             }
         }
     }
+
 
     
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
@@ -233,8 +337,16 @@ extension MultipeerService: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
         AppLogger.multipeer.info("Browser found peer: \(peerID.displayName)")
         guard let session = session else { return }
-        browser.invitePeer(peerID, to: session, withContext: nil, timeout: Constants.Multipeer.connectionTimeoutSeconds)
+        
+        // Deterministic tie-breaker for simultaneous invitations to prevent connection aborts
+        if myPeerID.displayName > peerID.displayName {
+            AppLogger.multipeer.info("Issuing invitation to peer: \(peerID.displayName)")
+            browser.invitePeer(peerID, to: session, withContext: nil, timeout: Constants.Multipeer.connectionTimeoutSeconds)
+        } else {
+            AppLogger.multipeer.info("Waiting for peer \(peerID.displayName) to issue invitation...")
+        }
     }
+
     
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
         AppLogger.multipeer.info("Browser lost peer: \(peerID.displayName)")

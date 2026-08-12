@@ -13,6 +13,9 @@ struct RadioCallView: View {
     @State private var isPttPressedVisual = false
     @State private var showingAddChannelAlert = false
     @State private var newChannelInputText = ""
+    @State private var breathingScale: CGFloat = 1.0
+    @State private var breathingOpacity: Double = 0.6
+
     
     var body: some View {
         NavigationStack {
@@ -88,52 +91,59 @@ struct RadioCallView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
                 
-                // Peer Contact Card
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(Color(UIColor.secondarySystemGroupedBackground))
-                            .frame(width: 48, height: 48)
-                        
-                        Text(viewModel.connectedPeerName.initials)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundColor(.primary)
-                        
-                        Circle()
-                            .stroke(viewModel.isConnected ? Color.green : Color.gray, lineWidth: 2)
-                            .frame(width: 52, height: 52)
-                    }
+                // Central watchOS Walkie-Talkie Yellow PTT Dial with Dynamic AirDrop Peer Orbit Ring & Breathing Radar Pulse
+                ZStack {
+                    let peers = viewModel.channelPeers
+                    let peerCount = peers.count
+                    let hasPeers = !peers.isEmpty
+                    let orbitRadius: CGFloat = 110.0
+                    let bubbleSize: CGFloat = peerCount <= 4 ? 44.0 : (peerCount <= 8 ? 34.0 : 26.0)
                     
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(viewModel.connectedPeerName)
-                            .font(.system(size: 15, weight: .semibold))
-                        
-                        HStack(spacing: 6) {
-                            Text("\(viewModel.connectedPeerRSSI) dBm")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.secondary)
-                            
-                            Button(action: {
-                                viewModel.toggleAddedToMessages()
-                            }) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: viewModel.isAddedToMessages ? "checkmark" : "plus")
-                                    Text(viewModel.isAddedToMessages ? "Saved" : "Add")
-                                }
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(viewModel.isAddedToMessages ? .green : .blue)
+                    // Animated Breathing Radar Pulse Ring (pulses when no peers on channel, locks static when peers connect)
+                    Circle()
+                        .stroke(Color.orange.opacity(hasPeers ? 0.3 : breathingOpacity), lineWidth: hasPeers ? 2 : 3)
+                        .frame(width: 135, height: 135)
+                        .scaleEffect(hasPeers ? 1.0 : breathingScale)
+                        .onAppear {
+                            withAnimation(
+                                Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true)
+                            ) {
+                                breathingScale = 1.35
+                                breathingOpacity = 0.05
                             }
                         }
+                    
+                    // AirDrop Peer Orbit Bubbles floating dynamically around PTT button
+                    ForEach(Array(peers.enumerated()), id: \.element.id) { index, peer in
+                        let angle = (2.0 * .pi * Double(index)) / Double(max(1, peerCount)) - (.pi / 2.0)
+                        let offsetX = orbitRadius * CGFloat(cos(angle))
+                        let offsetY = orbitRadius * CGFloat(sin(angle))
+                        
+                        Button {
+                            viewModel.addUserToMessages(peer: peer)
+                        } label: {
+                            VStack(spacing: 2) {
+                                ZStack {
+                                    Circle()
+                                        .fill(LinearGradient(colors: [.orange, .yellow], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        .frame(width: bubbleSize, height: bubbleSize)
+                                        .shadow(color: .orange.opacity(0.4), radius: 6, x: 0, y: 3)
+                                    
+                                    Text(peer.displayName.prefix(2).uppercased())
+                                        .font(.system(size: max(8, bubbleSize * 0.38), weight: .black))
+                                        .foregroundColor(.black)
+                                }
+                                
+                                Text(peer.displayName)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .lineLimit(1)
+                                    .foregroundColor(.primary)
+                            }
+                        }
+                        .offset(x: offsetX, y: offsetY)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: peerCount)
                     }
-                    Spacer()
-                }
-                .padding(10)
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                .cornerRadius(16)
-                .padding(.horizontal, 16)
-                
-                // Central watchOS Walkie-Talkie Yellow PTT Dial
-                ZStack {
+                    
                     Circle()
                         .fill(Color.orange.opacity(0.12))
                         .frame(width: 135, height: 135)
@@ -151,6 +161,8 @@ struct RadioCallView: View {
                     }
                     .foregroundColor(.black)
                 }
+                .frame(height: 240)
+
                 .scaleEffect(isPttPressedVisual || viewModel.isPTTPressed ? 0.94 : 1.0)
                 .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isPttPressedVisual || viewModel.isPTTPressed)
                 .simultaneousGesture(
@@ -166,6 +178,7 @@ struct RadioCallView: View {
                             viewModel.stopTransmittingVoice()
                         }
                 )
+
                 
                 // Audio Waveform Indicator
                 TimelineView(.periodic(from: .now, by: 0.04)) { context in
@@ -261,14 +274,25 @@ struct RadioCallView: View {
                                                     .padding(.vertical, 8)
                                                     .background(
                                                         isMe ?
-                                                        AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.orange, Color.orange.opacity(0.85)]), startPoint: .topLeading, endPoint: .bottomTrailing)) :
+                                                        (item.isDelivered ?
+                                                         AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.orange, Color.orange.opacity(0.85)]), startPoint: .topLeading, endPoint: .bottomTrailing)) :
+                                                         AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.gray, Color.gray.opacity(0.75)]), startPoint: .topLeading, endPoint: .bottomTrailing))) :
                                                         AnyShapeStyle(Color(UIColor.tertiarySystemGroupedBackground))
                                                     )
                                                     .cornerRadius(14)
                                                 
-                                                Text(item.timestamp.logTimeString)
-                                                    .font(.system(size: 9, weight: .medium))
-                                                    .foregroundColor(.secondary)
+                                                HStack(spacing: 4) {
+                                                    Text(item.timestamp.logTimeString)
+                                                        .font(.system(size: 9, weight: .medium))
+                                                        .foregroundColor(.secondary)
+                                                    
+                                                    if isMe {
+                                                        Image(systemName: item.isDelivered ? "checkmark.circle.fill" : "clock.fill")
+                                                            .font(.system(size: 10, weight: .bold))
+                                                            .foregroundColor(item.isDelivered ? .green : .gray)
+                                                    }
+                                                }
+
                                             }
                                             
                                             if isMe {
