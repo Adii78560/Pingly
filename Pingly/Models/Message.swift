@@ -12,6 +12,7 @@ import CoreLocation
 enum P2PMessageType: String, Codable {
     case chat = "CHAT"
     case transcript = "TRANSCRIPT"
+    case location = "LOCATION"
     case ack = "ACK"
     case channelSync = "CHANNEL_SYNC"
 }
@@ -47,6 +48,8 @@ struct Message: Identifiable, Codable, Hashable {
     let timestamp: Date
     let latitude: Double?
     let longitude: Double?
+    let altitude: Double?
+    let accuracy: Double?
     let isSOS: Bool
     let emergencyStatus: EmergencyStatus
     var hopsCount: Int
@@ -67,6 +70,8 @@ struct Message: Identifiable, Codable, Hashable {
         timestamp: Date = Date(),
         latitude: Double? = nil,
         longitude: Double? = nil,
+        altitude: Double? = nil,
+        accuracy: Double? = nil,
         isSOS: Bool = false,
         emergencyStatus: EmergencyStatus = .normal,
         hopsCount: Int = 0,
@@ -87,6 +92,8 @@ struct Message: Identifiable, Codable, Hashable {
         self.timestamp = timestamp
         self.latitude = latitude
         self.longitude = longitude
+        self.altitude = altitude
+        self.accuracy = accuracy
         self.isSOS = isSOS
         self.emergencyStatus = emergencyStatus
         self.hopsCount = hopsCount
@@ -101,6 +108,7 @@ struct Message: Identifiable, Codable, Hashable {
             text: text
         )
     }
+
 
     
     var formattedLocation: String? {

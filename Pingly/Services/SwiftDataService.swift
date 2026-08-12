@@ -128,22 +128,38 @@ final class SwiftDataService: ObservableObject {
     
     // MARK: - Chat Messages Operations
     
-    /// Persists a chat message to SwiftData local storage.
-    func saveChatMessage(senderName: String, channel: String, text: String, isDelivered: Bool = false) -> SDChatMessage {
+    /// Persists a chat or location message to SwiftData local storage.
+    func saveChatMessage(
+        senderName: String,
+        channel: String,
+        text: String,
+        isDelivered: Bool = false,
+        messageType: P2PMessageType = .chat,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        altitude: Double? = nil,
+        accuracy: Double? = nil
+    ) -> SDChatMessage {
         let message = SDChatMessage(
             senderName: senderName,
             channel: channel,
             text: text,
             timestamp: Date(),
             isSynced: false,
-            isDelivered: isDelivered
+            isDelivered: isDelivered,
+            messageType: messageType,
+            latitude: latitude,
+            longitude: longitude,
+            altitude: altitude,
+            accuracy: accuracy
         )
         context.insert(message)
         saveContext()
         updateUnsyncedCount()
-        AppLogger.multipeer.info("Persisted Chat Message (Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
+        AppLogger.multipeer.info("Persisted Chat Message (Type: \(messageType.rawValue), Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
         return message
     }
+
 
     
     /// Fetches all stored chat messages for a specific channel sorted by timestamp.

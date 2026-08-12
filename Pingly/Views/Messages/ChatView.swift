@@ -2,21 +2,12 @@
 //  ChatView.swift
 //  Pingly
 //
-//  Created by Senior iOS Developer on 09/08/26.
+//  Created by Senior iOS Developer on 13/08/26.
 //
 
 import SwiftUI
 
-//
-//  ChatView.swift
-//  Pingly
-//
-//  Created by Senior iOS Developer on 09/08/26.
-//
-
-import SwiftUI
-
-/// Detailed iMessage View conforming strictly to Apple HIG
+/// Detailed iMessage View conforming strictly to Apple HIG with location sharing
 struct ChatView: View {
     @ObservedObject var viewModel: MessagesViewModel
     let conversation: Conversation
@@ -79,45 +70,63 @@ struct ChatView: View {
     // MARK: - iMessage Bubble Row
     private func iMessageBubbleRow(message: Message, isSentByMe: Bool) -> some View {
         HStack {
-            if isSentByMe { Spacer(minLength: 50) }
+            if isSentByMe { Spacer(minLength: 40) }
             
-            VStack(alignment: isSentByMe ? .trailing : .leading, spacing: 2) {
-                Text(message.text)
-                    .font(.system(size: 16))
-                    .foregroundColor(isSentByMe ? .white : .primary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(
-                        isSentByMe ?
-                        AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.orange, Color(red: 0.95, green: 0.5, blue: 0.0)]), startPoint: .topLeading, endPoint: .bottomTrailing)) :
-                        AnyShapeStyle(Color(UIColor.systemGray5))
-                    )
-                    .clipShape(
-                        CustomCornerShape(
-                            radius: 18,
-                            corners: isSentByMe
-                                ? [.topLeft, .topRight, .bottomLeft]
-                                : [.topLeft, .topRight, .bottomRight]
+            if message.type == .location, let lat = message.latitude, let lon = message.longitude {
+                LocationMessageCardView(
+                    senderName: message.senderName,
+                    latitude: lat,
+                    longitude: lon,
+                    accuracy: message.accuracy,
+                    timestamp: message.timestamp,
+                    isCurrentUser: isSentByMe
+                )
+            } else {
+                VStack(alignment: isSentByMe ? .trailing : .leading, spacing: 2) {
+                    Text(message.text)
+                        .font(.system(size: 16))
+                        .foregroundColor(isSentByMe ? .white : .primary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(
+                            isSentByMe ?
+                            AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.orange, Color(red: 0.95, green: 0.5, blue: 0.0)]), startPoint: .topLeading, endPoint: .bottomTrailing)) :
+                            AnyShapeStyle(Color(UIColor.systemGray5))
                         )
-                    )
-                
-                if isSentByMe {
-                    Text("Delivered via P2P")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.trailing, 4)
+                        .clipShape(
+                            CustomCornerShape(
+                                radius: 18,
+                                corners: isSentByMe
+                                    ? [.topLeft, .topRight, .bottomLeft]
+                                    : [.topLeft, .topRight, .bottomRight]
+                            )
+                        )
+                    
+                    if isSentByMe {
+                        Text("Delivered via P2P")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.trailing, 4)
+                    }
                 }
             }
             
-            if !isSentByMe { Spacer(minLength: 50) }
+            if !isSentByMe { Spacer(minLength: 40) }
         }
     }
     
     // MARK: - Floating Native iMessage Input Dock
     private var iMessageInputDock: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            // (+) Attachment Button
-            Button(action: {}) {
+            // (+) Attachment Menu with Share Location Action
+            Menu {
+                Button(action: {
+                    HapticsManager.shared.mediumImpact()
+                    viewModel.sendLocationMessage(in: currentConversation)
+                }) {
+                    Label("Share Current Location", systemImage: "location.fill")
+                }
+            } label: {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 28))
                     .foregroundColor(Color(UIColor.systemGray2))
@@ -149,15 +158,13 @@ struct ChatView: View {
             }
             .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(UIColor.systemBackground))
     }
 }
 
-
-// Custom Corner Shape Helper for bubble corners (bottom-right 4px or bottom-left 4px)
+// Custom Corner Shape Helper for bubble corners
 struct CustomCornerShape: Shape {
     var radius: CGFloat = 16
     var corners: UIRectCorner = .allCorners
@@ -171,3 +178,12 @@ struct CustomCornerShape: Shape {
         return Path(path.cgPath)
     }
 }
+
+#Preview {
+    ChatView(
+        viewModel: MessagesViewModel(multipeerService: MultipeerService.shared, locationService: LocationService.shared),
+        conversation: Conversation(id: "1", displayName: "Aditya", isOnline: true, lastMessage: "Hello", lastTimestamp: "10:00 AM", messages: [])
+    )
+}
+
+

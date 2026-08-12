@@ -146,6 +146,73 @@ final class MessagesViewModel: ObservableObject {
         HapticManager.lightImpact()
     }
     
+    /// Obtains current offline GPS coordinates and sends location message over P2P mesh
+    func sendLocationMessage(in conversation: Conversation) {
+        LocationService.shared.getCurrentLocationSnapshot { [weak self] location in
+            guard let self = self, let loc = location else {
+                LocationService.shared.requestLocationPermission()
+                return
+            }
+            
+            let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+            let localNodeID = NodeIdentity.shared.nodeID
+            
+            let locationText = String(format: "📍 Shared Location: %.4f° N, %.4f° E", loc.coordinate.latitude, loc.coordinate.longitude)
+            
+            let newMessage = Message(
+                originID: localNodeID,
+                destinationID: conversation.displayName,
+                senderID: localNodeID,
+                senderName: handle,
+                text: locationText,
+                timestamp: Date(),
+                latitude: loc.coordinate.latitude,
+                longitude: loc.coordinate.longitude,
+                altitude: loc.altitude,
+                accuracy: loc.horizontalAccuracy,
+                type: .location
+            )
+            
+            DispatchQueue.main.async {
+                self.messages.append(newMessage)
+                if let index = self.conversations.firstIndex(where: { $0.id == conversation.id }) {
+                    self.conversations[index].messages.append(newMessage)
+                    self.conversations[index].lastMessage = "📍 Shared Location"
+                    self.conversations[index].lastTimestamp = Date().logTimeString
+
+                }
+            }
+            
+            _ = SwiftDataService.shared.saveChatMessage(
+                senderName: handle,
+                channel: conversation.displayName,
+                text: locationText,
+                messageType: .location,
+                latitude: loc.coordinate.latitude,
+                longitude: loc.coordinate.longitude,
+                altitude: loc.altitude,
+                accuracy: loc.horizontalAccuracy
+            )
+            
+            _ = SwiftDataService.shared.enqueuePendingMessage(
+                messageID: newMessage.id,
+                originID: localNodeID,
+                destinationID: conversation.displayName,
+                recipientName: conversation.displayName,
+                senderName: handle,
+                text: locationText,
+                channel: conversation.displayName
+            )
+            
+            if !self.multipeerService.connectedPeers.isEmpty {
+                self.multipeerService.broadcast(message: newMessage)
+            }
+            
+            HapticManager.successFeedback()
+        }
+    }
+
+    
     private func cleanBaseName(_ name: String) -> String {
         return name.replacingOccurrences(of: #"_([A-Fa-f0-9]{4}_[A-Fa-f0-9]{4}|\d{4}|[A-Fa-f0-9]{8})$"#, with: "", options: .regularExpression)
                    .trimmingCharacters(in: .whitespacesAndNewlines)

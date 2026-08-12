@@ -99,11 +99,13 @@ struct MainTabView: View {
             )
         }
         .onAppear {
+            ATTManager.shared.requestTrackingPermissionIfFirstLaunch()
             locationService.requestLocationPermission()
             let handle = settingsViewModel.userHandle
             multipeerService.startAdvertisingAndBrowsing(userHandle: handle, status: settingsViewModel.selectedEmergencyStatus)
             bleBeaconService.startScanningAndAdvertising(userHandle: handle, allowDuplicates: false)
         }
+
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .background:

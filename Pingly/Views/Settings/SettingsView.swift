@@ -2,30 +2,34 @@
 //  SettingsView.swift
 //  Pingly
 //
-//  Created by Senior iOS Developer on 09/08/26.
+//  Created by Senior iOS Developer on 13/08/26.
 //
 
 import SwiftUI
+import CoreLocation
 
-////
-//  SettingsView.swift
-//  Pingly
-//
-//  Created by Senior iOS Developer on 09/08/26.
-//
-
-import SwiftUI
 
 /// Native Apple iOS Settings View conforming to HIG
 struct SettingsView: View {
     @StateObject var viewModel: SettingsViewModel
     @StateObject private var swiftDataService = SwiftDataService.shared
     @StateObject private var cloudSyncService = CloudSyncService.shared
+    @StateObject private var locationService = LocationService.shared
+    @StateObject private var attManager = ATTManager.shared
     @State private var showLogoutConfirmation = false
     
+    private var locationPermissionString: String {
+        switch locationService.authorizationStatus {
+        case .authorizedWhenInUse: return "Authorized When In Use"
+        case .authorizedAlways: return "Authorized Always"
+        case .denied: return "Denied (Tap to Open Settings)"
+        case .restricted: return "Restricted"
+        case .notDetermined: return "Not Determined"
+        @unknown default: return "Unknown"
+        }
+    }
+    
     var body: some View {
-
-
         NavigationStack {
             Form {
                 // Section 1: Profile & Node Identity
@@ -53,7 +57,6 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-
                     }
                     .padding(.vertical, 4)
                     
@@ -67,14 +70,14 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                             .onSubmit {
                                 viewModel.applySettings()
-                                HapticManager.successFeedback()
+                                HapticsManager.shared.successFeedback()
                             }
                     }
                 } header: {
                     Text("Identity")
                 }
                 
-                // Section 2: Emergency Category
+                // Section 2: Emergency Profile
                 Section {
                     HStack {
                         SettingsIconBadge(systemName: "checkmark.shield.fill", backgroundColor: .orange)
@@ -91,7 +94,7 @@ struct SettingsView: View {
                     Text("Default status broadcasted to nearby emergency nodes when scanning.")
                 }
                 
-                // Section 3: Radios & Battery Optimization
+                // Section 3: Hardware Radios
                 Section {
                     Toggle(isOn: $viewModel.isLowPowerModeEnabled) {
                         HStack(spacing: 12) {
@@ -126,7 +129,79 @@ struct SettingsView: View {
                     Text("Hardware Radios")
                 }
                 
-                // Section 4: SwiftData Local Storage & Cloud Sync
+                // Section 4: Privacy, App Tracking Transparency & Offline Location
+                Section {
+                    HStack {
+                        SettingsIconBadge(systemName: "location.circle.fill", backgroundColor: .blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("GPS Location Permission")
+                                .font(.body)
+                            Text(locationPermissionString)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+                    
+                    Toggle(isOn: Binding(
+                        get: { locationService.isSharingLocation },
+                        set: { newValue in
+                            HapticsManager.shared.lightImpact()
+                            if newValue {
+                                locationService.startSharingLocation()
+                            } else {
+                                locationService.stopSharingLocation()
+                            }
+                        }
+                    )) {
+                        HStack(spacing: 12) {
+                            SettingsIconBadge(systemName: "location.fill", backgroundColor: .orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Offline GPS Location Sharing")
+                                    .font(.body)
+                                Text("Share offline coordinates over P2P mesh network")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .tint(.orange)
+
+
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "hand.raised.fill", backgroundColor: .purple)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("App Tracking Transparency")
+                                .font(.body)
+                            Text("P2P mesh uses zero 3rd-party ad tracking")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Text(attManager.statusDescription)
+                            .font(.caption.bold())
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Button(action: {
+                        HapticsManager.shared.lightImpact()
+                        locationService.openAppSettings()
+                    }) {
+                        HStack {
+                            Image(systemName: "gearshape.fill")
+                            Text("Manage Privacy & Location in Settings")
+                        }
+                        .font(.subheadline.bold())
+                        .foregroundColor(.blue)
+                    }
+                } header: {
+                    Text("Privacy & Location")
+                } footer: {
+                    Text("Pingly accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location data is sent to external cloud servers.")
+                }
+
+                // Section 5: SwiftData Local Storage & Cloud Sync
                 Section {
                     HStack {
                         SettingsIconBadge(systemName: "icloud.and.arrow.up.fill", backgroundColor: .blue)
@@ -166,7 +241,7 @@ struct SettingsView: View {
                     Text("Off-grid transcripts and messages are saved in SwiftData local storage. When internet is available, data automatically syncs to your logged-in device cloud account.")
                 }
 
-                // Section 5: Account & Authentication Log Out
+                // Section 6: Account & Authentication Log Out
                 Section {
                     Button(role: .destructive, action: {
                         HapticsManager.shared.warningFeedback()
@@ -186,7 +261,7 @@ struct SettingsView: View {
                     Text("Logging out clears your active local session and requires re-authentication.")
                 }
 
-                // Section 6: App Information
+                // Section 7: App Information
                 Section {
                     HStack {
                         SettingsIconBadge(systemName: "info.circle.fill", backgroundColor: .gray)
@@ -214,7 +289,6 @@ struct SettingsView: View {
                     .padding(.top, 8)
                 }
             }
-
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
             .alert("Log Out", isPresented: $showLogoutConfirmation) {
@@ -229,8 +303,3 @@ struct SettingsView: View {
         }
     }
 }
-
-
-
-
-

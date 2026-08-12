@@ -28,7 +28,9 @@ enum AppleSignInKeys {
 }
 
 /// Senior iOS Architecture: Apple Sign-In Controller & Credential State Manager
+@MainActor
 final class AppleSignInManager: NSObject, ObservableObject {
+
     static let shared = AppleSignInManager()
     
     @Published private(set) var authState: AuthState = .checking

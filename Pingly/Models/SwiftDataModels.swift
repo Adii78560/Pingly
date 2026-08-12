@@ -38,7 +38,7 @@ final class SDVoiceTranscript {
     }
 }
 
-/// SwiftData persistent model for P2P off-grid text messages partitioned by channel.
+/// SwiftData persistent model for P2P off-grid text & location messages partitioned by channel.
 @Model
 final class SDChatMessage {
     @Attribute(.unique) var id: UUID
@@ -48,6 +48,16 @@ final class SDChatMessage {
     var timestamp: Date
     var isSynced: Bool
     var isDelivered: Bool = false
+    var messageTypeRaw: String = P2PMessageType.chat.rawValue
+    var latitude: Double?
+    var longitude: Double?
+    var altitude: Double?
+    var accuracy: Double?
+    
+    var type: P2PMessageType {
+        get { P2PMessageType(rawValue: messageTypeRaw) ?? .chat }
+        set { messageTypeRaw = newValue.rawValue }
+    }
     
     init(
         id: UUID = UUID(),
@@ -56,7 +66,12 @@ final class SDChatMessage {
         text: String,
         timestamp: Date = Date(),
         isSynced: Bool = false,
-        isDelivered: Bool = false
+        isDelivered: Bool = false,
+        messageType: P2PMessageType = .chat,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        altitude: Double? = nil,
+        accuracy: Double? = nil
     ) {
         self.id = id
         self.senderName = senderName
@@ -65,8 +80,14 @@ final class SDChatMessage {
         self.timestamp = timestamp
         self.isSynced = isSynced
         self.isDelivered = isDelivered
+        self.messageTypeRaw = messageType.rawValue
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
+        self.accuracy = accuracy
     }
 }
+
 
 
 

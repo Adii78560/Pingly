@@ -48,6 +48,9 @@
 	<string>Pingly requires microphone access to record and transmit live Push-To-Talk (PTT) radio voice communications.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Pingly uses Speech Recognition to transcribe Walkie-Talkie voice broadcasts in real-time so you can read missed messages.</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>Pingly uses anonymous telemetry to optimize off-grid P2P mesh signal strength and node connectivity performance.</string>
+
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
