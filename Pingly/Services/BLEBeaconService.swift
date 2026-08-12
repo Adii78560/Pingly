@@ -25,21 +25,23 @@ final class BLEBeaconService: NSObject, ObservableObject {
     
     private var userHandle: String = Constants.App.defaultUserHandle
     
+    private var isHighFrequencyRadarActive = false
+    
     override init() {
         super.init()
         self.centralManager = CBCentralManager(delegate: self, queue: nil)
         self.peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
     }
     
-    func startScanningAndAdvertising(userHandle: String) {
+    func startScanningAndAdvertising(userHandle: String, allowDuplicates: Bool = false) {
         self.userHandle = userHandle
         
         if centralManager.state == .poweredOn {
             centralManager.scanForPeripherals(
                 withServices: [Constants.BLE.serviceUUID],
-                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
             )
-            AppLogger.ble.info("Started BLE RSSI Scanning for Pingly beacons")
+            AppLogger.ble.info("Started Low-Power BLE RSSI Scanning (AllowDuplicates: \(allowDuplicates))")
         }
         
         if peripheralManager.state == .poweredOn {
@@ -52,11 +54,40 @@ final class BLEBeaconService: NSObject, ObservableObject {
         }
     }
     
+    /// Enables high-frequency RSSI duplicate scanning for live Radar view
+    func startHighFrequencyRadarScan() {
+        guard !isHighFrequencyRadarActive else { return }
+        isHighFrequencyRadarActive = true
+        startScanningAndAdvertising(userHandle: userHandle, allowDuplicates: true)
+        AppLogger.ble.info("Enabled high-frequency BLE RSSI scanning for active Radar view")
+    }
+    
+    /// Reverts to low-power BLE scanning when leaving Radar view
+    func stopHighFrequencyRadarScan() {
+        guard isHighFrequencyRadarActive else { return }
+        isHighFrequencyRadarActive = false
+        startScanningAndAdvertising(userHandle: userHandle, allowDuplicates: false)
+        AppLogger.ble.info("Reverted to low-power BLE scanning")
+    }
+    
+    /// Pauses scanning during app background transitions to preserve battery
+    func pauseScanningForBackground() {
+        centralManager.stopScan()
+        AppLogger.ble.info("Paused BLE scanning for background state")
+    }
+    
+    /// Resumes scanning when app returns to foreground
+    func resumeScanningForForeground() {
+        startScanningAndAdvertising(userHandle: userHandle, allowDuplicates: isHighFrequencyRadarActive)
+    }
+    
     func stopScanningAndAdvertising() {
+        isHighFrequencyRadarActive = false
         centralManager.stopScan()
         peripheralManager.stopAdvertising()
     }
 }
+
 
 // MARK: - CBCentralManagerDelegate
 extension BLEBeaconService: CBCentralManagerDelegate {

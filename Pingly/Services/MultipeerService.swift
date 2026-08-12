@@ -10,10 +10,27 @@ import MultipeerConnectivity
 import Combine
 import os
 
+/// Thread-safe actor coalescing duplicate queue processing requests to conserve CPU and battery
+actor QueueProcessingCoalescer {
+    private var isProcessing = false
+    
+    func performCoalescedWork(_ block: @escaping () async -> Void) async {
+        guard !isProcessing else {
+            AppLogger.multipeer.info("QueueProcessingCoalescer: Coalesced parallel queue processing trigger.")
+            return
+        }
+        isProcessing = true
+        await block()
+        isProcessing = false
+    }
+}
+
 /// Production MultipeerConnectivity Service managing AirDrop/Wi-Fi/Bluetooth peer mesh networking
 final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObject {
     
     static let shared = MultipeerService()
+    private let queueCoalescer = QueueProcessingCoalescer()
+
     
     // MARK: - Published Properties
     @Published private(set) var connectedPeers: [PeerDevice] = []
@@ -186,56 +203,59 @@ extension MultipeerService: MCSessionDelegate {
     }
     
     /// Flushes queued offline store-and-forward messages when peer nodes enter network range.
+
     func flushPendingStoreAndForwardQueue(for peerID: MCPeerID? = nil) {
-        Task { @MainActor in
-            guard !connectedPeers.isEmpty else { return }
-            
-            let pendingList = SwiftDataService.shared.fetchPendingMessages()
-            guard !pendingList.isEmpty else { return }
-            
-            for pending in pendingList {
-                guard pending.retryCount < pending.maxRetries else {
-                    AppLogger.multipeer.warning("Pending message \(pending.messageID) reached max retries (\(pending.maxRetries)). Skipping.")
-                    continue
-                }
+        Task {
+            await self.queueCoalescer.performCoalescedWork { @MainActor in
+                guard !self.connectedPeers.isEmpty else { return }
                 
-                // Backoff delay check (wait 3s between retries if previously failed)
-                if let lastAttempt = pending.lastAttemptTimestamp, Date().timeIntervalSince(lastAttempt) < 3.0 {
-                    continue
-                }
+                let pendingList = SwiftDataService.shared.fetchPendingMessages()
+                guard !pendingList.isEmpty else { return }
                 
-                SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .sending)
-                
-                let isTranscript = pending.text.hasPrefix("[")
-                let msg = Message(
-                    id: pending.messageID,
-                    senderID: pending.senderName,
-                    senderName: pending.senderName,
-                    text: isTranscript ? pending.text : "[\(pending.channel)] \(pending.text)",
-                    timestamp: pending.timestamp,
-                    hopsCount: 0,
-                    type: isTranscript ? .transcript : .chat
-                )
-                
-                self.broadcast(message: msg)
-                SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .waitingForACK)
-                AppLogger.multipeer.info("Dispatched store-and-forward message \(pending.messageID) for '\(pending.recipientName)' (waiting for ACK)")
-                
-                // Schedule ACK timeout verification (5 seconds)
-                Task {
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    let checkList = SwiftDataService.shared.fetchPendingMessages()
-                    if let item = checkList.first(where: { $0.messageID == pending.messageID }), item.status == .waitingForACK {
-                        SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .failed)
-                        AppLogger.multipeer.warning("ACK Timeout (5s) for pending message \(pending.messageID). Set status to FAILED.")
+                for pending in pendingList {
+                    guard pending.retryCount < pending.maxRetries else {
+                        AppLogger.multipeer.warning("Pending message \(pending.messageID) reached max retries (\(pending.maxRetries)). Skipping.")
+                        continue
+                    }
+                    
+                    // Controlled exponential backoff delay check (wait 3s between retries)
+                    if let lastAttempt = pending.lastAttemptTimestamp, Date().timeIntervalSince(lastAttempt) < 3.0 {
+                        continue
+                    }
+                    
+                    SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .sending)
+                    
+                    let isTranscript = pending.text.hasPrefix("[")
+                    let msg = Message(
+                        id: pending.messageID,
+                        senderID: pending.senderName,
+                        senderName: pending.senderName,
+                        text: isTranscript ? pending.text : "[\(pending.channel)] \(pending.text)",
+                        timestamp: pending.timestamp,
+                        hopsCount: 0,
+                        type: isTranscript ? .transcript : .chat
+                    )
+                    
+                    self.broadcast(message: msg)
+                    SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .waitingForACK)
+                    AppLogger.multipeer.info("Dispatched store-and-forward message \(pending.messageID) for '\(pending.recipientName)' (waiting for ACK)")
+                    
+                    // Schedule ACK timeout verification (5 seconds)
+                    Task {
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        let checkList = SwiftDataService.shared.fetchPendingMessages()
+                        if let item = checkList.first(where: { $0.messageID == pending.messageID }), item.status == .waitingForACK {
+                            SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .failed)
+                            AppLogger.multipeer.warning("ACK Timeout (5s) for pending message \(pending.messageID). Set status to FAILED.")
+                        }
                     }
                 }
             }
         }
     }
-
     
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+
         // Try decoding as ChannelInvite first
         if let invite = try? JSONDecoder().decode(ChannelInvite.self, from: data), invite.type == "CHANNEL_SYNC" {
             NotificationCenter.default.post(

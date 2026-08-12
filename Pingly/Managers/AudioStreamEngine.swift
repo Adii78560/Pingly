@@ -133,17 +133,20 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         }
     }
     
-    /// Stops microphone tap and engine recording.
+    /// Stops microphone tap and engine recording idempotently to conserve battery power.
     func stopCapture() {
-        guard isRecording else { return }
         isRecording = false
         audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
+        if audioEngine.isRunning && !playerNode.isPlaying {
+            audioEngine.stop()
+        }
         DispatchQueue.main.async {
             self.currentAudioLevel = 0.0
         }
-        AppLogger.audio.info("AudioStreamEngine recording stopped")
+        BackgroundAudioSessionManager.shared.deactivateAudioSession()
+        AppLogger.audio.info("AudioStreamEngine recording stopped & audio session deactivated")
     }
+
     
     // MARK: - Streaming Playback Engine
     

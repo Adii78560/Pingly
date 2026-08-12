@@ -65,6 +65,22 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
             }
         }
     }
+    
+    /// Deactivates system AVAudioSession to power down hardware microphone and conserve battery.
+    func deactivateAudioSession() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                DispatchQueue.main.async {
+                    self?.isAudioSessionActive = false
+                }
+                AppLogger.audio.info("AVAudioSession successfully deactivated for battery conservation")
+            } catch {
+                AppLogger.audio.warning("Could not deactivate AVAudioSession: \(error.localizedDescription)")
+            }
+        }
+    }
+
 
     
     /// Requests background execution time from iOS to prevent network socket suspension during live stream.

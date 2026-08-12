@@ -85,15 +85,24 @@ final class RadarViewModel: ObservableObject {
         }
     }
     
+    func onAppear() {
+        bleBeaconService.startHighFrequencyRadarScan()
+    }
+    
+    func onDisappear() {
+        bleBeaconService.stopHighFrequencyRadarScan()
+    }
+    
     func toggleScanning() {
         isScanning.toggle()
         if isScanning {
             multipeerService.startAdvertisingAndBrowsing(userHandle: broadcastName, status: .normal)
-            bleBeaconService.startScanningAndAdvertising(userHandle: broadcastName)
+            bleBeaconService.startHighFrequencyRadarScan()
         } else {
             multipeerService.stopAdvertisingAndBrowsing()
-            bleBeaconService.stopScanningAndAdvertising()
+            bleBeaconService.stopHighFrequencyRadarScan()
         }
     }
 }
+
 

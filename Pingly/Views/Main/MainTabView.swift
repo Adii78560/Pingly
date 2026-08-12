@@ -6,12 +6,17 @@
 //
 
 import SwiftUI
+import os
 
 /// Main Tab Navigation Host View for RadioFy / Pingly
 struct MainTabView: View {
+
+    
+    @Environment(\.scenePhase) private var scenePhase
     
     // MARK: - Core Services (Singletons)
     @StateObject private var multipeerService = MultipeerService.shared
+
     @StateObject private var bleBeaconService = BLEBeaconService.shared
     @StateObject private var radioAudioService = RadioAudioService.shared
     @StateObject private var locationService = LocationService.shared
@@ -97,9 +102,24 @@ struct MainTabView: View {
             locationService.requestLocationPermission()
             let handle = settingsViewModel.userHandle
             multipeerService.startAdvertisingAndBrowsing(userHandle: handle, status: settingsViewModel.selectedEmergencyStatus)
-            bleBeaconService.startScanningAndAdvertising(userHandle: handle)
+            bleBeaconService.startScanningAndAdvertising(userHandle: handle, allowDuplicates: false)
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .background:
+                bleBeaconService.pauseScanningForBackground()
+                AppLogger.multipeer.info("App entered background. Throttled BLE scanning to conserve battery.")
+            case .active:
+                bleBeaconService.resumeScanningForForeground()
+                MultipeerService.shared.flushPendingStoreAndForwardQueue()
+                AppLogger.multipeer.info("App active in foreground. Resumed discovery & triggered coalesced queue flush.")
+            default:
+                break
+            }
+        }
+
     }
 }
+
 
 

@@ -152,6 +152,7 @@ final class SpeechTranscriberManager: ObservableObject {
     /// Stops speech transcription and saves completed transcript to history.
     func stopTranscribing() {
         guard isTranscribing else { return }
+        isTranscribing = false
         
         recognitionRequest?.endAudio()
         
@@ -165,11 +166,11 @@ final class SpeechTranscriberManager: ObservableObject {
             self.recognitionTask?.finish()
             self.recognitionTask = nil
             self.recognitionRequest = nil
-            self.isTranscribing = false
             
             let textToSave = self.currentTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
             self.currentTranscriptText = ""
             self.accumulatedSegments.removeAll()
+
             
             // Only save transcript if actual spoken text was recognized
             guard !textToSave.isEmpty else {
