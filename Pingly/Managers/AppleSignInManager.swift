@@ -1,0 +1,160 @@
+//
+//  AppleSignInManager.swift
+//  Pingly
+//
+//  Created by Senior iOS Developer on 13/08/26.
+//
+
+import Foundation
+import UIKit
+import Combine
+import AuthenticationServices
+import CryptoKit
+import OSLog
+
+/// Single source of truth for Application Authentication State
+enum AuthState: String, Codable {
+    case checking
+    case authenticated
+    case unauthenticated
+}
+
+/// Security & Credential Storage Keys for Apple Sign-In
+enum AppleSignInKeys {
+    static let userID = "com.adityarai.pinglyapp.appleUserID"
+    static let userEmail = "com.adityarai.pinglyapp.appleUserEmail"
+    static let userFullName = "com.adityarai.pinglyapp.appleUserFullName"
+    static let isAuthenticated = "com.adityarai.pinglyapp.isAuthenticated"
+}
+
+/// Senior iOS Architecture: Apple Sign-In Controller & Credential State Manager
+final class AppleSignInManager: NSObject, ObservableObject {
+    static let shared = AppleSignInManager()
+    
+    @Published private(set) var authState: AuthState = .checking
+    @Published private(set) var userEmail: String?
+    @Published private(set) var userFullName: String?
+    @Published private(set) var appleUserID: String?
+    @Published private(set) var username: String?
+    
+    var isAuthenticated: Bool {
+        return authState == .authenticated
+    }
+    
+    override private init() {
+        super.init()
+        loadStoredSession()
+        checkCredentialStateOnLaunch()
+    }
+    
+    // MARK: - Session Persistence
+    
+    private func loadStoredSession() {
+        self.appleUserID = UserDefaults.standard.string(forKey: AppleSignInKeys.userID)
+        self.userEmail = UserDefaults.standard.string(forKey: AppleSignInKeys.userEmail)
+        self.userFullName = UserDefaults.standard.string(forKey: AppleSignInKeys.userFullName)
+        let isAuth = UserDefaults.standard.bool(forKey: AppleSignInKeys.isAuthenticated)
+        
+        if isAuth, let userID = appleUserID {
+            self.authState = .authenticated
+            DispatchQueue.main.async {
+                let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
+                self.username = profile?.username
+            }
+        } else {
+            self.authState = .unauthenticated
+        }
+    }
+    
+    /// Verifies existing Apple ID credential validity with Apple servers on launch
+    func checkCredentialStateOnLaunch() {
+        let isAuthStored = UserDefaults.standard.bool(forKey: AppleSignInKeys.isAuthenticated)
+        guard isAuthStored, let userID = appleUserID, !userID.isEmpty else {
+            DispatchQueue.main.async {
+                self.authState = .unauthenticated
+            }
+            return
+        }
+        
+        let appleIDProvider = ASAuthorizationAppleIDProvider()
+        appleIDProvider.getCredentialState(forUserID: userID) { [weak self] credentialState, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard UserDefaults.standard.bool(forKey: AppleSignInKeys.isAuthenticated) else {
+                    self.authState = .unauthenticated
+                    return
+                }
+                switch credentialState {
+                case .authorized:
+                    self.authState = .authenticated
+                    let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
+                    self.username = profile?.username
+                    AppLogger.multipeer.info("Apple Sign-In Credential State: Authorized for user \(userID)")
+                case .revoked, .notFound, .transferred:
+                    self.signOut()
+                    AppLogger.multipeer.warning("Apple Sign-In Credential Revoked or Not Found. Resetting session.")
+                @unknown default:
+                    let isAuthStillStored = UserDefaults.standard.bool(forKey: AppleSignInKeys.isAuthenticated)
+                    self.authState = isAuthStillStored ? .authenticated : .unauthenticated
+                    let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
+                    self.username = profile?.username
+                }
+            }
+        }
+    }
+
+    
+    // MARK: - Direct Credential Handler (Single FaceID Scan)
+    
+    func handleCredential(_ appleIDCredential: ASAuthorizationAppleIDCredential) {
+        let userID = appleIDCredential.user
+        let email = appleIDCredential.email
+        let fullName = appleIDCredential.fullName
+        
+        var formattedName: String?
+        if let fullName = fullName {
+            let formatter = PersonNameComponentsFormatter()
+            formattedName = formatter.string(from: fullName)
+        }
+        
+        // Find existing or create NEW profile with atomic unique 8-character username
+        let profile = SwiftDataService.shared.findOrCreateUserProfile(
+            appleUserID: userID,
+            appleName: formattedName,
+            email: email
+        )
+        
+        UserDefaults.standard.set(userID, forKey: AppleSignInKeys.userID)
+        if let email = email {
+            UserDefaults.standard.set(email, forKey: AppleSignInKeys.userEmail)
+        }
+        UserDefaults.standard.set(profile.displayName, forKey: AppleSignInKeys.userFullName)
+        UserDefaults.standard.set(profile.displayName, forKey: Constants.StorageKeys.userHandle)
+        UserDefaults.standard.set(true, forKey: AppleSignInKeys.isAuthenticated)
+        
+        DispatchQueue.main.async {
+            self.appleUserID = userID
+            self.userEmail = email ?? self.userEmail
+            self.userFullName = profile.displayName
+            self.username = profile.username
+            self.authState = .authenticated
+        }
+        AppLogger.multipeer.info("Successfully authenticated Apple user \(userID) with Pingly username \(profile.username)")
+    }
+
+    
+    func signOut() {
+        UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userID)
+        UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userEmail)
+        UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userFullName)
+        UserDefaults.standard.set(false, forKey: AppleSignInKeys.isAuthenticated)
+        
+        self.appleUserID = nil
+        self.userEmail = nil
+        self.userFullName = nil
+        self.username = nil
+        self.authState = .unauthenticated
+
+        AppLogger.multipeer.info("Signed out of Apple ID session successfully.")
+    }
+}

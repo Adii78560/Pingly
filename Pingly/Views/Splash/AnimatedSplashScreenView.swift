@@ -74,11 +74,13 @@ struct AnimatedSplashScreenView: View {
     }
     
     private func runMinimalAnimationSequence() {
-        // 1. Spring scale-in emblem
+        // 1. Spring scale-in emblem & trigger tactical heartbeat haptic pulse
+        HapticsManager.shared.heartbeatPulse()
         withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) {
             emblemScale = 1.0
             emblemOpacity = 1.0
         }
+
         
         // 2. Smooth text fade-in
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) {

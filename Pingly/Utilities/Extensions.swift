@@ -77,38 +77,8 @@ extension String {
 }
 
 
-// MARK: - Tactical Haptic Generator Manager
-enum HapticManager {
-    static func lightImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        generator.impactOccurred()
-    }
-    
-    static func mediumImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.prepare()
-        generator.impactOccurred()
-    }
-    
-    static func heavyImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.prepare()
-        generator.impactOccurred()
-    }
-    
-    static func successFeedback() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.success)
-    }
-    
-    static func warningFeedback() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.warning)
-    }
-}
+
+
 
 // MARK: - Native iOS Settings Icon Badge (Colored rounded square with SF Symbol)
 struct SettingsIconBadge: View {

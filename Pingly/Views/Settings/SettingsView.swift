@@ -21,8 +21,10 @@ struct SettingsView: View {
     @StateObject var viewModel: SettingsViewModel
     @StateObject private var swiftDataService = SwiftDataService.shared
     @StateObject private var cloudSyncService = CloudSyncService.shared
+    @State private var showLogoutConfirmation = false
     
     var body: some View {
+
 
         NavigationStack {
             Form {
@@ -41,10 +43,17 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(viewModel.userHandle)
                                 .font(.headline)
-                            Text("Off-Grid P2P Mesh Node")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                            if let username = AppleSignInManager.shared.username {
+                                Text("Pingly ID: \(username)")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundColor(.orange)
+                            } else {
+                                Text("Off-Grid P2P Mesh Node")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
                         }
+
                     }
                     .padding(.vertical, 4)
                     
@@ -61,15 +70,14 @@ struct SettingsView: View {
                                 HapticManager.successFeedback()
                             }
                     }
-                }
- header: {
+                } header: {
                     Text("Identity")
                 }
                 
                 // Section 2: Emergency Category
                 Section {
                     HStack {
-                        SettingsIconBadge(systemName: "exclamationmark.shield.fill", backgroundColor: .orange)
+                        SettingsIconBadge(systemName: "checkmark.shield.fill", backgroundColor: .orange)
                         Picker("Default Status", selection: $viewModel.selectedEmergencyStatus) {
                             ForEach(EmergencyStatus.allCases) { status in
                                 Text(status.rawValue).tag(status)
@@ -158,7 +166,27 @@ struct SettingsView: View {
                     Text("Off-grid transcripts and messages are saved in SwiftData local storage. When internet is available, data automatically syncs to your logged-in device cloud account.")
                 }
 
-                // Section 5: App Information
+                // Section 5: Account & Authentication Log Out
+                Section {
+                    Button(role: .destructive, action: {
+                        HapticsManager.shared.warningFeedback()
+                        showLogoutConfirmation = true
+                    }) {
+                        HStack {
+                            SettingsIconBadge(systemName: "rectangle.portrait.and.arrow.right.fill", backgroundColor: .red)
+                            Text("Log Out")
+                                .font(.body.weight(.medium))
+                                .foregroundColor(.red)
+                            Spacer()
+                        }
+                    }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("Logging out clears your active local session and requires re-authentication.")
+                }
+
+                // Section 6: App Information
                 Section {
                     HStack {
                         SettingsIconBadge(systemName: "info.circle.fill", backgroundColor: .gray)
@@ -169,7 +197,7 @@ struct SettingsView: View {
                     }
                     
                     HStack {
-                        SettingsIconBadge(systemName: "shield.fill", backgroundColor: .teal)
+                        SettingsIconBadge(systemName: "checkmark.shield.fill", backgroundColor: .teal)
                         Text("Security & Encryption")
                         Spacer()
                         Text("Apple P2P TLS & SwiftData")
@@ -189,8 +217,20 @@ struct SettingsView: View {
 
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
+            .alert("Log Out", isPresented: $showLogoutConfirmation) {
+                Button("Log Out", role: .destructive) {
+                    HapticsManager.shared.heavyImpact()
+                    AppleSignInManager.shared.signOut()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Are you sure you want to log out?")
+            }
         }
     }
 }
+
+
+
 
 

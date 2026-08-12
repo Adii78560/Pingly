@@ -28,8 +28,10 @@ final class SwiftDataService: ObservableObject {
         let schema = Schema([
             SDVoiceTranscript.self,
             SDChatMessage.self,
-            SDPendingMessage.self
+            SDPendingMessage.self,
+            SDUserProfile.self
         ])
+
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         
         do {
@@ -374,6 +376,67 @@ final class SwiftDataService: ObservableObject {
         saveContext()
         AppLogger.multipeer.info("Deleted delivered pending message for recipient '\(item.recipientName)'")
     }
+
+    // MARK: - User Profile & Unique Username Persistence
+    
+    func fetchUserProfile(appleUserID: String) -> SDUserProfile? {
+        let descriptor = FetchDescriptor<SDUserProfile>(
+            predicate: #Predicate { $0.appleUserID == appleUserID }
+        )
+        return (try? context.fetch(descriptor))?.first
+    }
+    
+    func findOrCreateUserProfile(appleUserID: String, appleName: String?, email: String?) -> SDUserProfile {
+        if let existing = fetchUserProfile(appleUserID: appleUserID) {
+            AppLogger.multipeer.info("Retrieved existing profile for Apple User \(appleUserID): Username=\(existing.username), DisplayName='\(existing.displayName)'")
+            UserDefaults.standard.set(existing.displayName, forKey: Constants.StorageKeys.userHandle)
+            return existing
+        }
+        
+        // Generate atomic unique 8-character username (guaranteed non-duplicate at DB level)
+        var uniqueUsername = ""
+        var isUnique = false
+        var attempts = 0
+        
+        while !isUnique && attempts < 100 {
+            attempts += 1
+            let candidate = UsernameGenerator.generate8CharUsername()
+            let checkDescriptor = FetchDescriptor<SDUserProfile>(
+                predicate: #Predicate { $0.username == candidate }
+            )
+            if (try? context.fetch(checkDescriptor))?.isEmpty ?? true {
+                uniqueUsername = candidate
+                isUnique = true
+            }
+        }
+        
+        if uniqueUsername.isEmpty {
+            uniqueUsername = "P2P\(UUID().uuidString.prefix(5).uppercased())"
+        }
+        
+        // Determine initial display name: Apple provided name, otherwise unique 8-char username
+        let finalDisplayName: String
+        if let appleName = appleName, !appleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            finalDisplayName = appleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            finalDisplayName = uniqueUsername
+        }
+        
+        let newProfile = SDUserProfile(
+            appleUserID: appleUserID,
+            username: uniqueUsername,
+            displayName: finalDisplayName,
+            email: email
+        )
+        
+        context.insert(newProfile)
+        saveContext()
+        
+        UserDefaults.standard.set(finalDisplayName, forKey: Constants.StorageKeys.userHandle)
+        AppLogger.multipeer.info("Created NEW user profile: AppleUserID=\(appleUserID), Username=\(uniqueUsername), DisplayName='\(finalDisplayName)'")
+        return newProfile
+    }
+
 
     
     // MARK: - Private Helpers
