@@ -197,9 +197,13 @@ final class SpeechTranscriberManager: ObservableObject {
             )
             self.transcriptHistory.append(transcript)
             
+            let localNodeID = NodeIdentity.shared.nodeID
+            
             // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
             _ = SwiftDataService.shared.enqueuePendingMessage(
                 messageID: sdTranscript.id,
+                originID: localNodeID,
+                destinationID: channel,
                 recipientName: channel,
                 senderName: finalSpeaker,
                 text: "[\(channel)] \(textToSave)",
@@ -209,13 +213,17 @@ final class SpeechTranscriberManager: ObservableObject {
             // Broadcast VoiceTranscript payload over P2P mesh network if connected
             let netMessage = Message(
                 id: sdTranscript.id,
-                senderID: finalSpeaker,
+                originID: localNodeID,
+                destinationID: channel,
+                senderID: localNodeID,
                 senderName: finalSpeaker,
                 text: "[\(channel)] \(textToSave)",
                 timestamp: Date(),
                 hopsCount: 0,
                 type: .transcript
             )
+
+
             
             if isConnected {
                 MultipeerService.shared.broadcast(message: netMessage)

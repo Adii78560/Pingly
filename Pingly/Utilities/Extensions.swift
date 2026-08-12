@@ -64,7 +64,18 @@ extension String {
         let last = clean[1].prefix(1)
         return "\(first)\(last)".uppercased()
     }
+    
+    /// Strips MultipeerConnectivity randomly generated vendor hash suffixes (e.g. "_D89B_9360") to yield the clean peer base handle
+    var cleanBaseName: String {
+        let pattern = "_([A-Fa-f0-9]{4}_[A-Fa-f0-9]{4}|\\d{4}|[A-Fa-f0-9]{8})$"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+            let range = NSRange(location: 0, length: self.utf16.count)
+            return regex.stringByReplacingMatches(in: self, options: [], range: range, withTemplate: "")
+        }
+        return self
+    }
 }
+
 
 // MARK: - Tactical Haptic Generator Manager
 enum HapticManager {

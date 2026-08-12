@@ -195,13 +195,33 @@ final class SwiftDataService: ObservableObject {
     
     // MARK: - Store-and-Forward Mesh Queue Operations
     
+    private let queueLock = NSLock()
+    
     func enqueuePendingMessage(
         messageID: UUID = UUID(),
+        originID: String? = nil,
+        destinationID: String = "BROADCAST",
         recipientName: String,
         senderName: String,
+        previousHopID: String? = nil,
         text: String,
-        channel: String = "CH-1 EMERGENCY"
-    ) -> SDPendingMessage {
+        channel: String = "CH-1 EMERGENCY",
+        isSOS: Bool = false,
+        priorityRaw: Int = 0,
+        queueRole: QueueRole = .origin,
+        hopsCount: Int = 0,
+        ttl: Int = 5
+    ) -> SDPendingMessage? {
+
+        // Enforce 64 KB payload limit for text/transcript envelopes
+        guard text.utf8.count <= Constants.Mesh.maxPayloadBytes else {
+            AppLogger.multipeer.error("Oversized payload rejected (\(text.utf8.count) bytes > \(Constants.Mesh.maxPayloadBytes) bytes limit).")
+            return nil
+        }
+        
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
         let existingDescriptor = FetchDescriptor<SDPendingMessage>(
             predicate: #Predicate { $0.messageID == messageID }
         )
@@ -211,27 +231,79 @@ final class SwiftDataService: ObservableObject {
         
         let pending = SDPendingMessage(
             messageID: messageID,
+            originID: originID ?? senderName,
+            destinationID: destinationID,
             recipientName: recipientName,
             senderName: senderName,
+            previousHopID: previousHopID,
             text: text,
             channel: channel,
             timestamp: Date(),
-            status: .queued
+            isSOS: isSOS,
+            priorityRaw: isSOS ? 2 : priorityRaw,
+            status: .queued,
+            queueRole: queueRole,
+            hopsCount: hopsCount,
+            ttl: ttl
         )
         context.insert(pending)
         saveContext()
-        AppLogger.multipeer.info("Enqueued offline pending message \(messageID) for recipient '\(recipientName)': \"\(text)\"")
+        AppLogger.multipeer.info("Enqueued pending \(queueRole.rawValue) message \(messageID) for recipient '\(recipientName)' (Dest: \(destinationID)): \"\(text.prefix(30))...\"")
         return pending
     }
     
-    func fetchPendingMessages() -> [SDPendingMessage] {
-        let descriptor = FetchDescriptor<SDPendingMessage>(
-            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+    func enqueueRelayMessage(_ message: Message) -> SDPendingMessage? {
+        return enqueuePendingMessage(
+            messageID: message.id,
+            originID: message.originID,
+            destinationID: message.destinationID,
+            recipientName: message.destinationID,
+            senderName: message.senderName,
+            previousHopID: message.previousHopID ?? message.senderID,
+            text: message.text,
+            channel: message.destinationID,
+            isSOS: message.isSOS,
+            priorityRaw: message.isSOS ? 2 : 0,
+            queueRole: .relay,
+            hopsCount: message.hopsCount,
+            ttl: message.ttl
         )
-        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    
+    func fetchPendingMessages() -> [SDPendingMessage] {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let now = Date()
+        let descriptor = FetchDescriptor<SDPendingMessage>()
+        guard let allPending = try? context.fetch(descriptor) else { return [] }
+        
+        var validPending: [SDPendingMessage] = []
+        for item in allPending {
+            // Purge expired store-and-forward messages (e.g. older than 7 days)
+            if item.expiresAt < now {
+                context.delete(item)
+                AppLogger.multipeer.info("Purged expired pending message \(item.messageID)")
+            } else {
+                validPending.append(item)
+            }
+        }
+        saveContext()
+        
+        // Priority ordering: Emergency SOS first (priorityRaw descending), followed by timestamp order
+        return validPending.sorted { first, second in
+            if first.priorityRaw != second.priorityRaw {
+                return first.priorityRaw > second.priorityRaw
+            }
+            return first.timestamp < second.timestamp
+        }
     }
     
     func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus) {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
         let descriptor = FetchDescriptor<SDPendingMessage>(
             predicate: #Predicate { $0.messageID == messageID }
         )
@@ -247,6 +319,9 @@ final class SwiftDataService: ObservableObject {
     }
     
     func markPendingMessageAsACKed(messageID: UUID) {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
         // Mark SDChatMessage as delivered (GREEN)
         let chatDescriptor = FetchDescriptor<SDChatMessage>(
             predicate: #Predicate { $0.id == messageID }
@@ -276,6 +351,7 @@ final class SwiftDataService: ObservableObject {
         saveContext()
         AppLogger.multipeer.info("ACK Received: Marked message \(messageID) as delivered (GREEN) and purged from pending queue.")
     }
+
     
     func isMessageAlreadyProcessed(messageID: UUID) -> Bool {
         let chatDescriptor = FetchDescriptor<SDChatMessage>(

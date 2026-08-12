@@ -202,13 +202,14 @@ extension MultipeerService: MCSessionDelegate {
         }
     }
     
-    /// Flushes queued offline store-and-forward messages when peer nodes enter network range.
-
+    /// Flushes queued offline store-and-forward messages (both origin and relay roles) when peer nodes enter network range.
     func flushPendingStoreAndForwardQueue(for peerID: MCPeerID? = nil) {
         Task {
             await self.queueCoalescer.performCoalescedWork { @MainActor in
                 guard !self.connectedPeers.isEmpty else { return }
                 
+                let localNodeID = NodeIdentity.shared.nodeID
+                let localUserHandle = NodeIdentity.shared.displayName
                 let pendingList = SwiftDataService.shared.fetchPendingMessages()
                 guard !pendingList.isEmpty else { return }
                 
@@ -218,27 +219,38 @@ extension MultipeerService: MCSessionDelegate {
                         continue
                     }
                     
-                    // Controlled exponential backoff delay check (wait 3s between retries)
+                    // Controlled exponential backoff delay check (3s base backoff)
                     if let lastAttempt = pending.lastAttemptTimestamp, Date().timeIntervalSince(lastAttempt) < 3.0 {
+                        continue
+                    }
+                    
+                    // Prevent forwarding if TTL exhausted
+                    guard pending.hopsCount < pending.ttl else {
+                        AppLogger.multipeer.warning("Pending message \(pending.messageID) TTL exhausted (\(pending.hopsCount)/\(pending.ttl)). Halting forward.")
                         continue
                     }
                     
                     SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .sending)
                     
                     let isTranscript = pending.text.hasPrefix("[")
-                    let msg = Message(
+                    var msg = Message(
                         id: pending.messageID,
-                        senderID: pending.senderName,
+                        originID: pending.originID,
+                        destinationID: pending.destinationID,
+                        senderID: localNodeID,
                         senderName: pending.senderName,
-                        text: isTranscript ? pending.text : "[\(pending.channel)] \(pending.text)",
+                        previousHopID: localNodeID,
+                        text: pending.text,
                         timestamp: pending.timestamp,
-                        hopsCount: 0,
+                        isSOS: pending.isSOS,
+                        hopsCount: pending.hopsCount + 1,
+                        ttl: pending.ttl,
                         type: isTranscript ? .transcript : .chat
                     )
                     
                     self.broadcast(message: msg)
                     SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .waitingForACK)
-                    AppLogger.multipeer.info("Dispatched store-and-forward message \(pending.messageID) for '\(pending.recipientName)' (waiting for ACK)")
+                    AppLogger.multipeer.info("Dispatched \(pending.queueRole.rawValue) message \(pending.messageID) for '\(pending.destinationID)' (Hop \(msg.hopsCount)/\(msg.ttl))")
                     
                     // Schedule ACK timeout verification (5 seconds)
                     Task {
@@ -255,87 +267,160 @@ extension MultipeerService: MCSessionDelegate {
     }
     
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-
-        // Try decoding as ChannelInvite first
-        if let invite = try? JSONDecoder().decode(ChannelInvite.self, from: data), invite.type == "CHANNEL_SYNC" {
-            NotificationCenter.default.post(
-                name: .didReceiveChannelSync,
-                object: self,
-                userInfo: ["channelName": invite.channelName, "creator": invite.creatorHandle]
-            )
-            AppLogger.multipeer.info("Received channel sync invite: \(invite.channelName) from \(invite.creatorHandle)")
-            return
-        }
-        
-        // Try decoding as emergency / P2P text or voice transcript JSON Message next
-        if let message = try? JSONDecoder().decode(Message.self, from: data) {
+        // Offload decoding, verification & routing off the main thread for performance
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Check for raw PTT audio binary framing header (magic bytes 0x5054)
+            if data.count >= 2 && data[0] == 0x50 && data[1] == 0x54 {
+                NotificationCenter.default.post(
+                    name: .didReceiveRawPTTPacket,
+                    object: self,
+                    userInfo: ["packet": data, "peerID": peerID]
+                )
+                DispatchQueue.main.async {
+                    self.receivedAudioDataSubject.send(data)
+                }
+                return
+            }
+            
+            // Try decoding as ChannelInvite first
+            if let invite = try? JSONDecoder().decode(ChannelInvite.self, from: data), invite.type == "CHANNEL_SYNC" {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .didReceiveChannelSync,
+                        object: self,
+                        userInfo: ["channelName": invite.channelName, "creator": invite.creatorHandle]
+                    )
+                }
+                AppLogger.multipeer.info("Received channel sync invite: \(invite.channelName) from \(invite.creatorHandle)")
+                return
+            }
+            
+            // Try decoding as emergency / P2P text or voice transcript JSON Message next
+            guard let message = try? JSONDecoder().decode(Message.self, from: data) else {
+                AppLogger.multipeer.warning("Received un-decodable byte frame from \(peerID.displayName). Dropping safely.")
+                return
+            }
+            
+            // 1. Protocol Version Validation
+            guard message.protocolVersion <= Constants.Mesh.currentProtocolVersion else {
+                AppLogger.multipeer.warning("Rejected packet with unsupported future protocol version \(message.protocolVersion) > \(Constants.Mesh.currentProtocolVersion)")
+                return
+            }
+            
+            // 2. CryptoKit HMAC-SHA256 Envelope Verification
+            guard MeshSecurityManager.shared.verify(message: message) else {
+                AppLogger.multipeer.error("Security Alert: Invalid HMAC-SHA256 signature tag on message \(message.id). Rejecting forged envelope.")
+                return
+            }
+            
+            let localNodeID = NodeIdentity.shared.nodeID
+            let localUserHandle = NodeIdentity.shared.displayName
+            let cleanSender = message.senderName.cleanBaseName
+            
+            guard message.senderID != localNodeID && cleanSender != localUserHandle.cleanBaseName else { return } // Reject self-echo
+            
             DispatchQueue.main.async {
-                let localUserHandle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-                
                 // Handle incoming Delivery ACK frame
                 if message.type == .ack {
-                    SwiftDataService.shared.markPendingMessageAsACKed(messageID: message.id)
-                    NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
-                    NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
-                    AppLogger.multipeer.info("Received MessageDeliveryACK for message ID \(message.id) from \(message.senderName)")
+                    if message.originID == localNodeID || message.destinationID == localNodeID || message.destinationID == localUserHandle {
+                        SwiftDataService.shared.markPendingMessageAsACKed(messageID: message.id)
+                        NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                        NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
+                        AppLogger.multipeer.info("Received End-to-End MessageDeliveryACK for message ID \(message.id)")
+                    } else {
+                        // Intermediate node targeted ACK relaying back toward origin using persistent reverse path
+                        AppLogger.multipeer.info("Relaying MessageDeliveryACK for \(message.id) toward origin '\(message.originID)'")
+                        SwiftDataService.shared.markPendingMessageAsACKed(messageID: message.id) // Clear local relay copy
+                        
+                        var relayAck = message
+                        relayAck.previousHopID = localNodeID
+                        relayAck.hopsCount += 1
+                        
+                        // Targeted reverse-path send if previousHopID node is connected
+                        if let previousHopNode = self.connectedPeers.first(where: { $0.id == message.previousHopID || $0.displayName == message.previousHopID }),
+                           let targetPeer = previousHopNode.mcPeerID {
+                            self.sendDirectData(data: (try? JSONEncoder().encode(relayAck)) ?? Data(), to: targetPeer)
+                            AppLogger.multipeer.info("Targeted ACK routing: Sent DELIVERY_ACK directly to reverse-path hop '\(previousHopNode.displayName)'")
+                        } else {
+                            // Safe fallback broadcast if previous hop is disconnected
+                            self.broadcast(message: relayAck)
+                        }
+
+                    }
                     return
                 }
                 
-                // Process chat message / voice transcript with Deduplication Engine
-                let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
-                if !alreadyProcessed {
-                    self.receivedMessageSubject.send(message)
-                    
-                    if message.text.hasPrefix("["), let closingBracket = message.text.firstIndex(of: "]") {
-                        let channel = String(message.text[message.text.index(after: message.text.startIndex)..<closingBracket])
-                        let body = String(message.text[message.text.index(after: closingBracket)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        
-                        _ = SwiftDataService.shared.saveVoiceTranscript(
-                            speakerName: message.senderName,
-                            text: body,
-                            channel: channel,
-                            isDelivered: true
-                        )
-                        NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
-                        AppLogger.multipeer.info("Received P2P Voice Transcript for channel [\(channel)] from \(message.senderName)")
-                    } else {
-                        _ = SwiftDataService.shared.saveChatMessage(
-                            senderName: message.senderName,
-                            channel: message.senderName,
-                            text: message.text,
-                            isDelivered: true
-                        )
-                        NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
-                        AppLogger.multipeer.info("Received P2P Chat Message from \(message.senderName)")
-                    }
-                } else {
-                    AppLogger.multipeer.info("Deduplication Engine: Message \(message.id) already processed. Re-issuing ACK.")
-                }
+                let isForMe = (message.destinationID == localNodeID) || (message.destinationID == localUserHandle) || message.destinationID == "BROADCAST"
                 
-                // Send Delivery ACK back to sender
-                let ackMessage = Message(
-                    id: message.id,
-                    senderID: localUserHandle,
-                    senderName: localUserHandle,
-                    text: "ACK",
-                    timestamp: Date(),
-                    hopsCount: 0,
-                    type: .ack
-                )
-                self.broadcast(message: ackMessage)
-            }
-        } else {
-            // Treat raw byte stream as live PTT audio chunk & post notification
-            NotificationCenter.default.post(
-                name: .didReceiveRawPTTPacket,
-                object: self,
-                userInfo: ["packet": data, "peerID": peerID]
-            )
-            DispatchQueue.main.async {
-                self.receivedAudioDataSubject.send(data)
+                if isForMe {
+                    // Process chat message / voice transcript destined for local node
+                    let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
+                    if !alreadyProcessed {
+                        self.receivedMessageSubject.send(message)
+                        
+                        if message.text.hasPrefix("["), let closingBracket = message.text.firstIndex(of: "]") {
+                            let channel = String(message.text[message.text.index(after: message.text.startIndex)..<closingBracket])
+                            let body = String(message.text[message.text.index(after: closingBracket)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            
+                            _ = SwiftDataService.shared.saveVoiceTranscript(
+                                speakerName: message.senderName,
+                                text: body,
+                                channel: channel,
+                                isDelivered: true
+                            )
+                            NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                            AppLogger.multipeer.info("Received P2P Voice Transcript for channel [\(channel)] from \(message.senderName)")
+                        } else {
+                            _ = SwiftDataService.shared.saveChatMessage(
+                                senderName: message.senderName,
+                                channel: message.senderName,
+                                text: message.text,
+                                isDelivered: true
+                            )
+                            NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
+                            AppLogger.multipeer.info("Received P2P Chat Message from \(message.senderName)")
+                        }
+                    } else {
+                        AppLogger.multipeer.info("Deduplication Engine: Message \(message.id) already processed. Re-issuing ACK.")
+                    }
+                    
+                    // Send End-to-End Delivery ACK back toward original sender
+                    let deliveryAck = Message(
+                        id: message.id,
+                        originID: message.originID,
+                        destinationID: message.originID,
+                        senderID: localNodeID,
+                        senderName: localUserHandle,
+                        previousHopID: localNodeID,
+                        text: "DELIVERY_ACK",
+                        timestamp: Date(),
+                        hopsCount: 0,
+                        ttl: message.ttl,
+                        type: .ack
+                    )
+                    self.broadcast(message: deliveryAck)
+                } else {
+                    // Intermediate node: Persist in relay queue and forward if TTL permits
+                    guard message.hopsCount < message.ttl else {
+                        AppLogger.multipeer.warning("Received relay message \(message.id) but TTL exhausted (\(message.hopsCount)/\(message.ttl)). Dropping.")
+                        return
+                    }
+                    
+                    _ = SwiftDataService.shared.enqueueRelayMessage(message)
+                    AppLogger.multipeer.info("Intermediate Relay: Enqueued message \(message.id) from '\(message.originID)' for destination '\(message.destinationID)'")
+                    
+                    // Trigger coalesced queue processing to advance message to reachable peers
+                    self.flushPendingStoreAndForwardQueue()
+                }
             }
         }
     }
+    
+    private func sendDirectData(data: Data, to peer: MCPeerID) {
+        guard let session = session else { return }
+        try? session.send(data, toPeers: [peer], with: .reliable)
+    }
+
 
 
     

@@ -16,20 +16,33 @@ enum P2PMessageType: String, Codable {
     case channelSync = "CHANNEL_SYNC"
 }
 
+/// Discriminator for 1-hop link ACK vs end-to-end destination delivery ACK
+enum ACKType: String, Codable {
+    case hop = "HOP_ACK"
+    case delivery = "DELIVERY_ACK"
+}
+
 /// End-to-end Delivery ACK payload
 struct MessageDeliveryACK: Codable {
     let messageID: UUID
-    let recipientName: String
-    let senderName: String
-    let channel: String
+    let originID: String
+    let destinationID: String
+    let ackType: ACKType
+    let currentNodeID: String
+    let previousHopID: String?
+    let hopsCount: Int
     let timestamp: Date
 }
 
-/// Emergency message drop & store-and-forward mesh payload model
+/// Emergency message drop & store-and-forward mesh payload model (Mesh V2 Envelope)
 struct Message: Identifiable, Codable, Hashable {
     let id: UUID
+    let originID: String
+    let destinationID: String
     let senderID: String
     let senderName: String
+    var previousHopID: String?
+    let channelID: String?
     let text: String
     let timestamp: Date
     let latitude: Double?
@@ -37,12 +50,19 @@ struct Message: Identifiable, Codable, Hashable {
     let isSOS: Bool
     let emergencyStatus: EmergencyStatus
     var hopsCount: Int
+    var ttl: Int
     var type: P2PMessageType
+    var protocolVersion: Int
+    var authTag: String?
     
     init(
         id: UUID = UUID(),
+        originID: String? = nil,
+        destinationID: String = "BROADCAST",
         senderID: String,
         senderName: String,
+        previousHopID: String? = nil,
+        channelID: String? = nil,
         text: String,
         timestamp: Date = Date(),
         latitude: Double? = nil,
@@ -50,11 +70,19 @@ struct Message: Identifiable, Codable, Hashable {
         isSOS: Bool = false,
         emergencyStatus: EmergencyStatus = .normal,
         hopsCount: Int = 0,
-        type: P2PMessageType = .chat
+        ttl: Int = Constants.Emergency.broadcastTTL,
+        type: P2PMessageType = .chat,
+        protocolVersion: Int = Constants.Mesh.currentProtocolVersion,
+        authTag: String? = nil
     ) {
+        let finalOrigin = originID ?? senderID
         self.id = id
+        self.originID = finalOrigin
+        self.destinationID = destinationID
         self.senderID = senderID
         self.senderName = senderName
+        self.previousHopID = previousHopID
+        self.channelID = channelID
         self.text = text
         self.timestamp = timestamp
         self.latitude = latitude
@@ -62,7 +90,16 @@ struct Message: Identifiable, Codable, Hashable {
         self.isSOS = isSOS
         self.emergencyStatus = emergencyStatus
         self.hopsCount = hopsCount
+        self.ttl = ttl
         self.type = type
+        self.protocolVersion = protocolVersion
+        self.authTag = authTag ?? MeshSecurityManager.shared.computeAuthTag(
+            messageID: id,
+            originID: finalOrigin,
+            destinationID: destinationID,
+            timestamp: timestamp,
+            text: text
+        )
     }
 
     
@@ -71,3 +108,5 @@ struct Message: Identifiable, Codable, Hashable {
         return String(format: "%.4f° N, %.4f° E", lat, lon)
     }
 }
+
+

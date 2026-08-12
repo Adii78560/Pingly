@@ -30,6 +30,14 @@ enum Constants {
         static let connectionTimeoutSeconds: TimeInterval = 15.0
     }
     
+    // MARK: - Mesh Hardening & Protocol Specs
+    enum Mesh {
+        static let currentProtocolVersion: Int = 2
+        static let maxPayloadBytes: Int = 64 * 1024 // 64 KB limit for text/transcript envelopes
+        static let queueExpirationDays: Int = 7     // 7 days persistent store-and-forward retention
+    }
+
+    
     // MARK: - Bluetooth Low Energy (BLE)
     enum BLE {
         /// Custom 128-bit UUID for Pingly SOS Mesh Discovery

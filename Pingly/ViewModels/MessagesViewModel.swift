@@ -82,11 +82,14 @@ final class MessagesViewModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
-        let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+        let localNodeID = NodeIdentity.shared.nodeID
+        let handle = NodeIdentity.shared.displayName
         let location = locationService.currentLocation
         
         let newMessage = Message(
-            senderID: handle,
+            originID: localNodeID,
+            destinationID: conversation.displayName,
+            senderID: localNodeID,
             senderName: handle,
             text: trimmed,
             timestamp: Date(),
@@ -94,7 +97,8 @@ final class MessagesViewModel: ObservableObject {
             longitude: location?.longitude,
             isSOS: false,
             emergencyStatus: .normal,
-            hopsCount: 0
+            hopsCount: 0,
+            type: .chat
         )
         
         if let index = conversations.firstIndex(where: { $0.id == conversation.id }) {
@@ -119,11 +123,14 @@ final class MessagesViewModel: ObservableObject {
         // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
         _ = SwiftDataService.shared.enqueuePendingMessage(
             messageID: newMessage.id,
+            originID: localNodeID,
+            destinationID: conversation.displayName,
             recipientName: conversation.displayName,
             senderName: handle,
             text: trimmed,
             channel: conversation.displayName
         )
+
         
         if !multipeerService.connectedPeers.isEmpty {
             multipeerService.broadcast(message: newMessage)
@@ -132,6 +139,7 @@ final class MessagesViewModel: ObservableObject {
         } else {
             AppLogger.multipeer.info("Peer '\(conversation.displayName)' is offline. Enqueued message \(newMessage.id) to store-and-forward queue.")
         }
+
 
         
         messageText = ""

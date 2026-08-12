@@ -79,51 +79,91 @@ enum PendingMessageStatus: String, Codable {
     case acknowledged = "ACKNOWLEDGED"
 }
 
+/// Role discriminator distinguishing locally authored messages from intermediate relay items
+enum QueueRole: String, Codable {
+    case origin = "ORIGIN"
+    case relay = "RELAY"
+}
+
 /// SwiftData persistent model for store-and-forward offline messages when peers are out of range.
 @Model
 final class SDPendingMessage {
     @Attribute(.unique) var id: UUID
     var messageID: UUID = UUID()
+    var originID: String = ""
+    var destinationID: String = "BROADCAST"
     var recipientName: String
     var senderName: String
+    var previousHopID: String?
     var text: String
     var channel: String
     var timestamp: Date
+    var expiresAt: Date = Date().addingTimeInterval(TimeInterval(Constants.Mesh.queueExpirationDays * 86400))
+    var isSOS: Bool = false
+    var priorityRaw: Int = 0 // 0 = Normal, 1 = Warning, 2 = Critical SOS
     var retryCount: Int = 0
     var statusRaw: String = PendingMessageStatus.queued.rawValue
+    var queueRoleRaw: String = QueueRole.origin.rawValue
     var lastAttemptTimestamp: Date?
     var maxRetries: Int = 5
+    var hopsCount: Int = 0
+    var ttl: Int = Constants.Emergency.broadcastTTL
     
     var status: PendingMessageStatus {
         get { PendingMessageStatus(rawValue: statusRaw) ?? .queued }
         set { statusRaw = newValue.rawValue }
     }
     
+    var queueRole: QueueRole {
+        get { QueueRole(rawValue: queueRoleRaw) ?? .origin }
+        set { queueRoleRaw = newValue.rawValue }
+    }
+    
     init(
         id: UUID = UUID(),
         messageID: UUID = UUID(),
+        originID: String? = nil,
+        destinationID: String = "BROADCAST",
         recipientName: String,
         senderName: String,
+        previousHopID: String? = nil,
         text: String,
         channel: String = "CH-1 EMERGENCY",
         timestamp: Date = Date(),
+        expiresAt: Date? = nil,
+        isSOS: Bool = false,
+        priorityRaw: Int = 0,
         retryCount: Int = 0,
         status: PendingMessageStatus = .queued,
+        queueRole: QueueRole = .origin,
         lastAttemptTimestamp: Date? = nil,
-        maxRetries: Int = 5
+        maxRetries: Int = 5,
+        hopsCount: Int = 0,
+        ttl: Int = Constants.Emergency.broadcastTTL
     ) {
         self.id = id
         self.messageID = messageID
+        self.originID = originID ?? senderName
+        self.destinationID = destinationID
         self.recipientName = recipientName
         self.senderName = senderName
+        self.previousHopID = previousHopID
         self.text = text
         self.channel = channel
         self.timestamp = timestamp
+        self.expiresAt = expiresAt ?? timestamp.addingTimeInterval(TimeInterval(Constants.Mesh.queueExpirationDays * 86400))
+        self.isSOS = isSOS
+        self.priorityRaw = priorityRaw
         self.retryCount = retryCount
         self.statusRaw = status.rawValue
+        self.queueRoleRaw = queueRole.rawValue
         self.lastAttemptTimestamp = lastAttemptTimestamp
         self.maxRetries = maxRetries
+        self.hopsCount = hopsCount
+        self.ttl = ttl
     }
 }
+
+
 
 
