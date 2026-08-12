@@ -8,15 +8,18 @@
 import SwiftUI
 import CoreLocation
 
-
-/// Native Apple iOS Settings View conforming to HIG
+/// Native Apple iOS Settings View conforming to HIG & GDPR Privacy Controls
 struct SettingsView: View {
     @StateObject var viewModel: SettingsViewModel
     @StateObject private var swiftDataService = SwiftDataService.shared
     @StateObject private var cloudSyncService = CloudSyncService.shared
     @StateObject private var locationService = LocationService.shared
     @StateObject private var attManager = ATTManager.shared
+    @StateObject private var dataExportService = DataExportService.shared
+    
     @State private var showLogoutConfirmation = false
+    @State private var showDeleteAccountConfirmation = false
+    @State private var showPrivacyPolicySheet = false
     
     private var locationPermissionString: String {
         switch locationService.authorizationStatus {
@@ -131,6 +134,43 @@ struct SettingsView: View {
                 
                 // Section 4: Privacy, App Tracking Transparency & Offline Location
                 Section {
+                    // Privacy Policy Sheet
+                    Button(action: {
+                        HapticsManager.shared.lightImpact()
+                        showPrivacyPolicySheet = true
+                    }) {
+                        HStack {
+                            SettingsIconBadge(systemName: "doc.text.fill", backgroundColor: .blue)
+                            Text("Privacy Policy")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    // Request/Export My Data (GDPR)
+                    Button(action: {
+                        HapticsManager.shared.mediumImpact()
+                        dataExportService.exportUserData()
+                    }) {
+                        HStack {
+                            SettingsIconBadge(systemName: "square.and.arrow.up.fill", backgroundColor: .teal)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Request My Data (GDPR Export)")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                Text("Export personal profile, messages & transcripts as JSON")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                    
+                    // GPS Permission
                     HStack {
                         SettingsIconBadge(systemName: "location.circle.fill", backgroundColor: .blue)
                         VStack(alignment: .leading, spacing: 2) {
@@ -143,6 +183,7 @@ struct SettingsView: View {
                         Spacer()
                     }
                     
+                    // Offline Location Toggle
                     Toggle(isOn: Binding(
                         get: { locationService.isSharingLocation },
                         set: { newValue in
@@ -166,9 +207,8 @@ struct SettingsView: View {
                         }
                     }
                     .tint(.orange)
-
-
                     
+                    // ATT Tracking Status
                     HStack {
                         SettingsIconBadge(systemName: "hand.raised.fill", backgroundColor: .purple)
                         VStack(alignment: .leading, spacing: 2) {
@@ -184,21 +224,22 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     
+                    // iOS Settings Link
                     Button(action: {
                         HapticsManager.shared.lightImpact()
                         locationService.openAppSettings()
                     }) {
                         HStack {
                             Image(systemName: "gearshape.fill")
-                            Text("Manage Privacy & Location in Settings")
+                            Text("Manage Privacy & Location in System Settings")
                         }
                         .font(.subheadline.bold())
                         .foregroundColor(.blue)
                     }
                 } header: {
-                    Text("Privacy & Location")
+                    Text("Privacy & Data Controls")
                 } footer: {
-                    Text("Pingly accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location data is sent to external cloud servers.")
+                    Text("Pingly accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location or personal data is shared with 3rd-party ad networks.")
                 }
 
                 // Section 5: SwiftData Local Storage & Cloud Sync
@@ -241,24 +282,42 @@ struct SettingsView: View {
                     Text("Off-grid transcripts and messages are saved in SwiftData local storage. When internet is available, data automatically syncs to your logged-in device cloud account.")
                 }
 
-                // Section 6: Account & Authentication Log Out
+                // Section 6: Account & Authentication Log Out & GDPR Deletion
                 Section {
                     Button(role: .destructive, action: {
                         HapticsManager.shared.warningFeedback()
                         showLogoutConfirmation = true
                     }) {
                         HStack {
-                            SettingsIconBadge(systemName: "rectangle.portrait.and.arrow.right.fill", backgroundColor: .red)
+                            SettingsIconBadge(systemName: "rectangle.portrait.and.arrow.right.fill", backgroundColor: .orange)
                             Text("Log Out")
                                 .font(.body.weight(.medium))
-                                .foregroundColor(.red)
+                                .foregroundColor(.orange)
+                            Spacer()
+                        }
+                    }
+                    
+                    Button(role: .destructive, action: {
+                        HapticsManager.shared.warningFeedback()
+                        showDeleteAccountConfirmation = true
+                    }) {
+                        HStack {
+                            SettingsIconBadge(systemName: "trash.fill", backgroundColor: .red)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Delete Account")
+                                    .font(.body.weight(.bold))
+                                    .foregroundColor(.red)
+                                Text("Permanently delete account, messages & cloud data")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                             Spacer()
                         }
                     }
                 } header: {
-                    Text("Account")
+                    Text("Account Controls")
                 } footer: {
-                    Text("Logging out clears your active local session and requires re-authentication.")
+                    Text("Deleting your account permanently purges all local SwiftData messages, transcripts, profile data, and backend records.")
                 }
 
                 // Section 7: App Information
@@ -291,6 +350,9 @@ struct SettingsView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
+            .sheet(isPresented: $showPrivacyPolicySheet) {
+                PrivacyPolicyView()
+            }
             .alert("Log Out", isPresented: $showLogoutConfirmation) {
                 Button("Log Out", role: .destructive) {
                     HapticsManager.shared.heavyImpact()
@@ -299,6 +361,15 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Are you sure you want to log out?")
+            }
+            .alert("Delete Account & All Personal Data?", isPresented: $showDeleteAccountConfirmation) {
+                Button("Delete Account", role: .destructive) {
+                    HapticsManager.shared.heavyImpact()
+                    AppleSignInManager.shared.deleteAccountAndSignOut { }
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This action is permanent and cannot be undone. All your off-grid transcripts, chat history, profile info, and cloud records will be permanently erased.")
             }
         }
     }

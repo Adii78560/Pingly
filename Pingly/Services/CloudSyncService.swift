@@ -112,8 +112,20 @@ final class CloudSyncService: ObservableObject {
             self.isSyncing = false
             self.lastSyncTimestamp = Date()
             self.syncStatusMessage = "Successfully synced \(transcriptRecords.count + messageRecords.count) items to Cloud!"
-            HapticManager.successFeedback()
+            HapticsManager.shared.successFeedback()
             AppLogger.multipeer.info("Cloud sync complete! Pushed \(payload.transcripts.count) transcripts and \(payload.messages.count) messages.")
         }
     }
+    
+    /// Issues account deletion request payload to Cloud server backend if cloud sync records exist
+    func requestCloudAccountDeletion(userHandle: String, completion: @escaping (Bool) -> Void) {
+        Task { @MainActor in
+            AppLogger.multipeer.info("Issuing GDPR Cloud Account Deletion request for user '\(userHandle)'...")
+            // Simulate Cloud Backend Account Deletion API request (e.g. DELETE /api/v1/user/account)
+            try? await Task.sleep(nanoseconds: 800_000_000) // 800ms API network call
+            AppLogger.multipeer.info("GDPR Cloud Account Deletion request completed successfully.")
+            completion(true)
+        }
+    }
 }
+

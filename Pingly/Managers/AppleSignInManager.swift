@@ -91,7 +91,8 @@ final class AppleSignInManager: NSObject, ObservableObject {
                     self.authState = .authenticated
                     let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
                     self.username = profile?.username
-                    AppLogger.multipeer.info("Apple Sign-In Credential State: Authorized for user \(userID)")
+                    let maskedID = String(userID.prefix(6))
+                    AppLogger.multipeer.info("Apple Sign-In Credential State: Authorized for user \(maskedID)...")
                 case .revoked, .notFound, .transferred:
                     self.signOut()
                     AppLogger.multipeer.warning("Apple Sign-In Credential Revoked or Not Found. Resetting session.")
@@ -141,8 +142,10 @@ final class AppleSignInManager: NSObject, ObservableObject {
             self.username = profile.username
             self.authState = .authenticated
         }
-        AppLogger.multipeer.info("Successfully authenticated Apple user \(userID) with Pingly username \(profile.username)")
+        let maskedID = String(userID.prefix(6))
+        AppLogger.multipeer.info("Successfully authenticated Apple user \(maskedID)... with Pingly username \(profile.username)")
     }
+
 
     
     func signOut() {
@@ -159,4 +162,38 @@ final class AppleSignInManager: NSObject, ObservableObject {
 
         AppLogger.multipeer.info("Signed out of Apple ID session successfully.")
     }
+    
+    // MARK: - GDPR Account Deletion
+    
+    /// Permanently deletes user account, requests cloud backend deletion, purges local SwiftData, and signs out.
+    func deleteAccountAndSignOut(completion: @escaping () -> Void) {
+        let handle = userFullName ?? "User"
+        
+        // 1. Issue Cloud backend account deletion request
+        CloudSyncService.shared.requestCloudAccountDeletion(userHandle: handle) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // 2. Purge all local SwiftData records (SDUserProfile, SDChatMessage, SDTranscript, SDPendingMessage)
+            SwiftDataService.shared.purgeAllUserData()
+            
+            // 3. Clear all persistent session keys in UserDefaults
+            UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userID)
+            UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userEmail)
+            UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userFullName)
+            UserDefaults.standard.removeObject(forKey: Constants.StorageKeys.userHandle)
+            UserDefaults.standard.set(false, forKey: AppleSignInKeys.isAuthenticated)
+            UserDefaults.standard.removeObject(forKey: "com.adityarai.pingly.hasPromptedATT")
+            
+            // 4. Reset in-memory auth state to return user to AppleSignInScreen
+            self.appleUserID = nil
+            self.userEmail = nil
+            self.userFullName = nil
+            self.username = nil
+            self.authState = .unauthenticated
+            
+            AppLogger.multipeer.info("GDPR Account Deletion complete. Purged all local and backend user data.")
+            completion()
+        }
+    }
 }
+

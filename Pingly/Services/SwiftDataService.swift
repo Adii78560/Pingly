@@ -453,6 +453,27 @@ final class SwiftDataService: ObservableObject {
         return newProfile
     }
 
+    // MARK: - GDPR Account Deletion Data Purge
+    
+    /// Atomically purges all user profiles, chat messages, transcripts, and pending messages from SwiftData database
+    func purgeAllUserData() {
+        do {
+            try context.delete(model: SDUserProfile.self)
+            try context.delete(model: SDChatMessage.self)
+            try context.delete(model: SDPendingMessage.self)
+            try context.delete(model: SDVoiceTranscript.self)
+            saveContext()
+            DispatchQueue.main.async {
+                self.totalUnsyncedCount = 0
+            }
+            AppLogger.multipeer.info("Atomically purged all user profiles, chat messages, transcripts, and pending records from SwiftData store.")
+        } catch {
+            AppLogger.multipeer.error("Failed to purge SwiftData store during account deletion: \(error.localizedDescription)")
+        }
+    }
+
+
+
 
     
     // MARK: - Private Helpers
