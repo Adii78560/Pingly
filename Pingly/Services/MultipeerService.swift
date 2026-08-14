@@ -352,6 +352,7 @@ extension MultipeerService: MCSessionDelegate {
             switch state {
             case .connected:
                 AppLogger.multipeer.info("Peer connected: \(peerID.displayName)")
+                MeshNotificationManager.shared.notifyPeerConnected(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
                 if !self.connectedPeers.contains(where: { $0.id == peerID.displayName }) {
                     let newPeer = PeerDevice(
                         id: peerID.displayName,
@@ -381,6 +382,7 @@ extension MultipeerService: MCSessionDelegate {
                 
             case .notConnected:
                 AppLogger.multipeer.info("Peer disconnected: \(peerID.displayName)")
+                MeshNotificationManager.shared.notifyPeerDisconnected(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
                 self.connectedPeers.removeAll(where: { $0.id == peerID.displayName })
                 PinglyTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
                 
@@ -698,6 +700,7 @@ extension MultipeerService: MCSessionDelegate {
                         """)
                         
                         SwiftDataService.shared.markPendingMessageAsACKed(messageID: message.id)
+                        MeshNotificationManager.shared.notifyMessageDelivered(messageID: message.id, recipientName: message.destinationID)
                         NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
                         NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
                         AppLogger.multipeer.info("Received End-to-End MessageDeliveryACK for message ID \(message.id)")
@@ -835,6 +838,7 @@ extension MultipeerService: MCSessionDelegate {
                                 text: message.text,
                                 isDelivered: true
                             )
+                            MeshNotificationManager.shared.notifyMessageReceived(messageID: message.id, senderName: message.senderName, textPreview: message.text)
                             NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
                             AppLogger.multipeer.info("Received P2P Chat Message from \(message.senderName)")
                         }
@@ -991,6 +995,7 @@ extension MultipeerService: MCNearbyServiceAdvertiserDelegate {
 extension MultipeerService: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
         AppLogger.multipeer.info("Browser found peer: \(peerID.displayName)")
+        MeshNotificationManager.shared.notifyPeerDiscovered(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
         guard let session = session else { return }
         
         // Deterministic tie-breaker for simultaneous invitations to prevent connection aborts

@@ -29,7 +29,8 @@ final class SwiftDataService: ObservableObject {
             SDVoiceTranscript.self,
             SDChatMessage.self,
             SDPendingMessage.self,
-            SDUserProfile.self
+            SDUserProfile.self,
+            SDNotificationEvent.self
         ])
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
@@ -545,6 +546,85 @@ final class SwiftDataService: ObservableObject {
 
 
     
+    // MARK: - SDNotificationEvent Persistent Deduplication & Event Logging
+    
+    /// Returns true if a notification with the given deduplicationKey has already been stored
+    func isNotificationDeduplicated(deduplicationKey: String) -> Bool {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let descriptor = FetchDescriptor<SDNotificationEvent>(
+            predicate: #Predicate { $0.deduplicationKey == deduplicationKey }
+        )
+        if let existing = try? context.fetch(descriptor), !existing.isEmpty {
+            return true
+        }
+        return false
+    }
+    
+    /// Atomically records a notification event into SwiftData if not already stored
+    @discardableResult
+    func recordNotificationEvent(
+        eventTypeRaw: String,
+        messageID: UUID? = nil,
+        peerID: String? = nil,
+        title: String,
+        body: String,
+        deduplicationKey: String
+    ) -> Bool {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let descriptor = FetchDescriptor<SDNotificationEvent>(
+            predicate: #Predicate { $0.deduplicationKey == deduplicationKey }
+        )
+        if let existing = try? context.fetch(descriptor), !existing.isEmpty {
+            AppLogger.notifications.info("[Notification] Deduplication hit for key '\(deduplicationKey)'. Skipping record.")
+            return false
+        }
+        
+        let event = SDNotificationEvent(
+            eventTypeRaw: eventTypeRaw,
+            messageID: messageID,
+            peerID: peerID,
+            timestamp: Date(),
+            title: title,
+            body: body,
+            deliveredToNotificationCenter: true,
+            acknowledged: false,
+            deduplicationKey: deduplicationKey
+        )
+        context.insert(event)
+        saveContext()
+        AppLogger.notifications.info("[Notification] Recorded event '\(eventTypeRaw)' with key '\(deduplicationKey)'")
+        return true
+    }
+    
+    /// Fetches all recorded SDNotificationEvents sorted by timestamp descending
+    func fetchNotificationEvents() -> [SDNotificationEvent] {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let descriptor = FetchDescriptor<SDNotificationEvent>(
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    /// Clears all recorded SDNotificationEvents
+    func clearNotificationEvents() {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        do {
+            try context.delete(model: SDNotificationEvent.self)
+            saveContext()
+            AppLogger.notifications.info("[Notification] Cleared all persistent notification events.")
+        } catch {
+            AppLogger.notifications.error("[Notification] Failed to clear notification events: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Private Helpers
 
     

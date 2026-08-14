@@ -164,6 +164,40 @@ struct SettingsView: View {
                 
                 // Section 4: Privacy, App Tracking Transparency & Offline Location
                 Section {
+                    // iOS Settings Link
+                    Button(action: {
+                        HapticsManager.shared.lightImpact()
+                        locationService.openAppSettings()
+                    }) {
+                        HStack {
+                            SettingsIconBadge(systemName: "gear", backgroundColor: .gray)
+                            Text("Open iOS System Settings")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                // Section: Mesh Diagnostics & Notification System
+                Section("Diagnostics & Delivery Status") {
+                    NavigationLink(destination: MeshDiagnosticsView()) {
+                        HStack {
+                            SettingsIconBadge(systemName: "bell.badge.waveform.fill", backgroundColor: AppTheme.tintColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Mesh Diagnostics & Notification Log")
+                                    .font(.body)
+                                Text("Inspect active peers, delivery ACKs & event deduplication")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                
+                Section {
                     // Privacy Policy Sheet
                     Button(action: {
                         HapticsManager.shared.lightImpact()

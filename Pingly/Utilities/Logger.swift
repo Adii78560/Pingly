@@ -18,4 +18,5 @@ enum AppLogger {
     static let audio = Logger(subsystem: subsystem, category: "RadioAudio")
     static let location = Logger(subsystem: subsystem, category: "Location")
     static let emergency = Logger(subsystem: subsystem, category: "EmergencySOS")
+    static let notifications = Logger(subsystem: "com.relayn.mesh.notifications", category: "MeshNotifications")
 }

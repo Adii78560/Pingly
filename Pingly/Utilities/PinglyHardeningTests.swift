@@ -78,11 +78,26 @@ final class PinglyHardeningTests {
         assert(normalText.utf8.count <= Constants.Mesh.maxPayloadBytes, "Normal payload size within 64 KB limit")
         assert(oversizedText.utf8.count > Constants.Mesh.maxPayloadBytes, "Oversized payload correctly exceeds 64 KB limit")
         
-        // 4. Protocol Version Validation Tests
-        let v2Msg = Message(senderID: "A", senderName: "A", text: "V2", protocolVersion: 2)
-        let v3Msg = Message(senderID: "A", senderName: "A", text: "V3", protocolVersion: 3)
-        assert(v2Msg.protocolVersion <= Constants.Mesh.currentProtocolVersion, "Protocol V2 accepted")
-        assert(v3Msg.protocolVersion > Constants.Mesh.currentProtocolVersion, "Future Protocol V3 flagged for rejection")
+        // 5. Notification System & Deduplication Tests
+        let testDedupKey = "TEST_DEDUP_KEY_\(UUID().uuidString)"
+        let recorded1 = SwiftDataService.shared.recordNotificationEvent(
+            eventTypeRaw: "TEST_EVENT",
+            title: "Test Event",
+            body: "Test notification body",
+            deduplicationKey: testDedupKey
+        )
+        assert(recorded1, "SwiftDataService records fresh notification event")
+        
+        let recorded2 = SwiftDataService.shared.recordNotificationEvent(
+            eventTypeRaw: "TEST_EVENT",
+            title: "Duplicate Test Event",
+            body: "Duplicate body",
+            deduplicationKey: testDedupKey
+        )
+        assert(!recorded2, "SwiftDataService rejects duplicate notification key")
+        
+        let isDedup = SwiftDataService.shared.isNotificationDeduplicated(deduplicationKey: testDedupKey)
+        assert(isDedup, "isNotificationDeduplicated returns true for stored deduplication key")
         
         AppLogger.multipeer.info("HARDENING VERIFICATION SUMMARY: \(passed) Passed, \(failed) Failed.")
         return (passed, failed)

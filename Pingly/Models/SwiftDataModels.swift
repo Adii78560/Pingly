@@ -92,12 +92,23 @@ final class SDChatMessage {
 
 
 /// Lifecycle status states for store-and-forward pending messages
+/// Lifecycle status states for store-and-forward pending messages
 enum PendingMessageStatus: String, Codable {
+    case created = "CREATED"
     case queued = "QUEUED"
-    case sending = "SENDING"
-    case waitingForACK = "WAITING_FOR_ACK"
+    case transmitting = "TRANSMITTING"
+    case relayed = "RELAYED"
+    case sent = "SENT"
+    case delivered = "DELIVERED"
+    case read = "READ"
     case failed = "FAILED"
-    case acknowledged = "ACKNOWLEDGED"
+    case expired = "EXPIRED"
+    case cancelled = "CANCELLED"
+    
+    // Legacy Raw Value Aliases for Backward Compatibility
+    static var sending: PendingMessageStatus { .transmitting }
+    static var waitingForACK: PendingMessageStatus { .sent }
+    static var acknowledged: PendingMessageStatus { .delivered }
 }
 
 /// Role discriminator distinguishing locally authored messages from intermediate relay items
@@ -130,8 +141,24 @@ final class SDPendingMessage {
     var hopsCount: Int = 0
     var ttl: Int = Constants.Emergency.broadcastTTL
     
+    // Delivery Lifecycle Timestamps & Receipts
+    var queuedAt: Date?
+    var transmittingAt: Date?
+    var sentAt: Date?
+    var deliveredAt: Date?
+    var failedAt: Date?
+    var deliveryReceiptID: String?
+    var notificationSent: Bool = false
+    
     var status: PendingMessageStatus {
-        get { PendingMessageStatus(rawValue: statusRaw) ?? .queued }
+        get {
+            switch statusRaw {
+            case "SENDING": return .transmitting
+            case "WAITING_FOR_ACK": return .sent
+            case "ACKNOWLEDGED": return .delivered
+            default: return PendingMessageStatus(rawValue: statusRaw) ?? .queued
+            }
+        }
         set { statusRaw = newValue.rawValue }
     }
     
@@ -160,7 +187,14 @@ final class SDPendingMessage {
         lastAttemptTimestamp: Date? = nil,
         maxRetries: Int = 5,
         hopsCount: Int = 0,
-        ttl: Int = Constants.Emergency.broadcastTTL
+        ttl: Int = Constants.Emergency.broadcastTTL,
+        queuedAt: Date? = Date(),
+        transmittingAt: Date? = nil,
+        sentAt: Date? = nil,
+        deliveredAt: Date? = nil,
+        failedAt: Date? = nil,
+        deliveryReceiptID: String? = nil,
+        notificationSent: Bool = false
     ) {
         self.id = id
         self.messageID = messageID
@@ -182,6 +216,55 @@ final class SDPendingMessage {
         self.maxRetries = maxRetries
         self.hopsCount = hopsCount
         self.ttl = ttl
+        self.queuedAt = queuedAt
+        self.transmittingAt = transmittingAt
+        self.sentAt = sentAt
+        self.deliveredAt = deliveredAt
+        self.failedAt = failedAt
+        self.deliveryReceiptID = deliveryReceiptID
+        self.notificationSent = notificationSent
+    }
+}
+
+/// SwiftData persistent model for local notification events and deduplication state
+@Model
+final class SDNotificationEvent {
+    @Attribute(.unique) var id: UUID
+    var eventTypeRaw: String
+    var messageID: UUID?
+    var peerID: String?
+    var timestamp: Date
+    var title: String
+    var body: String
+    var deliveredToNotificationCenter: Bool
+    var acknowledged: Bool
+    @Attribute(.unique) var deduplicationKey: String
+    var createdAt: Date
+    
+    init(
+        id: UUID = UUID(),
+        eventTypeRaw: String,
+        messageID: UUID? = nil,
+        peerID: String? = nil,
+        timestamp: Date = Date(),
+        title: String,
+        body: String,
+        deliveredToNotificationCenter: Bool = true,
+        acknowledged: Bool = false,
+        deduplicationKey: String,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.eventTypeRaw = eventTypeRaw
+        self.messageID = messageID
+        self.peerID = peerID
+        self.timestamp = timestamp
+        self.title = title
+        self.body = body
+        self.deliveredToNotificationCenter = deliveredToNotificationCenter
+        self.acknowledged = acknowledged
+        self.deduplicationKey = deduplicationKey
+        self.createdAt = createdAt
     }
 }
 
