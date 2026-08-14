@@ -14,7 +14,7 @@ enum Constants {
     
     // MARK: - App Identity
     enum App {
-        static let name = "Pingly"
+        static let name = "Relayn"
         static let subtitle = "Off-Grid Emergency Mesh & Radio Call"
         static let version = "1.0.0"
         static let build = "1"
@@ -24,7 +24,7 @@ enum Constants {
     // MARK: - Multipeer P2P Mesh Network
     enum Multipeer {
         /// Bonjour service type string (Max 15 chars, lowercase ASCII + hyphen)
-        static let serviceType = "pingly-mesh"
+        static let serviceType = "relayn-mesh"
         static let maxPeerConnections = 8
         static let pingIntervalSeconds: TimeInterval = 10.0
         static let connectionTimeoutSeconds: TimeInterval = 15.0
@@ -86,15 +86,19 @@ enum Constants {
             static let textMuted = Color.secondary.opacity(0.6)
             
             // Brand & Tactical Status Tints
-            static let systemAccent = Color(UIColor.systemBlue)
-            static let statusTransmitting = Color(UIColor.systemBlue)
+            static let systemAccent = AppTheme.tintColor
+            static let statusTransmitting = AppTheme.hotMagenta
             static let statusListening = Color(UIColor.systemGreen)
             static let statusWarning = Color(UIColor.systemOrange)
             static let statusDanger = Color(UIColor.systemRed)
             
             // PTT Idle & Active Dial Colors
             static let pttIdleDark = Color(red: 0.18, green: 0.18, blue: 0.18) // #2E2E2E Tactical Idle
-            static let pttActiveBlue = Color(UIColor.systemBlue)
+            static let pttActiveBlue = AppTheme.tintColor
+            
+            // Signature Brand Gradients
+            static let brandGradient = AppTheme.primaryGradient
+            static let brandGradientHorizontal = AppTheme.horizontalGradient
             
             // Border Gradients
             static let glassBorderGradient = LinearGradient(
@@ -106,7 +110,7 @@ enum Constants {
             // Backward-Compatibility Aliases
             static var backgroundDark: Color { primaryBackground }
             static var cardBackground: Color { secondarySurface }
-            static var primaryAccent: Color { systemAccent }
+            static var primaryAccent: Color { AppTheme.tintColor }
             static var sosDanger: Color { statusDanger }
             static var radioActive: Color { statusTransmitting }
             static var warningOrange: Color { statusWarning }

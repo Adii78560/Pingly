@@ -29,22 +29,13 @@ struct AppleSignInScreen: View {
                 VStack(spacing: 16) {
                     ZStack {
                         Circle()
-                            .fill(Color.orange.opacity(0.12))
+                            .fill(AppTheme.glassTint)
                             .frame(width: 96, height: 96)
                         
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [
-                                        Color.orange,
-                                        Color(red: 0.95, green: 0.5, blue: 0.0)
-                                    ]),
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                            .fill(AppTheme.primaryGradient)
                             .frame(width: 80, height: 80)
-                            .shadow(color: Color.orange.opacity(0.3), radius: 20, x: 0, y: 10)
+                            .shadow(color: AppTheme.hotMagenta.opacity(0.4), radius: 20, x: 0, y: 10)
                             .overlay(
                                 Image(systemName: "dot.radiowaves.left.and.right")
                                     .font(.system(size: 34, weight: .bold))
@@ -53,7 +44,7 @@ struct AppleSignInScreen: View {
                     }
                     
                     VStack(spacing: 6) {
-                        Text("Pingly")
+                        Text("Relayn")
                             .font(.system(size: 34, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                         

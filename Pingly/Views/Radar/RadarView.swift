@@ -63,7 +63,7 @@ struct RadarView: View {
                             Image(systemName: "pencil")
                                 .font(.system(size: 12))
                         }
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.tintColor)
                     }
                 }
             }
@@ -74,7 +74,7 @@ struct RadarView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This name will be visible to nearby off-grid Pingly devices.")
+                Text("This name will be visible to nearby off-grid Relayn devices.")
             }
             .onAppear {
                 newBroadcastNameText = viewModel.broadcastName
@@ -90,13 +90,13 @@ struct RadarView: View {
         ZStack {
             // Concentric AirDrop Breathing Pulse Rings
             Circle()
-                .stroke(Color.orange.opacity(0.4), lineWidth: 1.5)
+                .stroke(AppTheme.ringStrokeGradient.opacity(0.6), lineWidth: 1.5)
                 .frame(width: 200, height: 200)
                 .scaleEffect(isBreathing ? 1.3 : 1.0)
                 .opacity(isBreathing ? 0.0 : 0.5)
             
             Circle()
-                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                .stroke(AppTheme.ringStrokeGradient.opacity(0.35), lineWidth: 1)
                 .frame(width: 150, height: 150)
                 .scaleEffect(isBreathing ? 1.18 : 0.95)
                 .opacity(isBreathing ? 0.1 : 0.4)
@@ -106,12 +106,12 @@ struct RadarView: View {
                 Circle()
                     .fill(Color(UIColor.secondarySystemGroupedBackground))
                     .frame(width: 96, height: 96)
-                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+                    .shadow(color: AppTheme.hotMagenta.opacity(0.2), radius: 10, x: 0, y: 4)
                 
                 VStack(spacing: 4) {
                     Image(systemName: "wifi")
                         .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.tintColor)
                     
                     Text("YOU")
                         .font(.system(size: 11, weight: .bold))
@@ -138,7 +138,7 @@ struct RadarView: View {
                 }) {
                     Text(viewModel.isScanning ? "Pause" : "Resume")
                         .font(.caption.bold())
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.tintColor)
                         .padding(.horizontal, 16)
                 }
             }
@@ -185,7 +185,7 @@ struct RadarView: View {
                         .foregroundColor(.primary)
                     
                     Circle()
-                        .stroke(peer.isConnected ? Color.green : Color.orange, lineWidth: 2)
+                        .stroke(peer.isConnected ? Color.green : AppTheme.hotMagenta, lineWidth: 2)
                         .frame(width: 66, height: 66)
                 }
                 

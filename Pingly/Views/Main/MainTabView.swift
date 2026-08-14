@@ -75,7 +75,7 @@ struct MainTabView: View {
                     }
                     .tag(3)
             }
-            .tint(.orange)
+            .tint(AppTheme.tintColor)
 
             
             if !isSplashFinished {

@@ -40,12 +40,12 @@ struct LocationMessageCardView: View {
             HStack(spacing: 8) {
                 ZStack {
                     Circle()
-                        .fill(isCurrentUser ? Color.white.opacity(0.2) : Color.orange.opacity(0.2))
+                        .fill(isCurrentUser ? Color.white.opacity(0.2) : AppTheme.glassTint)
                         .frame(width: 28, height: 28)
                     
                     Image(systemName: "location.fill")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(isCurrentUser ? .white : .orange)
+                        .foregroundColor(isCurrentUser ? .white : AppTheme.tintColor)
                 }
                 
                 VStack(alignment: .leading, spacing: 1) {
@@ -69,7 +69,7 @@ struct LocationMessageCardView: View {
                 Annotation(senderName, coordinate: coordinate) {
                     ZStack {
                         Circle()
-                            .fill(Color.orange)
+                            .fill(AppTheme.primaryGradient)
                             .frame(width: 26, height: 26)
                             .shadow(radius: 4)
                         Image(systemName: "figure.walk")
@@ -102,11 +102,11 @@ struct LocationMessageCardView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "location.north.line.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(.orange)
+                            .foregroundColor(AppTheme.tintColor)
                         
                         Text("\(dist) • Bearing \(bearing)")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(isCurrentUser ? .white.opacity(0.9) : .orange)
+                            .foregroundColor(isCurrentUser ? .white.opacity(0.9) : AppTheme.tintColor)
                     }
                 }
             }
@@ -118,18 +118,18 @@ struct LocationMessageCardView: View {
                     Text("Open in Apple Maps")
                 }
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(isCurrentUser ? .orange : .white)
+                .foregroundColor(isCurrentUser ? AppTheme.tintColor : .white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
-                .background(isCurrentUser ? Color.white : Color.orange)
+                .background(isCurrentUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(AppTheme.primaryGradient))
                 .cornerRadius(8)
             }
         }
         .padding(12)
         .background(
             isCurrentUser
-            ? LinearGradient(colors: [Color.orange, Color(red: 0.95, green: 0.5, blue: 0.0)], startPoint: .topLeading, endPoint: .bottomTrailing)
-            : LinearGradient(colors: [Color(white: 0.15), Color(white: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            ? AnyShapeStyle(AppTheme.primaryGradient)
+            : AnyShapeStyle(LinearGradient(colors: [Color(white: 0.15), Color(white: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
         )
         .cornerRadius(16)
         .frame(maxWidth: 280)
@@ -139,7 +139,7 @@ struct LocationMessageCardView: View {
         HapticsManager.shared.lightImpact()
         let placemark = MKPlacemark(coordinate: coordinate)
         let mapItem = MKMapItem(placemark: placemark)
-        mapItem.name = "\(senderName)'s Pingly Position"
+        mapItem.name = "\(senderName)'s Relayn Position"
         mapItem.openInMaps(launchOptions: [
             MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
             MKLaunchOptionsMapSpanKey: NSValue(mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))

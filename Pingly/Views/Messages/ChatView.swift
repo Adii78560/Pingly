@@ -90,7 +90,7 @@ struct ChatView: View {
                         .padding(.vertical, 9)
                         .background(
                             isSentByMe ?
-                            AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.orange, Color(red: 0.95, green: 0.5, blue: 0.0)]), startPoint: .topLeading, endPoint: .bottomTrailing)) :
+                            AnyShapeStyle(AppTheme.primaryGradient) :
                             AnyShapeStyle(Color(UIColor.systemGray5))
                         )
                         .clipShape(
@@ -147,14 +147,14 @@ struct ChatView: View {
                     .stroke(Color(UIColor.systemGray4), lineWidth: 0.5)
             )
             
-            // Send Arrow Button (Orange)
+            // Send Arrow Button (Gradient Accent)
             Button(action: {
                 viewModel.sendMessageToConversation(inputText, in: currentConversation)
                 inputText = ""
             }) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 28))
-                    .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(UIColor.systemGray3) : .orange)
+                    .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(UIColor.systemGray3) : AppTheme.tintColor)
             }
             .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }

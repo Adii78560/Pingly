@@ -4,6 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
+		<string>com.RaiEnterprise.Relayn.refresh</string>
+		<string>com.RaiEnterprise.Relayn.pttsync</string>
 		<string>com.RaiEnterprise.Pingly.refresh</string>
 		<string>com.RaiEnterprise.Pingly.pttsync</string>
 		<string>com.RaiEnterprise.RadioFy.refresh</string>
@@ -28,28 +30,30 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Pingly requires Bluetooth access to discover nearby emergency peer devices, scan RSSI signal proximity, and relay off-grid SOS mesh messages.</string>
+	<string>Relayn requires Bluetooth access to discover nearby emergency peer devices, scan RSSI signal proximity, and relay off-grid SOS mesh messages.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Pingly uses Bluetooth to advertise emergency beacon signals to nearby rescue nodes.</string>
+	<string>Relayn uses Bluetooth to advertise emergency beacon signals to nearby rescue nodes.</string>
 	<key>NSBonjourServices</key>
 	<array>
+		<string>_relayn-mesh._tcp</string>
+		<string>_relayn-mesh._udp</string>
 		<string>_pingly-mesh._tcp</string>
 		<string>_pingly-mesh._udp</string>
 		<string>_radiofy-ptt._tcp</string>
 		<string>_radiofy-ptt._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Pingly uses local peer-to-peer Wi-Fi network protocols to transfer message drops and broadcast real-time Push-To-Talk radio voice calls.</string>
+	<string>Relayn uses local peer-to-peer Wi-Fi network protocols to transfer message drops and broadcast real-time Push-To-Talk radio voice calls.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Pingly uses background location updates to keep your SOS beacon location updated in emergency situations.</string>
+	<string>Relayn uses background location updates to keep your SOS beacon location updated in emergency situations.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Pingly attaches offline GPS coordinates to emergency SOS distress pings for search and rescue operations.</string>
+	<string>Relayn attaches offline GPS coordinates to emergency SOS distress pings for search and rescue operations.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Pingly requires microphone access to record and transmit live Push-To-Talk (PTT) radio voice communications.</string>
+	<string>Relayn requires microphone access to record and transmit live Push-To-Talk (PTT) radio voice communications.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Pingly uses Speech Recognition to transcribe Walkie-Talkie voice broadcasts in real-time so you can read missed messages.</string>
+	<string>Relayn uses Speech Recognition to transcribe Walkie-Talkie voice broadcasts in real-time so you can read missed messages.</string>
 	<key>NSUserTrackingUsageDescription</key>
-	<string>Pingly uses anonymous telemetry to optimize off-grid P2P mesh signal strength and node connectivity performance.</string>
+	<string>Relayn uses anonymous telemetry to optimize off-grid P2P mesh signal strength and node connectivity performance.</string>
 
 	<key>UIApplicationSceneManifest</key>
 	<dict>

@@ -28,24 +28,15 @@ struct AnimatedSplashScreenView: View {
                 ZStack {
                     // Minimal Single Pulse Ring
                     Circle()
-                        .stroke(Color.orange.opacity(pulseRingOpacity), lineWidth: 1.5)
+                        .stroke(AppTheme.ringStrokeGradient.opacity(pulseRingOpacity), lineWidth: 2.0)
                         .scaleEffect(pulseRingScale)
                         .frame(width: 96, height: 96)
                     
                     // Central Minimal App Emblem
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [
-                                    Color.orange,
-                                    Color(red: 0.95, green: 0.5, blue: 0.0)
-                                ]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(AppTheme.primaryGradient)
                         .frame(width: 88, height: 88)
-                        .shadow(color: Color.orange.opacity(0.35), radius: 20, x: 0, y: 10)
+                        .shadow(color: AppTheme.hotMagenta.opacity(0.45), radius: 22, x: 0, y: 10)
                         .overlay(
                             Image(systemName: "dot.radiowaves.left.and.right")
                                 .font(.system(size: 36, weight: .bold))
@@ -57,7 +48,7 @@ struct AnimatedSplashScreenView: View {
                 
                 // Minimalist Branding Title
                 VStack(spacing: 6) {
-                    Text("Pingly")
+                    Text("Relayn")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     

@@ -81,17 +81,17 @@ struct RadioCallView: View {
                             Text("New Channel")
                         }
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.tintColor)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Color.orange.opacity(0.12))
+                        .background(AppTheme.glassTint)
                         .cornerRadius(16)
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
                 
-                // Central watchOS Walkie-Talkie Yellow PTT Dial with Dynamic AirDrop Peer Orbit Ring & Breathing Radar Pulse
+                // Central watchOS Walkie-Talkie Sunset PTT Dial with Dynamic AirDrop Peer Orbit Ring & Breathing Radar Pulse
                 ZStack {
                     let peers = viewModel.channelPeers
                     let peerCount = peers.count
@@ -101,7 +101,7 @@ struct RadioCallView: View {
                     
                     // Animated Breathing Radar Pulse Ring (pulses when no peers on channel, locks static when peers connect)
                     Circle()
-                        .stroke(Color.orange.opacity(hasPeers ? 0.3 : breathingOpacity), lineWidth: hasPeers ? 2 : 3)
+                        .stroke(AppTheme.ringStrokeGradient.opacity(hasPeers ? 0.4 : breathingOpacity), lineWidth: hasPeers ? 2 : 3)
                         .frame(width: 135, height: 135)
                         .scaleEffect(hasPeers ? 1.0 : breathingScale)
                         .onAppear {
@@ -125,13 +125,13 @@ struct RadioCallView: View {
                             VStack(spacing: 2) {
                                 ZStack {
                                     Circle()
-                                        .fill(LinearGradient(colors: [.orange, .yellow], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        .fill(AppTheme.primaryGradient)
                                         .frame(width: bubbleSize, height: bubbleSize)
-                                        .shadow(color: .orange.opacity(0.4), radius: 6, x: 0, y: 3)
+                                        .shadow(color: AppTheme.hotMagenta.opacity(0.4), radius: 6, x: 0, y: 3)
                                     
                                     Text(peer.displayName.prefix(2).uppercased())
                                         .font(.system(size: max(8, bubbleSize * 0.38), weight: .black))
-                                        .foregroundColor(.black)
+                                        .foregroundColor(.white)
                                 }
                                 
                                 Text(peer.displayName)
@@ -145,13 +145,13 @@ struct RadioCallView: View {
                     }
                     
                     Circle()
-                        .fill(Color.orange.opacity(0.12))
+                        .fill(AppTheme.glassTint)
                         .frame(width: 135, height: 135)
                     
                     Circle()
-                        .fill(viewModel.isPTTPressed ? Color.orange : Color(red: 1.0, green: 0.8, blue: 0.0)) // #FFCC00 Walkie-Talkie Yellow
+                        .fill(AppTheme.primaryGradient)
                         .frame(width: 105, height: 105)
-                        .shadow(color: Color.orange.opacity(viewModel.isPTTPressed ? 0.6 : 0.2), radius: 10, x: 0, y: 4)
+                        .shadow(color: AppTheme.hotMagenta.opacity(viewModel.isPTTPressed ? 0.7 : 0.3), radius: viewModel.isPTTPressed ? 16 : 8, x: 0, y: 4)
                     
                     VStack(spacing: 3) {
                         Image(systemName: viewModel.isPTTPressed ? "waveform.and.mic" : "mic.fill")
@@ -159,7 +159,7 @@ struct RadioCallView: View {
                         Text(viewModel.isPTTPressed ? "TALKING" : "TALK")
                             .font(.system(size: 12, weight: .black))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(.white)
                 }
                 .frame(height: 240)
 
@@ -200,7 +200,7 @@ struct RadioCallView: View {
                             let finalHeight: CGFloat = isActive ? max(minHeight, amplifiedHeight) : minHeight
                             
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(isActive ? (effectiveLevel > 0.05 ? Color.orange : Color.orange.opacity(0.5)) : Color.gray.opacity(0.3))
+                                .fill(isActive ? (effectiveLevel > 0.05 ? AppTheme.hotMagenta : AppTheme.hotMagenta.opacity(0.5)) : Color.gray.opacity(0.3))
                                 .frame(width: 4, height: finalHeight)
                         }
                     }
@@ -211,7 +211,7 @@ struct RadioCallView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .foregroundColor(.orange)
+                            .foregroundColor(AppTheme.tintColor)
                             .font(.system(size: 13, weight: .bold))
                         
                         Text("TRANSCRIPTS • \(viewModel.selectedChannel)")

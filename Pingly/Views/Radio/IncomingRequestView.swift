@@ -48,8 +48,9 @@ struct IncomingRequestView: View {
                         .animation(Animation.easeInOut(duration: 1.8).repeatForever(autoreverses: false), value: waveAnimation)
                     
                     Circle()
-                        .fill(Color(UIColor.darkGray))
+                        .fill(AppTheme.primaryGradient)
                         .frame(width: 90, height: 90)
+                        .shadow(color: AppTheme.hotMagenta.opacity(0.4), radius: 10, x: 0, y: 4)
                     
                     Text(peerName.initials)
                         .font(.system(size: 32, weight: .bold))

@@ -22,9 +22,9 @@ struct PrivacyPolicyView: View {
                     HStack(spacing: 14) {
                         Image(systemName: "hand.raised.shield.fill")
                             .font(.system(size: 36))
-                            .foregroundColor(.orange)
+                            .foregroundColor(AppTheme.tintColor)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Pingly Privacy Policy")
+                            Text("Relayn Privacy Policy")
                                 .font(.title2.bold())
                             Text("Privacy-first, off-grid communication")
                                 .font(.subheadline)
@@ -40,7 +40,7 @@ struct PrivacyPolicyView: View {
                         title: "1. Data Minimization & Collection",
                         icon: "shippingbox.fill",
                         color: .blue,
-                        content: "Pingly collects only the minimal data required for off-grid peer-to-peer messaging and Apple Sign-In authorization. Zero 3rd-party advertising or analytics SDKs are integrated into Pingly."
+                        content: "Relayn collects only the minimal data required for off-grid peer-to-peer messaging and Apple Sign-In authorization. Zero 3rd-party advertising or analytics SDKs are integrated into Relayn."
                     )
                     
                     // Section 2: Off-Grid P2P Mesh Architecture
@@ -63,7 +63,7 @@ struct PrivacyPolicyView: View {
                     privacySection(
                         title: "4. Voice & Walkie-Talkie Audio",
                         icon: "waveform",
-                        color: .orange,
+                        color: AppTheme.tintColor,
                         content: "Push-To-Talk voice audio is streamed live over P2P RAM buffers using the Opus codec and is immediately discarded after playback. On-device speech recognition runs locally via Apple Speech framework."
                     )
                     
@@ -72,7 +72,7 @@ struct PrivacyPolicyView: View {
                         title: "5. Your Rights Under GDPR",
                         icon: "checkmark.shield.fill",
                         color: .teal,
-                        content: "You have the right to Access, Rectify, Export ('Request My Data'), and Permanently Erase ('Delete Account') all your personal data at any time directly within Pingly Settings."
+                        content: "You have the right to Access, Rectify, Export ('Request My Data'), and Permanently Erase ('Delete Account') all your personal data at any time directly within Relayn Settings."
                     )
                     
                     // Section 6: Web Privacy Policy Link
@@ -91,7 +91,7 @@ struct PrivacyPolicyView: View {
                         }) {
                             HStack {
                                 Image(systemName: "safari.fill")
-                                Text("Open pingly.app/privacy")
+                                Text("Open relayn.app/privacy")
                             }
                             .font(.subheadline.bold())
                             .foregroundColor(.blue)

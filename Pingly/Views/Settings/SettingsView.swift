@@ -40,20 +40,21 @@ struct SettingsView: View {
                     HStack(spacing: 14) {
                         ZStack {
                             Circle()
-                                .fill(Color.orange.opacity(0.15))
+                                .fill(AppTheme.primaryGradient)
                                 .frame(width: 54, height: 54)
+                                .shadow(color: AppTheme.hotMagenta.opacity(0.35), radius: 8, x: 0, y: 3)
                             Text(viewModel.userHandle.initials)
                                 .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.orange)
+                                .foregroundColor(.white)
                         }
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text(viewModel.userHandle)
                                 .font(.headline)
                             if let username = AppleSignInManager.shared.username {
-                                Text("Pingly ID: \(username)")
+                                Text("Relayn ID: \(username)")
                                     .font(.subheadline.weight(.medium))
-                                    .foregroundColor(.orange)
+                                    .foregroundColor(AppTheme.tintColor)
                             } else {
                                 Text("Off-Grid P2P Mesh Node")
                                     .font(.subheadline)
@@ -64,7 +65,7 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                     
                     HStack {
-                        SettingsIconBadge(systemName: "person.crop.circle", backgroundColor: .orange)
+                        SettingsIconBadge(systemName: "person.crop.circle", backgroundColor: AppTheme.tintColor)
                         Text("Broadcast Handle")
                             .font(.body)
                         Spacer()
