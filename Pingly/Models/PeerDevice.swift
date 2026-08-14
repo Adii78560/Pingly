@@ -11,7 +11,9 @@ import MultipeerConnectivity
 /// Peer discovery node state model representing nearby Pingly devices over BLE / Wi-Fi mesh
 struct PeerDevice: Identifiable, Hashable {
     let id: String
-    let displayName: String
+    var displayName: String
+    var accountID: UUID?
+    var deviceID: UUID?
     let mcPeerID: MCPeerID?
     var rssi: Int
     var estimatedDistanceMeters: Double
@@ -23,6 +25,8 @@ struct PeerDevice: Identifiable, Hashable {
     init(
         id: String = UUID().uuidString,
         displayName: String,
+        accountID: UUID? = nil,
+        deviceID: UUID? = nil,
         mcPeerID: MCPeerID? = nil,
         rssi: Int = -60,
         emergencyStatus: EmergencyStatus = .normal,
@@ -32,6 +36,8 @@ struct PeerDevice: Identifiable, Hashable {
     ) {
         self.id = id
         self.displayName = displayName
+        self.accountID = accountID
+        self.deviceID = deviceID
         self.mcPeerID = mcPeerID
         self.rssi = rssi
         self.estimatedDistanceMeters = Double.estimatedDistance(fromRSSI: rssi)
@@ -40,6 +46,7 @@ struct PeerDevice: Identifiable, Hashable {
         self.isConnected = isConnected
         self.batteryLevel = batteryLevel
     }
+
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)

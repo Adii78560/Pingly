@@ -42,6 +42,8 @@ struct Message: Identifiable, Codable, Hashable {
     let destinationID: String
     let senderID: String
     let senderName: String
+    var senderAccountID: UUID?
+    var senderDeviceID: UUID?
     var previousHopID: String?
     let channelID: String?
     let text: String
@@ -64,6 +66,8 @@ struct Message: Identifiable, Codable, Hashable {
         destinationID: String = "BROADCAST",
         senderID: String,
         senderName: String,
+        senderAccountID: UUID? = nil,
+        senderDeviceID: UUID? = nil,
         previousHopID: String? = nil,
         channelID: String? = nil,
         text: String,
@@ -86,7 +90,10 @@ struct Message: Identifiable, Codable, Hashable {
         self.destinationID = destinationID
         self.senderID = senderID
         self.senderName = senderName
+        self.senderAccountID = senderAccountID
+        self.senderDeviceID = senderDeviceID
         self.previousHopID = previousHopID
+
         self.channelID = channelID
         self.text = text
         self.timestamp = timestamp

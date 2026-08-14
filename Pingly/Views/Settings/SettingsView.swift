@@ -72,13 +72,42 @@ struct SettingsView: View {
                             .multilineTextAlignment(.trailing)
                             .foregroundColor(.secondary)
                             .onSubmit {
+                                IdentityManager.shared.updateDisplayName(viewModel.userHandle)
                                 viewModel.applySettings()
                                 HapticsManager.shared.successFeedback()
                             }
                     }
+                    
+                    // Stable Identifiers Info
+                    HStack {
+                        SettingsIconBadge(systemName: "number.square.fill", backgroundColor: .blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Account ID")
+                                .font(.body)
+                            Text(IdentityManager.shared.accountID?.uuidString ?? "Apple Auth Active")
+                                .font(.caption2.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "key.fill", backgroundColor: .indigo)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Keychain Device ID")
+                                .font(.body)
+                            Text(IdentityManager.shared.deviceID.uuidString)
+                                .font(.caption2.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
                 } header: {
-                    Text("Identity")
+                    Text("Identity & Profile")
+                } footer: {
+                    Text("Changing your Broadcast Handle updates only your display name. Your Account ID and Keychain Device ID remain permanently stable across name changes, logouts, and reinstalls.")
                 }
+
                 
                 // Section 2: Emergency Profile
                 Section {

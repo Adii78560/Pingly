@@ -2,37 +2,24 @@
 //  NodeIdentity.swift
 //  Pingly
 //
-//  Created by Senior iOS Developer on 12/08/26.
+//  Created by Senior iOS Developer on 13/08/26.
 //
 
 import Foundation
 
-/// Persistent stable device & node identity manager for Pingly Mesh V2
+/// Persistent stable device & node identity manager delegating to KeychainIdentityService and IdentityManager
 final class NodeIdentity {
     static let shared = NodeIdentity()
     
-    private let nodeIDKey = "com.RaiEnterprise.Pingly.stableNodeID"
-    private(set) var nodeID: String
+    private init() {}
     
-    private init() {
-        if let existingID = UserDefaults.standard.string(forKey: nodeIDKey), !existingID.isEmpty {
-            self.nodeID = existingID
-        } else {
-            let newID = "NODE-\(UUID().uuidString.prefix(8).uppercased())"
-            UserDefaults.standard.set(newID, forKey: nodeIDKey)
-            self.nodeID = newID
-        }
+    /// Stable Device ID derived from Keychain
+    var nodeID: String {
+        return KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString
     }
     
-    /// User display handle (non-routing)
+    /// User display handle (mutable profile information)
     var displayName: String {
         return UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-    }
-    
-    /// Reset node ID (strictly for test harness isolation)
-    func resetForTesting() {
-        let newID = "NODE-\(UUID().uuidString.prefix(8).uppercased())"
-        UserDefaults.standard.set(newID, forKey: nodeIDKey)
-        self.nodeID = newID
     }
 }

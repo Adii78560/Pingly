@@ -188,26 +188,33 @@ final class SDPendingMessage {
 /// SwiftData persistent model for Apple-authenticated user profile and unique username
 @Model
 final class SDUserProfile {
+    @Attribute(.unique) var accountID: UUID
     @Attribute(.unique) var appleUserID: String
     @Attribute(.unique) var username: String
     var displayName: String
     var email: String?
     var createdAt: Date
+    var updatedAt: Date
     
     init(
+        accountID: UUID = UUID(),
         appleUserID: String,
         username: String,
         displayName: String,
         email: String? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
     ) {
+        self.accountID = accountID
         self.appleUserID = appleUserID
         self.username = username
         self.displayName = displayName
         self.email = email
         self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 }
+
 
 
 

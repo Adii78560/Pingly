@@ -225,6 +225,17 @@ final class SpeechTranscriberManager: ObservableObject {
 
 
             
+            let encodedBytes = (try? JSONEncoder().encode(netMessage))?.count ?? 0
+            AppLogger.audio.info("""
+            [PINGLY_VOICE_TX]
+            transcriptID=\(sdTranscript.id.uuidString)
+            channel=\(channel)
+            sender=\(finalSpeaker)
+            destination=\(channel)
+            textLength=\(textToSave.count)
+            encodedBytes=\(encodedBytes)
+            """)
+            
             if isConnected {
                 MultipeerService.shared.broadcast(message: netMessage)
                 SwiftDataService.shared.updatePendingMessageStatus(messageID: sdTranscript.id, status: .waitingForACK)

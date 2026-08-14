@@ -60,8 +60,10 @@ final class AppleSignInManager: NSObject, ObservableObject {
         if isAuth, let userID = appleUserID {
             self.authState = .authenticated
             DispatchQueue.main.async {
-                let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
-                self.username = profile?.username
+                if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
+                    self.username = profile.username
+                    IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
+                }
             }
         } else {
             self.authState = .unauthenticated
@@ -86,11 +88,24 @@ final class AppleSignInManager: NSObject, ObservableObject {
                     self.authState = .unauthenticated
                     return
                 }
+                
+                if let error = error {
+                    AppLogger.multipeer.info("Offline network status during Apple ID credential check (\(error.localizedDescription)). Preserving offline session.")
+                    self.authState = .authenticated
+                    if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
+                        self.username = profile.username
+                        IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
+                    }
+                    return
+                }
+                
                 switch credentialState {
                 case .authorized:
                     self.authState = .authenticated
-                    let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
-                    self.username = profile?.username
+                    if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
+                        self.username = profile.username
+                        IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
+                    }
                     let maskedID = String(userID.prefix(6))
                     AppLogger.multipeer.info("Apple Sign-In Credential State: Authorized for user \(maskedID)...")
                 case .revoked, .notFound, .transferred:
@@ -99,8 +114,10 @@ final class AppleSignInManager: NSObject, ObservableObject {
                 @unknown default:
                     let isAuthStillStored = UserDefaults.standard.bool(forKey: AppleSignInKeys.isAuthenticated)
                     self.authState = isAuthStillStored ? .authenticated : .unauthenticated
-                    let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID)
-                    self.username = profile?.username
+                    if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
+                        self.username = profile.username
+                        IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
+                    }
                 }
             }
         }
@@ -141,6 +158,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
             self.userFullName = profile.displayName
             self.username = profile.username
             self.authState = .authenticated
+            IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
         }
         let maskedID = String(userID.prefix(6))
         AppLogger.multipeer.info("Successfully authenticated Apple user \(maskedID)... with Pingly username \(profile.username)")
@@ -159,8 +177,9 @@ final class AppleSignInManager: NSObject, ObservableObject {
         self.userFullName = nil
         self.username = nil
         self.authState = .unauthenticated
+        IdentityManager.shared.resetSession()
 
-        AppLogger.multipeer.info("Signed out of Apple ID session successfully.")
+        AppLogger.multipeer.info("Signed out of Apple ID session successfully. Device ID remains in Keychain.")
     }
     
     // MARK: - GDPR Account Deletion
@@ -173,10 +192,14 @@ final class AppleSignInManager: NSObject, ObservableObject {
         CloudSyncService.shared.requestCloudAccountDeletion(userHandle: handle) { [weak self] _ in
             guard let self = self else { return }
             
-            // 2. Purge all local SwiftData records (SDUserProfile, SDChatMessage, SDTranscript, SDPendingMessage)
+            // 2. Purge all local SwiftData records (SDUserProfile, SDChatMessage, SDVoiceTranscript, SDPendingMessage)
             SwiftDataService.shared.purgeAllUserData()
             
-            // 3. Clear all persistent session keys in UserDefaults
+            // 3. Clear Keychain Device ID and IdentityManager session
+            KeychainIdentityService.shared.clearDeviceID()
+            IdentityManager.shared.resetSession()
+            
+            // 4. Clear all persistent session keys in UserDefaults
             UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userID)
             UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userEmail)
             UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userFullName)
@@ -184,16 +207,17 @@ final class AppleSignInManager: NSObject, ObservableObject {
             UserDefaults.standard.set(false, forKey: AppleSignInKeys.isAuthenticated)
             UserDefaults.standard.removeObject(forKey: "com.adityarai.pingly.hasPromptedATT")
             
-            // 4. Reset in-memory auth state to return user to AppleSignInScreen
+            // 5. Reset in-memory auth state to return user to AppleSignInScreen
             self.appleUserID = nil
             self.userEmail = nil
             self.userFullName = nil
             self.username = nil
             self.authState = .unauthenticated
             
-            AppLogger.multipeer.info("GDPR Account Deletion complete. Purged all local and backend user data.")
+            AppLogger.multipeer.info("GDPR Account Deletion complete. Purged all local, Keychain, and backend user data.")
             completion()
         }
     }
 }
+
 

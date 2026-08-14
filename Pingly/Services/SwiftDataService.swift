@@ -266,6 +266,20 @@ final class SwiftDataService: ObservableObject {
         )
         context.insert(pending)
         saveContext()
+        
+        AppLogger.multipeer.info("""
+        [PINGLY_QUEUE_STATE]
+        messageID=\(messageID.uuidString)
+        messageType=\(queueRole.rawValue)
+        destination=\(destinationID)
+        channel=\(channel)
+        oldStatus=NONE
+        newStatus=QUEUED
+        attempt=0
+        retryCount=0
+        timestamp=\(pending.timestamp)
+        """)
+        
         AppLogger.multipeer.info("Enqueued pending \(queueRole.rawValue) message \(messageID) for recipient '\(recipientName)' (Dest: \(destinationID)): \"\(text.prefix(30))...\"")
         return pending
     }
@@ -288,6 +302,25 @@ final class SwiftDataService: ObservableObject {
         )
     }
 
+    
+    func resetFailedPendingMessages() {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let targetStatus = PendingMessageStatus.failed.rawValue
+        let descriptor = FetchDescriptor<SDPendingMessage>(
+            predicate: #Predicate { $0.statusRaw == targetStatus }
+        )
+        if let failedItems = try? context.fetch(descriptor), !failedItems.isEmpty {
+            for item in failedItems {
+                item.status = .queued
+                item.retryCount = 0
+                item.lastAttemptTimestamp = nil
+            }
+            saveContext()
+            AppLogger.multipeer.info("Reset \(failedItems.count) failed pending messages to QUEUED status for retry on peer reconnect.")
+        }
+    }
     
     func fetchPendingMessages() -> [SDPendingMessage] {
         queueLock.lock()
@@ -326,12 +359,30 @@ final class SwiftDataService: ObservableObject {
             predicate: #Predicate { $0.messageID == messageID }
         )
         if let pending = (try? context.fetch(descriptor))?.first {
+            let oldStatus = pending.status.rawValue
             pending.status = status
             pending.lastAttemptTimestamp = Date()
             if status == .failed || status == .sending {
                 pending.retryCount += 1
             }
+            if status == .failed {
+                PinglyTransportDiagnosticsManager.shared.incrementQueueFailed()
+            }
             saveContext()
+            
+            AppLogger.multipeer.info("""
+            [PINGLY_QUEUE_STATE]
+            messageID=\(messageID.uuidString)
+            messageType=\(pending.queueRole.rawValue)
+            destination=\(pending.destinationID)
+            channel=\(pending.channel)
+            oldStatus=\(oldStatus)
+            newStatus=\(status.rawValue)
+            attempt=\(pending.retryCount)
+            retryCount=\(pending.retryCount)
+            timestamp=\(Date())
+            """)
+            
             AppLogger.multipeer.info("Updated pending message \(messageID) status to '\(status.rawValue)' (Attempt \(pending.retryCount))")
         }
     }
@@ -367,6 +418,21 @@ final class SwiftDataService: ObservableObject {
         }
         
         saveContext()
+        
+        AppLogger.multipeer.info("""
+        [PINGLY_QUEUE_STATE]
+        messageID=\(messageID.uuidString)
+        messageType=PENDING
+        destination=LOCAL
+        channel=N/A
+        oldStatus=WAITING_FOR_ACK
+        newStatus=DELIVERED
+        attempt=0
+        retryCount=0
+        timestamp=\(Date())
+        """)
+        
+        PinglyTransportDiagnosticsManager.shared.incrementQueueDelivered()
         AppLogger.multipeer.info("ACK Received: Marked message \(messageID) as delivered (GREEN) and purged from pending queue.")
     }
 
@@ -404,8 +470,8 @@ final class SwiftDataService: ObservableObject {
     
     func findOrCreateUserProfile(appleUserID: String, appleName: String?, email: String?) -> SDUserProfile {
         if let existing = fetchUserProfile(appleUserID: appleUserID) {
-            AppLogger.multipeer.info("Retrieved existing profile for Apple User \(appleUserID): Username=\(existing.username), DisplayName='\(existing.displayName)'")
-            UserDefaults.standard.set(existing.displayName, forKey: Constants.StorageKeys.userHandle)
+            AppLogger.multipeer.info("Retrieved existing profile for Apple User: Username=\(existing.username), AccountID=\(existing.accountID.uuidString)")
+            IdentityManager.shared.bindSession(accountID: existing.accountID, username: existing.username, displayName: existing.displayName)
             return existing
         }
         
@@ -438,7 +504,9 @@ final class SwiftDataService: ObservableObject {
             finalDisplayName = uniqueUsername
         }
         
+        let newAccountID = UUID()
         let newProfile = SDUserProfile(
+            accountID: newAccountID,
             appleUserID: appleUserID,
             username: uniqueUsername,
             displayName: finalDisplayName,
@@ -448,10 +516,11 @@ final class SwiftDataService: ObservableObject {
         context.insert(newProfile)
         saveContext()
         
-        UserDefaults.standard.set(finalDisplayName, forKey: Constants.StorageKeys.userHandle)
-        AppLogger.multipeer.info("Created NEW user profile: AppleUserID=\(appleUserID), Username=\(uniqueUsername), DisplayName='\(finalDisplayName)'")
+        IdentityManager.shared.bindSession(accountID: newAccountID, username: uniqueUsername, displayName: finalDisplayName)
+        AppLogger.multipeer.info("Created NEW user profile: AccountID=\(newAccountID.uuidString), Username=\(uniqueUsername), DisplayName='\(finalDisplayName)'")
         return newProfile
     }
+
 
     // MARK: - GDPR Account Deletion Data Purge
     
