@@ -1,6 +1,6 @@
 //
 //  IncomingRequestView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 
 //
 //  IncomingRequestView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //

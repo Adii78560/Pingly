@@ -1,6 +1,6 @@
 //
 //  MeshNotificationManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 14/08/26.
 //

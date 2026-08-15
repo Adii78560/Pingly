@@ -1,6 +1,6 @@
 //
-//  PinglyTransportLogger.swift
-//  Pingly
+//  RelaynTransportLogger.swift
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -10,8 +10,8 @@ import CryptoKit
 import os
 
 /// Thread-safe in-memory diagnostic metrics counter
-final class PinglyTransportDiagnosticsManager {
-    static let shared = PinglyTransportDiagnosticsManager()
+final class RelaynTransportDiagnosticsManager {
+    static let shared = RelaynTransportDiagnosticsManager()
     
     private let lock = NSLock()
     
@@ -140,8 +140,8 @@ final class PinglyTransportDiagnosticsManager {
     }
 }
 
-/// Helper methods for forensic logging of Pingly mesh networking bytes and frames
-enum PinglyTransportLogger {
+/// Helper methods for forensic logging of Relayn mesh networking bytes and frames
+enum RelaynTransportLogger {
     
     static func sha256Hex(data: Data) -> String {
         let hash = SHA256.hash(data: data)

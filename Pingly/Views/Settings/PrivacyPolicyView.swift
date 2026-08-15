@@ -1,6 +1,6 @@
 //
 //  PrivacyPolicyView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //

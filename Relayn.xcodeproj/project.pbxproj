@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		042B94523027A6670099763C /* Pingly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pingly.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		042B94523027A6670099763C /* Relayn.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Relayn.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		042B94533027A6670099763C /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				042B94523027A6670099763C /* Pingly.app */,
+				042B94523027A6670099763C /* Relayn.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		042B94513027A6670099763C /* Pingly */ = {
+		042B94513027A6670099763C /* Relayn */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 042B945D3027A6680099763C /* Build configuration list for PBXNativeTarget "Pingly" */;
+			buildConfigurationList = 042B945D3027A6680099763C /* Build configuration list for PBXNativeTarget "Relayn" */;
 			buildPhases = (
 				042B944E3027A6670099763C /* Sources */,
 				042B944F3027A6670099763C /* Frameworks */,
@@ -63,11 +63,11 @@
 			fileSystemSynchronizedGroups = (
 				042B94543027A6670099763C /* Pingly */,
 			);
-			name = Pingly;
+			name = Relayn;
 			packageProductDependencies = (
 			);
 			productName = Pingly;
-			productReference = 042B94523027A6670099763C /* Pingly.app */;
+			productReference = 042B94523027A6670099763C /* Relayn.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 042B944D3027A6670099763C /* Build configuration list for PBXProject "Pingly" */;
+			buildConfigurationList = 042B944D3027A6670099763C /* Build configuration list for PBXProject "Relayn" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				042B94513027A6670099763C /* Pingly */,
+				042B94513027A6670099763C /* Relayn */,
 			);
 		};
 /* End PBXProject section */
@@ -258,7 +258,7 @@
 				DEVELOPMENT_TEAM = G96FB38L7X;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "Pingly-Info.plist";
+				INFOPLIST_FILE = "Relayn-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -295,7 +295,7 @@
 				DEVELOPMENT_TEAM = G96FB38L7X;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "Pingly-Info.plist";
+				INFOPLIST_FILE = "Relayn-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -323,7 +323,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		042B944D3027A6670099763C /* Build configuration list for PBXProject "Pingly" */ = {
+		042B944D3027A6670099763C /* Build configuration list for PBXProject "Relayn" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				042B945B3027A6680099763C /* Debug */,
@@ -332,7 +332,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		042B945D3027A6680099763C /* Build configuration list for PBXNativeTarget "Pingly" */ = {
+		042B945D3027A6680099763C /* Build configuration list for PBXNativeTarget "Relayn" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				042B945E3027A6680099763C /* Debug */,

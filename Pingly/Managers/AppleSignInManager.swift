@@ -1,6 +1,6 @@
 //
 //  AppleSignInManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -161,7 +161,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
             IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
         }
         let maskedID = String(userID.prefix(6))
-        AppLogger.multipeer.info("Successfully authenticated Apple user \(maskedID)... with Pingly username \(profile.username)")
+        AppLogger.multipeer.info("Successfully authenticated Apple user \(maskedID)... with Relayn username \(profile.username)")
     }
 
 

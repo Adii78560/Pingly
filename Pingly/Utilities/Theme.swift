@@ -1,13 +1,13 @@
 //
 //  Theme.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 14/08/26.
 //
 
 import SwiftUI
 
-/// Centralized Production Design System & Theme Engine for Pingly matching the Sunset Pink-to-Violet App Icon
+/// Centralized Production Design System & Theme Engine for Relayn matching the Sunset Pink-to-Violet App Icon
 public enum AppTheme {
     
     // MARK: - Color Stop Tokens (Matching App Icon Gradient Palette)

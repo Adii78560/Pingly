@@ -1,6 +1,6 @@
 //
 //  MultipeerService.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -126,9 +126,9 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         guard let session = session, !session.connectedPeers.isEmpty else { return }
         do {
             let data = try JSONEncoder().encode(message)
-            let sha256 = PinglyTransportLogger.sha256Hex(data: data)
-            let hexPrev = PinglyTransportLogger.hexPreview(data: data)
-            let utf8Prev = PinglyTransportLogger.utf8Preview(data: data)
+            let sha256 = RelaynTransportLogger.sha256Hex(data: data)
+            let hexPrev = RelaynTransportLogger.hexPreview(data: data)
+            let utf8Prev = RelaynTransportLogger.utf8Preview(data: data)
             let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
             
             AppLogger.multipeer.info("""
@@ -171,7 +171,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             """)
             
             try session.send(data, toPeers: session.connectedPeers, with: .reliable)
-            PinglyTransportDiagnosticsManager.shared.incrementTxFrames()
+            RelaynTransportDiagnosticsManager.shared.incrementTxFrames()
             
             AppLogger.multipeer.info("""
             [PINGLY_TX_SUCCESS]
@@ -199,9 +199,9 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     
     func sendRawPTTPacket(_ packet: Data) {
         guard let session = session, !session.connectedPeers.isEmpty else { return }
-        let sha256 = PinglyTransportLogger.sha256Hex(data: packet)
-        let hexPrev = PinglyTransportLogger.hexPreview(data: packet)
-        let utf8Prev = PinglyTransportLogger.utf8Preview(data: packet)
+        let sha256 = RelaynTransportLogger.sha256Hex(data: packet)
+        let hexPrev = RelaynTransportLogger.hexPreview(data: packet)
+        let utf8Prev = RelaynTransportLogger.utf8Preview(data: packet)
         let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
         
         AppLogger.multipeer.info("""
@@ -232,7 +232,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         
         do {
             try session.send(packet, toPeers: session.connectedPeers, with: .unreliable)
-            PinglyTransportDiagnosticsManager.shared.incrementTxFrames()
+            RelaynTransportDiagnosticsManager.shared.incrementTxFrames()
             
             AppLogger.multipeer.info("""
             [PINGLY_TX_SUCCESS]
@@ -256,9 +256,9 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         let invite = ChannelInvite(channelName: channelName, creatorHandle: currentHandle)
         do {
             let data = try JSONEncoder().encode(invite)
-            let sha256 = PinglyTransportLogger.sha256Hex(data: data)
-            let hexPrev = PinglyTransportLogger.hexPreview(data: data)
-            let utf8Prev = PinglyTransportLogger.utf8Preview(data: data)
+            let sha256 = RelaynTransportLogger.sha256Hex(data: data)
+            let hexPrev = RelaynTransportLogger.hexPreview(data: data)
+            let utf8Prev = RelaynTransportLogger.utf8Preview(data: data)
             let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
             
             AppLogger.multipeer.info("""
@@ -288,7 +288,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             """)
             
             try session.send(data, toPeers: session.connectedPeers, with: .reliable)
-            PinglyTransportDiagnosticsManager.shared.incrementTxFrames()
+            RelaynTransportDiagnosticsManager.shared.incrementTxFrames()
             
             AppLogger.multipeer.info("""
             [PINGLY_TX_SUCCESS]
@@ -346,7 +346,7 @@ extension MultipeerService: MCSessionDelegate {
             peerID=\(peerID.displayName)
             state=\(stateString)
             timestamp=\(Date())
-            queue=\(PinglyTransportLogger.currentQueueName())
+            queue=\(RelaynTransportLogger.currentQueueName())
             """)
             
             switch state {
@@ -365,7 +365,7 @@ extension MultipeerService: MCSessionDelegate {
                     self.connectedPeers.append(newPeer)
                 }
                 
-                PinglyTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
+                RelaynTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
                 
                 AppLogger.multipeer.info("""
                 [PINGLY_SESSION_READY]
@@ -377,14 +377,14 @@ extension MultipeerService: MCSessionDelegate {
                 peers=[\(self.connectedPeers.map { $0.displayName }.joined(separator: ", "))]
                 """)
                 
-                PinglyTransportDiagnosticsManager.shared.logDiagnosticSummary()
+                RelaynTransportDiagnosticsManager.shared.logDiagnosticSummary()
                 self.flushPendingStoreAndForwardQueue(for: peerID)
                 
             case .notConnected:
                 AppLogger.multipeer.info("Peer disconnected: \(peerID.displayName)")
                 MeshNotificationManager.shared.notifyPeerDisconnected(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
                 self.connectedPeers.removeAll(where: { $0.id == peerID.displayName })
-                PinglyTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
+                RelaynTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
                 
                 AppLogger.multipeer.info("""
                 [PINGLY_CONNECTED_PEERS]
@@ -476,12 +476,12 @@ extension MultipeerService: MCSessionDelegate {
     }
     
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        PinglyTransportDiagnosticsManager.shared.incrementRxFrames()
+        RelaynTransportDiagnosticsManager.shared.incrementRxFrames()
         let timestamp = Date()
-        let sha256 = PinglyTransportLogger.sha256Hex(data: data)
-        let hexPrev = PinglyTransportLogger.hexPreview(data: data)
-        let utf8Prev = PinglyTransportLogger.utf8Preview(data: data)
-        let threadContext = PinglyTransportLogger.currentThreadDescription()
+        let sha256 = RelaynTransportLogger.sha256Hex(data: data)
+        let hexPrev = RelaynTransportLogger.hexPreview(data: data)
+        let utf8Prev = RelaynTransportLogger.utf8Preview(data: data)
+        let threadContext = RelaynTransportLogger.currentThreadDescription()
         
         AppLogger.multipeer.info("""
         [PINGLY_RX_BEGIN]
@@ -523,7 +523,7 @@ extension MultipeerService: MCSessionDelegate {
                 payloadSize=\(data.count)
                 """)
                 
-                PinglyTransportDiagnosticsManager.shared.incrementDecodeSuccess()
+                RelaynTransportDiagnosticsManager.shared.incrementDecodeSuccess()
                 
                 NotificationCenter.default.post(
                     name: .didReceiveRawPTTPacket,
@@ -559,7 +559,7 @@ extension MultipeerService: MCSessionDelegate {
                 payloadSize=\(data.count)
                 """)
                 
-                PinglyTransportDiagnosticsManager.shared.incrementDecodeSuccess()
+                RelaynTransportDiagnosticsManager.shared.incrementDecodeSuccess()
                 
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(
@@ -584,7 +584,7 @@ extension MultipeerService: MCSessionDelegate {
             let message: Message
             do {
                 message = try JSONDecoder().decode(Message.self, from: data)
-                PinglyTransportDiagnosticsManager.shared.incrementDecodeSuccess()
+                RelaynTransportDiagnosticsManager.shared.incrementDecodeSuccess()
                 
                 AppLogger.multipeer.info("""
                 [PINGLY_DECODE_SUCCESS]
@@ -612,8 +612,8 @@ extension MultipeerService: MCSessionDelegate {
                 protocolVersion=\(message.protocolVersion)
                 """)
             } catch {
-                PinglyTransportDiagnosticsManager.shared.incrementDecodeFailures()
-                let (errDesc, codingPath) = PinglyTransportLogger.formatDecodingError(error)
+                RelaynTransportDiagnosticsManager.shared.incrementDecodeFailures()
+                let (errDesc, codingPath) = RelaynTransportLogger.formatDecodingError(error)
                 
                 AppLogger.multipeer.error("""
                 [PINGLY_DECODE_FAILURE]
@@ -675,7 +675,7 @@ extension MultipeerService: MCSessionDelegate {
             DispatchQueue.main.async {
                 // Handle incoming Delivery ACK frame
                 if message.type == .ack {
-                    PinglyTransportDiagnosticsManager.shared.incrementAckReceived()
+                    RelaynTransportDiagnosticsManager.shared.incrementAckReceived()
                     
                     AppLogger.multipeer.info("""
                     [PINGLY_ACK_RX]
@@ -689,7 +689,7 @@ extension MultipeerService: MCSessionDelegate {
                     let isAckForLocal = (message.originID == localNodeID || message.destinationID == localNodeID || message.destinationID == localUserHandle || message.destinationID.hasPrefix("CH-"))
                     
                     if isAckForLocal {
-                        PinglyTransportDiagnosticsManager.shared.incrementAckMatched()
+                        RelaynTransportDiagnosticsManager.shared.incrementAckMatched()
                         
                         AppLogger.multipeer.info("""
                         [PINGLY_ACK_MATCH]
@@ -706,7 +706,7 @@ extension MultipeerService: MCSessionDelegate {
                         AppLogger.multipeer.info("Received End-to-End MessageDeliveryACK for message ID \(message.id)")
                     } else {
                         // Intermediate node targeted ACK relaying back toward origin using persistent reverse path
-                        PinglyTransportDiagnosticsManager.shared.incrementRelayForwarded()
+                        RelaynTransportDiagnosticsManager.shared.incrementRelayForwarded()
                         
                         AppLogger.multipeer.info("""
                         [PINGLY_RELAY_RX]
@@ -804,28 +804,34 @@ extension MultipeerService: MCSessionDelegate {
                     reason=DESTINATION_OR_CHANNEL_MATCHES_LOCAL_NODE
                     """)
                     
-                    // Process chat message / voice transcript destined for local node
+                    // Process chat message / voice transcript / location payload destined for local node
                     let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
                     if !alreadyProcessed {
                         self.receivedMessageSubject.send(message)
                         
-                        if message.text.hasPrefix("["), let closingBracket = message.text.firstIndex(of: "]") {
-                            let channel = String(message.text[message.text.index(after: message.text.startIndex)..<closingBracket])
-                            let body = String(message.text[message.text.index(after: closingBracket)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                            
-                            AppLogger.multipeer.info("""
-                            [PINGLY_VOICE_RX]
-                            transcriptID=\(message.id.uuidString)
-                            channel=\(channel)
-                            sender=\(message.senderName)
-                            destination=\(message.destinationID)
-                            decoded=true
-                            bytes=\(data.count)
-                            """)
-                            
+                        if message.text.hasPrefix("LOCATION_PROTOCOL:") {
+                            let jsonString = String(message.text.dropFirst("LOCATION_PROTOCOL:".count))
+                            let locationMsg = Message(
+                                id: message.id,
+                                originID: message.originID,
+                                destinationID: message.destinationID,
+                                senderID: message.senderID,
+                                senderName: message.senderName,
+                                previousHopID: message.previousHopID,
+                                text: jsonString,
+                                timestamp: message.timestamp,
+                                hopsCount: message.hopsCount,
+                                ttl: message.ttl,
+                                type: message.type
+                            )
+                            LocationShareManager.shared.processIncomingLocationPacket(locationMsg)
+                            AppLogger.location.info("Processed P2P Location Protocol packet from \(message.senderName)")
+                        } else if message.text.hasPrefix("PTT_TRANSCRIPT:") {
+                            let cleanText = String(message.text.dropFirst("PTT_TRANSCRIPT:".count))
+                            let channel = isChannelMessage ? message.destinationID : "CH-1 EMERGENCY"
                             _ = SwiftDataService.shared.saveVoiceTranscript(
                                 speakerName: message.senderName,
-                                text: body,
+                                text: cleanText,
                                 channel: channel,
                                 isDelivered: true
                             )
@@ -855,7 +861,7 @@ extension MultipeerService: MCSessionDelegate {
                     channel=\(message.channelID ?? message.destinationID)
                     """)
                     
-                    PinglyTransportDiagnosticsManager.shared.incrementAckSent()
+                    RelaynTransportDiagnosticsManager.shared.incrementAckSent()
                     
                     // Send End-to-End Delivery ACK back toward original sender
                     let deliveryAck = Message(
@@ -890,7 +896,7 @@ extension MultipeerService: MCSessionDelegate {
                     reason=INTERMEDIATE_NODE_FORWARD
                     """)
                     
-                    PinglyTransportDiagnosticsManager.shared.incrementRelayReceived()
+                    RelaynTransportDiagnosticsManager.shared.incrementRelayReceived()
                     
                     // Intermediate node: Persist in relay queue and forward if TTL permits
                     guard message.hopsCount < message.ttl else {
@@ -900,7 +906,7 @@ extension MultipeerService: MCSessionDelegate {
                         reason=TTL_EXHAUSTED
                         """)
                         
-                        PinglyTransportDiagnosticsManager.shared.incrementRelayDropped()
+                        RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
                         AppLogger.multipeer.warning("Received relay message \(message.id) but TTL exhausted (\(message.hopsCount)/\(message.ttl)). Dropping.")
                         return
                     }
@@ -928,9 +934,9 @@ extension MultipeerService: MCSessionDelegate {
     
     private func sendDirectData(data: Data, to peer: MCPeerID) {
         guard let session = session else { return }
-        let sha256 = PinglyTransportLogger.sha256Hex(data: data)
-        let hexPrev = PinglyTransportLogger.hexPreview(data: data)
-        let utf8Prev = PinglyTransportLogger.utf8Preview(data: data)
+        let sha256 = RelaynTransportLogger.sha256Hex(data: data)
+        let hexPrev = RelaynTransportLogger.hexPreview(data: data)
+        let utf8Prev = RelaynTransportLogger.utf8Preview(data: data)
         
         AppLogger.multipeer.info("""
         [PINGLY_TX_BEGIN]
@@ -955,7 +961,7 @@ extension MultipeerService: MCSessionDelegate {
         
         do {
             try session.send(data, toPeers: [peer], with: .reliable)
-            PinglyTransportDiagnosticsManager.shared.incrementTxFrames()
+            RelaynTransportDiagnosticsManager.shared.incrementTxFrames()
             
             AppLogger.multipeer.info("""
             [PINGLY_TX_SUCCESS]

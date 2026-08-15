@@ -1,6 +1,6 @@
 //
 //  BackgroundTaskManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -16,8 +16,8 @@ final class BackgroundTaskManager {
     
     static let shared = BackgroundTaskManager()
     
-    static let refreshTaskID = "com.RaiEnterprise.Pingly.refresh"
-    static let processingTaskID = "com.RaiEnterprise.Pingly.pttsync"
+    static let refreshTaskID = "com.RaiEnterprise.Relayn.refresh"
+    static let processingTaskID = "com.RaiEnterprise.Relayn.pttsync"
     
     static let legacyRefreshTaskID = "com.RaiEnterprise.RadioFy.refresh"
     static let legacyProcessingTaskID = "com.RaiEnterprise.RadioFy.pttsync"

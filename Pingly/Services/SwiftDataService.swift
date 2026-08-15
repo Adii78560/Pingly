@@ -1,6 +1,6 @@
 //
 //  SwiftDataService.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -30,7 +30,8 @@ final class SwiftDataService: ObservableObject {
             SDChatMessage.self,
             SDPendingMessage.self,
             SDUserProfile.self,
-            SDNotificationEvent.self
+            SDNotificationEvent.self,
+            SDLocationShareSession.self
         ])
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
@@ -40,28 +41,17 @@ final class SwiftDataService: ObservableObject {
             AppLogger.multipeer.info("SwiftData ModelContainer initialized successfully.")
             updateUnsyncedCount()
         } catch {
-            AppLogger.multipeer.error("SwiftData schema migration error: \(error.localizedDescription). Purging legacy SQLite store for clean recovery...")
-            Self.purgeLegacyStore()
+            AppLogger.multipeer.error("SwiftData ModelContainer initialization failure: \(error.localizedDescription). Preserving existing disk store files without deletion.")
+            // Non-destructive fallback: Initialize in-memory container to allow app runtime startup while preserving disk files safely on disk
+            let fallbackConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
-                self.container = try ModelContainer(for: schema, configurations: [config])
-                AppLogger.multipeer.info("SwiftData ModelContainer successfully re-initialized after store purge.")
+                self.container = try ModelContainer(for: schema, configurations: [fallbackConfig])
+                AppLogger.multipeer.warning("SwiftData ModelContainer operating in non-destructive fallback mode. Disk store files preserved untouched.")
                 updateUnsyncedCount()
             } catch {
-                fatalError("Critical: Failed to re-initialize SwiftData ModelContainer: \(error.localizedDescription)")
+                fatalError("Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
             }
         }
-    }
-    
-    private static func purgeLegacyStore() {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-        let storeURL = appSupport.appendingPathComponent("default.store")
-        let shmURL = appSupport.appendingPathComponent("default.store-shm")
-        let walURL = appSupport.appendingPathComponent("default.store-wal")
-        
-        try? FileManager.default.removeItem(at: storeURL)
-        try? FileManager.default.removeItem(at: shmURL)
-        try? FileManager.default.removeItem(at: walURL)
-        AppLogger.multipeer.info("Purged incompatible legacy SwiftData SQLite store files.")
     }
 
 
@@ -159,6 +149,42 @@ final class SwiftDataService: ObservableObject {
         updateUnsyncedCount()
         AppLogger.multipeer.info("Persisted Chat Message (Type: \(messageType.rawValue), Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
         return message
+    }
+    
+    @discardableResult
+    func saveMessage(_ msg: Message) -> SDChatMessage {
+        return saveChatMessage(
+            senderName: msg.senderName,
+            channel: msg.destinationID,
+            text: msg.text,
+            isDelivered: true,
+            messageType: msg.type,
+            latitude: msg.latitude,
+            longitude: msg.longitude,
+            altitude: msg.altitude,
+            accuracy: msg.accuracy
+        )
+    }
+    
+    @discardableResult
+    func savePendingMessage(
+        messageID: UUID,
+        originID: String,
+        destinationID: String,
+        recipientName: String,
+        senderName: String,
+        text: String,
+        channel: String
+    ) -> SDPendingMessage? {
+        return enqueuePendingMessage(
+            messageID: messageID,
+            originID: originID,
+            destinationID: destinationID,
+            recipientName: recipientName,
+            senderName: senderName,
+            text: text,
+            channel: channel
+        )
     }
 
 
@@ -367,7 +393,7 @@ final class SwiftDataService: ObservableObject {
                 pending.retryCount += 1
             }
             if status == .failed {
-                PinglyTransportDiagnosticsManager.shared.incrementQueueFailed()
+                RelaynTransportDiagnosticsManager.shared.incrementQueueFailed()
             }
             saveContext()
             
@@ -433,7 +459,7 @@ final class SwiftDataService: ObservableObject {
         timestamp=\(Date())
         """)
         
-        PinglyTransportDiagnosticsManager.shared.incrementQueueDelivered()
+        RelaynTransportDiagnosticsManager.shared.incrementQueueDelivered()
         AppLogger.multipeer.info("ACK Received: Marked message \(messageID) as delivered (GREEN) and purged from pending queue.")
     }
 
@@ -625,7 +651,90 @@ final class SwiftDataService: ObservableObject {
         }
     }
 
-    // MARK: - Private Helpers
+    // MARK: - SDLocationShareSession Persistence Helpers
+    
+    func fetchLocationShareSession(remotePeerID: String) -> SDLocationShareSession? {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let descriptor = FetchDescriptor<SDLocationShareSession>(
+            predicate: #Predicate { $0.remotePeerID == remotePeerID }
+        )
+        return (try? context.fetch(descriptor))?.first
+    }
+    
+    @discardableResult
+    func updateLocationShareSession(
+        remotePeerID: String,
+        remoteDisplayName: String,
+        isSharingLocal: Bool? = nil,
+        isSharingRemote: Bool? = nil,
+        lastLocalLat: Double? = nil,
+        lastLocalLon: Double? = nil,
+        lastLocalAcc: Double? = nil,
+        lastRemoteLat: Double? = nil,
+        lastRemoteLon: Double? = nil,
+        lastRemoteAcc: Double? = nil,
+        lastRemoteSpeed: Double? = nil,
+        lastRemoteCourse: Double? = nil,
+        lastRemoteSeq: Int? = nil,
+        stateRaw: String? = nil
+    ) -> SDLocationShareSession {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let localNodeID = NodeIdentity.shared.nodeID
+        let descriptor = FetchDescriptor<SDLocationShareSession>(
+            predicate: #Predicate { $0.remotePeerID == remotePeerID }
+        )
+        let session: SDLocationShareSession
+        if let existing = (try? context.fetch(descriptor))?.first {
+            session = existing
+        } else {
+            session = SDLocationShareSession(
+                localPeerID: localNodeID,
+                remotePeerID: remotePeerID,
+                remoteDisplayName: remoteDisplayName
+            )
+            context.insert(session)
+        }
+        
+        session.remoteDisplayName = remoteDisplayName
+        if let val = isSharingLocal { session.isSharingLocal = val }
+        if let val = isSharingRemote { session.isSharingRemote = val }
+        if let lat = lastLocalLat, let lon = lastLocalLon {
+            session.lastLocalLatitude = lat
+            session.lastLocalLongitude = lon
+            session.lastLocalAccuracy = lastLocalAcc
+            session.lastLocalTimestamp = Date()
+        }
+        if let lat = lastRemoteLat, let lon = lastRemoteLon {
+            session.lastRemoteLatitude = lat
+            session.lastRemoteLongitude = lon
+            session.lastRemoteAccuracy = lastRemoteAcc
+            session.lastRemoteSpeed = lastRemoteSpeed
+            session.lastRemoteCourse = lastRemoteCourse
+            session.lastRemoteTimestamp = Date()
+            session.sequenceNumber += 1
+        }
+        if let seq = lastRemoteSeq {
+            session.lastRemoteSequenceNumber = seq
+        }
+        if let state = stateRaw { session.stateRaw = state }
+        saveContext()
+        AppLogger.location.info("[LocationSession] Updated session for '\(remoteDisplayName)' (\(remotePeerID)): LocalSharing=\(session.isSharingLocal), RemoteSharing=\(session.isSharingRemote), State=\(session.stateRaw)")
+        return session
+    }
+    
+    func fetchAllLocationShareSessions() -> [SDLocationShareSession] {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        
+        let descriptor = FetchDescriptor<SDLocationShareSession>(
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
 
     
     private func saveContext() {

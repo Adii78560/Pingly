@@ -1,6 +1,6 @@
 //
 //  SwiftDataModels.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -295,6 +295,81 @@ final class SDUserProfile {
         self.email = email
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+/// SwiftData persistent model tracking location sharing sessions and coordinates between two mesh peers
+@Model
+final class SDLocationShareSession {
+    @Attribute(.unique) var id: UUID
+    var localPeerID: String
+    var remotePeerID: String
+    var remoteDisplayName: String
+    var startedAt: Date
+    var expiresAt: Date?
+    var isActive: Bool
+    var isSharingLocal: Bool
+    var isSharingRemote: Bool
+    var lastLocalLatitude: Double?
+    var lastLocalLongitude: Double?
+    var lastLocalAccuracy: Double?
+    var lastLocalTimestamp: Date?
+    var lastRemoteLatitude: Double?
+    var lastRemoteLongitude: Double?
+    var lastRemoteAccuracy: Double?
+    var lastRemoteSpeed: Double?
+    var lastRemoteCourse: Double?
+    var lastRemoteTimestamp: Date?
+    var sequenceNumber: Int
+    var lastRemoteSequenceNumber: Int?
+    var stateRaw: String
+    
+    init(
+        id: UUID = UUID(),
+        localPeerID: String,
+        remotePeerID: String,
+        remoteDisplayName: String,
+        startedAt: Date = Date(),
+        expiresAt: Date? = nil,
+        isActive: Bool = true,
+        isSharingLocal: Bool = false,
+        isSharingRemote: Bool = false,
+        lastLocalLatitude: Double? = nil,
+        lastLocalLongitude: Double? = nil,
+        lastLocalAccuracy: Double? = nil,
+        lastLocalTimestamp: Date? = nil,
+        lastRemoteLatitude: Double? = nil,
+        lastRemoteLongitude: Double? = nil,
+        lastRemoteAccuracy: Double? = nil,
+        lastRemoteSpeed: Double? = nil,
+        lastRemoteCourse: Double? = nil,
+        lastRemoteTimestamp: Date? = nil,
+        sequenceNumber: Int = 0,
+        lastRemoteSequenceNumber: Int? = nil,
+        stateRaw: String = "ACTIVE"
+    ) {
+        self.id = id
+        self.localPeerID = localPeerID
+        self.remotePeerID = remotePeerID
+        self.remoteDisplayName = remoteDisplayName
+        self.startedAt = startedAt
+        self.expiresAt = expiresAt
+        self.isActive = isActive
+        self.isSharingLocal = isSharingLocal
+        self.isSharingRemote = isSharingRemote
+        self.lastLocalLatitude = lastLocalLatitude
+        self.lastLocalLongitude = lastLocalLongitude
+        self.lastLocalAccuracy = lastLocalAccuracy
+        self.lastLocalTimestamp = lastLocalTimestamp
+        self.lastRemoteLatitude = lastRemoteLatitude
+        self.lastRemoteLongitude = lastRemoteLongitude
+        self.lastRemoteAccuracy = lastRemoteAccuracy
+        self.lastRemoteSpeed = lastRemoteSpeed
+        self.lastRemoteCourse = lastRemoteCourse
+        self.lastRemoteTimestamp = lastRemoteTimestamp
+        self.sequenceNumber = sequenceNumber
+        self.lastRemoteSequenceNumber = lastRemoteSequenceNumber
+        self.stateRaw = stateRaw
     }
 }
 

@@ -1,6 +1,6 @@
 //
 //  MainTabView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 import os
 
-/// Main Tab Navigation Host View for RadioFy / Pingly
+/// Main Tab Navigation Host View for RadioFy / Relayn
 struct MainTabView: View {
 
     
@@ -30,7 +30,7 @@ struct MainTabView: View {
     // Splash Screen State
     @State private var isSplashFinished = false
     @State private var showIncomingCallSheet = false
-    @State private var incomingPeerName = "Nearby Pingly Node"
+    @State private var incomingPeerName = "Nearby Relayn Node"
     @State private var selectedTab = 0
 
     

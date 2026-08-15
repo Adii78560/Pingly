@@ -1,6 +1,6 @@
 //
 //  LocationService.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -19,6 +19,10 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var currentCoordinate: CLLocationCoordinate2D?
     @Published private(set) var currentAltitude: Double?
     @Published private(set) var currentAccuracy: Double?
+    @Published private(set) var currentHeading: Double?
+    @Published private(set) var rawHeading: Double?
+    @Published private(set) var continuousHeading: Double = 0.0
+    @Published private(set) var headingAccuracy: Double = 0.0
     @Published private(set) var lastLocationTimestamp: Date?
     @Published private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published private(set) var isSharingLocation: Bool = false
@@ -35,7 +39,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 10 // Update every 10 meters to conserve battery
+        locationManager.distanceFilter = 5 // Update every 5 meters for relative location screen
+        locationManager.headingFilter = 2 // Update every 2 degrees for smooth compass rotation
         self.authorizationStatus = locationManager.authorizationStatus
     }
     
@@ -62,7 +67,21 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         UIApplication.shared.open(url)
     }
     
-    // MARK: - Location Updates Lifecycle
+    // MARK: - Location & Compass Heading Lifecycle
+    
+    func startUpdatingHeading() {
+        guard CLLocationManager.headingAvailable() else {
+            AppLogger.location.warning("Compass CLHeading unavailable on device.")
+            return
+        }
+        locationManager.startUpdatingHeading()
+        AppLogger.location.info("[Compass] Started CLHeading compass updates.")
+    }
+    
+    func stopUpdatingHeading() {
+        locationManager.stopUpdatingHeading()
+        AppLogger.location.info("[Compass] Stopped CLHeading compass updates.")
+    }
     
     func startSharingLocation() {
         guard !isSharingLocation else { return }
@@ -78,7 +97,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         if status == .authorizedWhenInUse || status == .authorizedAlways {
             self.isSharingLocation = true
             locationManager.startUpdatingLocation()
-            AppLogger.location.info("Started offline GPS location updates.")
+            startUpdatingHeading()
+            AppLogger.location.info("Started offline GPS location & heading updates.")
         } else {
             requestLocationPermission()
         }
@@ -88,7 +108,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         guard isSharingLocation else { return }
         self.isSharingLocation = false
         locationManager.stopUpdatingLocation()
-        AppLogger.location.info("Stopped location updates.")
+        stopUpdatingHeading()
+        AppLogger.location.info("Stopped location & heading updates.")
     }
     
     /// One-shot offline GPS coordinate snapshot for immediate location sharing
@@ -108,6 +129,28 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     }
     
     // MARK: - Distance & Bearing Calculation Helpers
+    
+    /// Calculates relative direction angle (0...360 degrees) accounting for user heading and initial bearing
+    func relativeBearing(toLat lat: Double, lon: Double) -> (distanceMeters: Double, initialBearing: Double, relativeBearing: Double, distanceFormatted: String, compassDirection: String)? {
+        guard let userCoord = currentCoordinate else { return nil }
+        let userLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+        let targetLoc = CLLocation(latitude: lat, longitude: lon)
+        
+        let meters = userLoc.distance(from: targetLoc)
+        let distanceFormatted: String
+        if meters < 1000 {
+            distanceFormatted = String(format: "%.0f m", meters)
+        } else {
+            distanceFormatted = String(format: "%.1f km", meters / 1000.0)
+        }
+        
+        let initialBearing = calculateBearing(from: userCoord, to: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        let heading = currentHeading ?? 0.0
+        let relBearing = (initialBearing - heading + 360.0).truncatingRemainder(dividingBy: 360.0)
+        let compassDir = bearingToCompassDirection(initialBearing)
+        
+        return (meters, initialBearing, relBearing, distanceFormatted, compassDir)
+    }
     
     /// Calculates distance and compass direction from receiver's device to target coordinates
     func distanceAndBearingFromUser(toLat lat: Double, lon: Double) -> (distanceFormatted: String, bearingDirection: String)? {
@@ -158,9 +201,50 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
                 if self.isSharingLocation {
                     manager.startUpdatingLocation()
+                    self.startUpdatingHeading()
                 }
             } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
                 self.isSharingLocation = false
+                LocationShareManager.shared.stopAllLocalSharing(reason: "Location Permission Revoked")
+            }
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        guard newHeading.headingAccuracy >= 0 else { return }
+        let raw = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        let accuracy = newHeading.headingAccuracy
+        
+        DispatchQueue.main.async {
+            let previousRaw = self.rawHeading ?? raw
+            self.rawHeading = raw
+            self.currentHeading = raw
+            self.headingAccuracy = accuracy
+            
+            let delta = CircularAngleHelper.shortestAngularDifference(from: previousRaw, to: raw)
+            
+            // Adaptive Accuracy Filtering Strategy:
+            // accuracy <= 20°: Full update
+            // 20° < accuracy <= 35°: Damped update (0.4)
+            // accuracy > 35°: Heavily damped (0.1)
+            let dampingFactor: Double
+            if accuracy <= 20.0 {
+                dampingFactor = 1.0
+            } else if accuracy <= 35.0 {
+                dampingFactor = 0.4
+            } else {
+                dampingFactor = 0.1
+            }
+            
+            let applyDelta = delta * dampingFactor
+            self.continuousHeading += applyDelta
+            
+            // Throttled logging: Only log on North boundary crossing or delta >= 2.0°
+            let crossedNorth = (previousRaw >= 350.0 && raw <= 10.0) || (previousRaw <= 10.0 && raw >= 350.0)
+            if crossedNorth {
+                AppLogger.location.info("[Compass] North boundary crossing handled: raw=\(raw)°, previousRaw=\(previousRaw)°, delta=\(delta)°, continuous=\(self.continuousHeading)°")
+            } else if abs(delta) >= 2.0 {
+                AppLogger.location.info("[Compass] Heading update: raw=\(raw)°, continuous=\(self.continuousHeading)°, accuracy=\(accuracy)°, delta=\(delta)°")
             }
         }
     }

@@ -1,6 +1,6 @@
 //
 //  SettingsView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -303,7 +303,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Privacy & Data Controls")
                 } footer: {
-                    Text("Pingly accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location or personal data is shared with 3rd-party ad networks.")
+                    Text("Relayn accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location or personal data is shared with 3rd-party ad networks.")
                 }
 
                 // Section 5: SwiftData Local Storage & Cloud Sync
@@ -405,7 +405,7 @@ struct SettingsView: View {
                     Text("About")
                 } footer: {
                     VStack(spacing: 4) {
-                        Text("RadioFy / Pingly • Off-Grid Walkie-Talkie & P2P")
+                        Text("RadioFy / Relayn • Off-Grid Walkie-Talkie & P2P")
                         Text("Designed for emergency mesh communication.")
                     }
                     .frame(maxWidth: .infinity, alignment: .center)

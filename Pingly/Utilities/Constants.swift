@@ -1,6 +1,6 @@
 //
 //  Constants.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -9,7 +9,7 @@ import Foundation
 import SwiftUI
 import CoreBluetooth
 
-/// Production Constants namespace for the Pingly emergency off-grid mesh app.
+/// Production Constants namespace for the Relayn emergency off-grid mesh app.
 enum Constants {
     
     // MARK: - App Identity
@@ -40,7 +40,7 @@ enum Constants {
     
     // MARK: - Bluetooth Low Energy (BLE)
     enum BLE {
-        /// Custom 128-bit UUID for Pingly SOS Mesh Discovery
+        /// Custom 128-bit UUID for Relayn SOS Mesh Discovery
         static let serviceUUID = CBUUID(string: "A4950001-C5B1-4B44-B512-1370F02A74DA")
         static let characteristicUUID = CBUUID(string: "A4950002-C5B1-4B44-B512-1370F02A74DA")
         static let rssiReferenceAt1Meter: Double = -59.0 // Standard BLE reference RSSI for distance estimation

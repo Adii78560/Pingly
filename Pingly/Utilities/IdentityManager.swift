@@ -1,6 +1,6 @@
 //
 //  IdentityManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -8,7 +8,7 @@
 import Foundation
 import Combine
 
-/// Central coordinator enforcing the separation of Pingly Account ID, Device ID, and Display Name
+/// Central coordinator enforcing the separation of Relayn Account ID, Device ID, and Display Name
 @MainActor
 final class IdentityManager: ObservableObject {
     static let shared = IdentityManager()
@@ -24,7 +24,7 @@ final class IdentityManager: ObservableObject {
         self.displayName = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
     }
     
-    /// Binds active Apple user session to a stable Pingly Account ID
+    /// Binds active Apple user session to a stable Relayn Account ID
     func bindSession(accountID: UUID, username: String, displayName: String) {
         self.accountID = accountID
         self.username = username

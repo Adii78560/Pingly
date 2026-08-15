@@ -1,6 +1,6 @@
 //
-//  PinglyApp.swift
-//  Pingly
+//  RelaynApp.swift
+//  Relayn
 //
 //  Created by Aditya Rai on 08/08/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 
 @main
-struct PinglyApp: App {
+struct RelaynApp: App {
     init() {
         BackgroundTaskManager.shared.registerTasks()
         BackgroundAudioSessionManager.shared.configureAudioSession()

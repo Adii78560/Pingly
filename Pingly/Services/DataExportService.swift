@@ -1,6 +1,6 @@
 //
 //  DataExportService.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -121,7 +121,7 @@ final class DataExportService: ObservableObject {
             }
             
             // 5. Save to temporary export file
-            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("Pingly_GDPR_Data_Export.json")
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("Relayn_GDPR_Data_Export.json")
             try? jsonData.write(to: tempURL)
             
             self.isExporting = false

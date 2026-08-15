@@ -1,6 +1,6 @@
 //
 //  BackgroundAudioSessionManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -87,7 +87,7 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
     func beginBackgroundTask() {
         guard backgroundTaskID == .invalid else { return }
         
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "Pingly.PTT.BackgroundStream") { [weak self] in
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "Relayn.PTT.BackgroundStream") { [weak self] in
             self?.endBackgroundTask()
         }
         

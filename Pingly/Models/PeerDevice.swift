@@ -1,6 +1,6 @@
 //
 //  PeerDevice.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -8,7 +8,7 @@
 import Foundation
 import MultipeerConnectivity
 
-/// Peer discovery node state model representing nearby Pingly devices over BLE / Wi-Fi mesh
+/// Peer discovery node state model representing nearby Relayn devices over BLE / Wi-Fi mesh
 struct PeerDevice: Identifiable, Hashable {
     let id: String
     var displayName: String

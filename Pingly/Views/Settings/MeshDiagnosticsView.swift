@@ -1,6 +1,6 @@
 //
 //  MeshDiagnosticsView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 14/08/26.
 //
@@ -12,6 +12,7 @@ struct MeshDiagnosticsView: View {
     @StateObject private var notificationManager = MeshNotificationManager.shared
     @StateObject private var swiftDataService = SwiftDataService.shared
     @StateObject private var multipeerService = MultipeerService.shared
+    @ObservedObject private var compassHapticManager = CompassHapticManager.shared
     
     @State private var notificationEvents: [SDNotificationEvent] = []
     @State private var pendingMessages: [SDPendingMessage] = []
@@ -47,7 +48,7 @@ struct MeshDiagnosticsView: View {
             }
             
             // Section 2: Notification Preferences
-            Section("Event Notification Toggles") {
+            Section("Event Notification & Compass Toggles") {
                 Toggle("Message Queued & Received", isOn: $notificationManager.notifyMessages)
                 Toggle("Delivery Receipts (ACKs)", isOn: $notificationManager.notifyDelivery)
                 Toggle("Nearby Device Discovery", isOn: $notificationManager.notifyPeerDiscovery)
@@ -55,6 +56,7 @@ struct MeshDiagnosticsView: View {
                 Toggle("PTT Walkie-Talkie Activity", isOn: $notificationManager.notifyPTT)
                 Toggle("Failed & Expired Messages", isOn: $notificationManager.notifyFailedMessages)
                 Toggle("Detailed Mesh Diagnostics", isOn: $notificationManager.notifyMeshDiagnostics)
+                Toggle("Compass Direction Haptics", isOn: $compassHapticManager.enableCompassHaptics)
             }
             
             // Section 3: Active Peers & Mesh Routes
@@ -126,6 +128,45 @@ struct MeshDiagnosticsView: View {
                             }
                         }
                         .padding(.vertical, 2)
+                    }
+                }
+            }
+            
+            // Section: Offline Location Sharing Sessions
+            Section("Offline Location Sharing Sessions") {
+                if LocationShareManager.shared.activeSessions.isEmpty {
+                    Text("No active location sharing sessions")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(Array(LocationShareManager.shared.activeSessions.values), id: \.id) { session in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(session.remoteDisplayName.cleanBaseName)
+                                    .font(.system(size: 14, weight: .semibold))
+                                Spacer()
+                                Text(session.stateRaw)
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(AppTheme.glassTint)
+                                    .foregroundColor(AppTheme.tintColor)
+                                    .cornerRadius(4)
+                            }
+                            HStack {
+                                Text("Local Sharing: \(session.isSharingLocal ? "YES" : "NO")")
+                                Spacer()
+                                Text("Remote Sharing: \(session.isSharingRemote ? "YES" : "NO")")
+                            }
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            
+                            if let lat = session.lastRemoteLatitude, let lon = session.lastRemoteLongitude {
+                                Text("Last Remote GPS: \(String(format: "%.4f", lat)), \(String(format: "%.4f", lon)) (Acc: ±\(Int(session.lastRemoteAccuracy ?? 0))m)")
+                                    .font(.caption2.monospaced())
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                 }
             }

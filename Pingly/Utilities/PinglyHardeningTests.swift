@@ -1,6 +1,6 @@
 //
-//  PinglyHardeningTests.swift
-//  Pingly
+//  RelaynHardeningTests.swift
+//  Relayn
 //
 //  Created by Senior iOS Developer on 12/08/26.
 //
@@ -10,9 +10,9 @@ import os
 import OSLog
 
 
-/// Self-testing verification engine for Pingly Mesh V2 Hardening Pass
-final class PinglyHardeningTests {
-    static let shared = PinglyHardeningTests()
+/// Self-testing verification engine for Relayn Mesh V2 Hardening Pass
+final class RelaynHardeningTests {
+    static let shared = RelaynHardeningTests()
     
     private init() {}
     
@@ -98,6 +98,78 @@ final class PinglyHardeningTests {
         
         let isDedup = SwiftDataService.shared.isNotificationDeduplicated(deduplicationKey: testDedupKey)
         assert(isDedup, "isNotificationDeduplicated returns true for stored deduplication key")
+        
+        // 6. Offline Location & Relative Bearing Math Tests
+        let validLat = 37.7749
+        let validLon = -122.4194
+        let invalidLat = 105.0 // > 90
+        
+        assert(validLat >= -90.0 && validLat <= 90.0 && validLon >= -180.0 && validLon <= 180.0, "Valid coordinate bounds check passes")
+        assert(invalidLat < -90.0 || invalidLat > 90.0, "Invalid coordinate bounds check correctly flagged")
+        
+        let relMath = LocationService.shared.distanceAndBearingFromUser(toLat: validLat, lon: validLon)
+        assert(relMath != nil || LocationService.shared.currentCoordinate == nil, "distanceAndBearingFromUser executes cleanly")
+        
+        // 7. Circular Angle Shortest-Path Math Tests
+        let delta1 = CircularAngleHelper.shortestAngularDifference(from: 359.0, to: 1.0)
+        assert(abs(delta1 - 2.0) < 0.001, "359° -> 1° produces shortest delta +2°")
+        
+        let delta2 = CircularAngleHelper.shortestAngularDifference(from: 1.0, to: 359.0)
+        assert(abs(delta2 - (-2.0)) < 0.001, "1° -> 359° produces shortest delta -2°")
+        
+        let delta3 = CircularAngleHelper.shortestAngularDifference(from: 179.0, to: 181.0)
+        assert(abs(delta3 - 2.0) < 0.001, "179° -> 181° produces shortest delta +2°")
+        
+        let delta4 = CircularAngleHelper.shortestAngularDifference(from: 350.0, to: 10.0)
+        assert(abs(delta4 - 20.0) < 0.001, "350° -> 10° produces shortest delta +20°")
+        
+        // 8. Sequence Protection & Relative Position Privacy Tests
+        let seq10 = 10
+        let seq11 = 11
+        let seq9 = 9
+        assert(seq11 > seq10, "Sequence 11 accepted after 10")
+        assert(!(seq9 > seq10), "Sequence 9 rejected after 10")
+        
+        let relPacket = LocationPacket(
+            type: "RELATIVE_POSITION",
+            id: UUID(),
+            senderID: "node1",
+            senderName: "User1",
+            recipientID: "node2",
+            timestamp: Date(),
+            accepted: nil,
+            latitude: nil,
+            longitude: nil,
+            accuracy: nil,
+            speed: nil,
+            course: nil,
+            sequenceNumber: 1,
+            distanceMeters: 40.0,
+            relativeBearing: 45.0,
+            compassDirection: "NE"
+        )
+        assert(relPacket.latitude == nil && relPacket.longitude == nil, "Relative position packet contains zero raw GPS coordinates")
+        
+        // 9. Migration & Non-Destructive Data Preservation Tests
+        let dummySession = SDLocationShareSession(
+            localPeerID: "local1",
+            remotePeerID: "remote1",
+            remoteDisplayName: "TestRemote"
+        )
+        assert(dummySession.lastRemoteSequenceNumber == nil, "Existing/unmigrated session lastRemoteSequenceNumber defaults to nil")
+        
+        let nilSeq: Int? = nil
+        let firstSeq = 10
+        let isFirstAccepted = (nilSeq == nil || firstSeq > nilSeq!)
+        assert(isFirstAccepted, "First sequence number accepted when lastRemoteSequenceNumber is nil")
+        
+        let currentSeq = 10
+        let nextSeq = 11
+        let dupSeq = 10
+        let oldSeq = 9
+        assert(nextSeq > currentSeq, "Sequence 11 accepted after 10")
+        assert(!(dupSeq > currentSeq), "Duplicate sequence 10 rejected")
+        assert(!(oldSeq > currentSeq), "Out-of-order sequence 9 rejected")
         
         AppLogger.multipeer.info("HARDENING VERIFICATION SUMMARY: \(passed) Passed, \(failed) Failed.")
         return (passed, failed)

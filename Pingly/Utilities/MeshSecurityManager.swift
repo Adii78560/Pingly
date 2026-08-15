@@ -1,6 +1,6 @@
 //
 //  MeshSecurityManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 12/08/26.
 //
@@ -17,7 +17,7 @@ final class MeshSecurityManager {
     
     private init() {
         // Derive deterministic 256-bit symmetric key from mesh domain seed
-        let seed = "PinglyOffGridMeshV2AuthSeed2026".data(using: .utf8)!
+        let seed = "RelaynOffGridMeshV2AuthSeed2026".data(using: .utf8)!
         let hash = SHA256.hash(data: seed)
         self.meshAuthKey = SymmetricKey(data: hash)
     }

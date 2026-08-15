@@ -1,6 +1,6 @@
 //
 //  KeychainIdentityService.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -9,7 +9,7 @@ import Foundation
 import Security
 import os
 
-/// Dedicated secure Keychain storage manager for Pingly Device ID persistence across app reinstalls
+/// Dedicated secure Keychain storage manager for Relayn Device ID persistence across app reinstalls
 final class KeychainIdentityService {
     static let shared = KeychainIdentityService()
     
@@ -27,14 +27,14 @@ final class KeychainIdentityService {
         
         let newUUID = UUID()
         saveKeychainItem(key: deviceIDKey, value: newUUID.uuidString)
-        AppLogger.general.info("Generated NEW Pingly Device ID and stored securely in iOS Keychain.")
+        AppLogger.general.info("Generated NEW Relayn Device ID and stored securely in iOS Keychain.")
         return newUUID
     }
     
     /// Permanently deletes Device ID from iOS Keychain (strictly during explicit account deletion)
     func clearDeviceID() {
         deleteKeychainItem(key: deviceIDKey)
-        AppLogger.general.info("Cleared Pingly Device ID from iOS Keychain.")
+        AppLogger.general.info("Cleared Relayn Device ID from iOS Keychain.")
     }
     
     // MARK: - Private Apple Security Keychain Helpers

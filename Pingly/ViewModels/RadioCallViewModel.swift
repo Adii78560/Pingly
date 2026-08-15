@@ -1,6 +1,6 @@
 //
 //  RadioCallViewModel.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -53,7 +53,7 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     @Published var availableChannels: [String] = {
-        let saved = UserDefaults.standard.stringArray(forKey: "Pingly.CustomChannels") ?? []
+        let saved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
         let defaultChannels = ["CH-1 EMERGENCY", "CH-2 RESCUE MESH", "CH-3 MOUNTAIN OPS", "CH-4 GENERAL P2P"]
         let set = Set(defaultChannels + saved)
         return Array(set).sorted()
@@ -99,9 +99,9 @@ final class RadioCallViewModel: ObservableObject {
         let channelName = trimmed.hasPrefix("CH-") ? trimmed : "CH- " + trimmed
         if !availableChannels.contains(channelName) {
             availableChannels.append(channelName)
-            var saved = UserDefaults.standard.stringArray(forKey: "Pingly.CustomChannels") ?? []
+            var saved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
             saved.append(channelName)
-            UserDefaults.standard.set(saved, forKey: "Pingly.CustomChannels")
+            UserDefaults.standard.set(saved, forKey: "Relayn.CustomChannels")
         }
         selectedChannel = channelName
         multipeerService.broadcastChannelSync(channelName: channelName)
@@ -125,9 +125,9 @@ final class RadioCallViewModel: ObservableObject {
                 
                 if !self.availableChannels.contains(channelName) {
                     self.availableChannels.append(channelName)
-                    var saved = UserDefaults.standard.stringArray(forKey: "Pingly.CustomChannels") ?? []
+                    var saved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
                     saved.append(channelName)
-                    UserDefaults.standard.set(saved, forKey: "Pingly.CustomChannels")
+                    UserDefaults.standard.set(saved, forKey: "Relayn.CustomChannels")
                 }
                 self.latestTextSnippet = "\(creator) shared channel: \(channelName)"
                 HapticManager.successFeedback()

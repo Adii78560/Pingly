@@ -1,6 +1,6 @@
 //
 //  MessagesView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 
 //
 //  MessagesView.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -164,7 +164,7 @@ struct MessagesView: View {
                 } header: {
                     Text("Emergency Distress Alert")
                 } footer: {
-                    Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Pingly mesh nodes.")
+                    Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Relayn mesh nodes.")
                 }
             }
             .listStyle(.insetGrouped)

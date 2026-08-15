@@ -1,13 +1,13 @@
 //
 //  EmergencyStatus.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
 
 import SwiftUI
 
-/// Emergency status levels for Pingly mesh nodes
+/// Emergency status levels for Relayn mesh nodes
 enum EmergencyStatus: String, Codable, CaseIterable, Identifiable {
     case normal = "Normal Operations"
     case mountainSOS = "Mountain / Trekking Rescue"

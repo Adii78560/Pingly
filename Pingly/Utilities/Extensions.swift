@@ -1,6 +1,6 @@
 //
 //  Extensions.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //

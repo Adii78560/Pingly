@@ -1,6 +1,6 @@
 //
 //  Message.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -15,6 +15,12 @@ enum P2PMessageType: String, Codable {
     case location = "LOCATION"
     case ack = "ACK"
     case channelSync = "CHANNEL_SYNC"
+    case locationRequest = "LOCATION_REQUEST"
+    case locationResponse = "LOCATION_RESPONSE"
+    case locationSharingStarted = "LOCATION_SHARING_STARTED"
+    case locationSharingStopped = "LOCATION_SHARING_STOPPED"
+    case relativePosition = "RELATIVE_POSITION"
+    case locationExpired = "LOCATION_EXPIRED"
 }
 
 /// Discriminator for 1-hop link ACK vs end-to-end destination delivery ACK

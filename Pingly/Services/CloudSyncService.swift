@@ -1,6 +1,6 @@
 //
 //  CloudSyncService.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -44,7 +44,7 @@ final class CloudSyncService: ObservableObject {
     @Published private(set) var syncStatusMessage: String = "Monitoring network connection..."
     
     private let pathMonitor = NWPathMonitor()
-    private let monitorQueue = DispatchQueue(label: "com.Pingly.NetworkMonitorQueue")
+    private let monitorQueue = DispatchQueue(label: "com.Relayn.NetworkMonitorQueue")
     private var cancellables = Set<AnyCancellable>()
     
     private init() {

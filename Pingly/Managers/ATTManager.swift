@@ -1,6 +1,6 @@
 //
 //  ATTManager.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -20,8 +20,8 @@ final class ATTManager: ObservableObject {
     
     @Published private(set) var trackingStatus: ATTrackingManager.AuthorizationStatus = .notDetermined
     
-    /// Indicates whether Pingly uses 3rd-party tracking SDKs.
-    /// Pingly is an off-grid P2P mesh network using zero 3rd-party ad/tracking SDKs.
+    /// Indicates whether Relayn uses 3rd-party tracking SDKs.
+    /// Relayn is an off-grid P2P mesh network using zero 3rd-party ad/tracking SDKs.
     let isTrackingRequiredBySDKs: Bool = false
     
     private init() {

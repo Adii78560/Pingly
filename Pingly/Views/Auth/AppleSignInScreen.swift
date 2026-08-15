@@ -1,6 +1,6 @@
 //
 //  AppleSignInScreen.swift
-//  Pingly
+//  Relayn
 //
 //  Created by Senior iOS Developer on 13/08/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 import AuthenticationServices
 
-/// Minimalist Native Onboarding & Apple Sign-In Screen for Pingly
+/// Minimalist Native Onboarding & Apple Sign-In Screen for Relayn
 struct AppleSignInScreen: View {
     @ObservedObject var signInManager = AppleSignInManager.shared
     @Environment(\.colorScheme) var colorScheme
