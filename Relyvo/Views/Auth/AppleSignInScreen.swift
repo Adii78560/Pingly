@@ -44,7 +44,7 @@ struct AppleSignInScreen: View {
                     }
                     
                     VStack(spacing: 6) {
-                        Text("Relayn")
+                        Text("Relyvo")
                             .font(.system(size: 34, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                         

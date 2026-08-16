@@ -164,7 +164,7 @@ struct MessagesView: View {
                 } header: {
                     Text("Emergency Distress Alert")
                 } footer: {
-                    Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Relayn mesh nodes.")
+                    Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Relyvo mesh nodes.")
                 }
             }
             .listStyle(.insetGrouped)

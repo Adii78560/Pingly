@@ -139,7 +139,7 @@ struct LocationMessageCardView: View {
         HapticsManager.shared.lightImpact()
         let placemark = MKPlacemark(coordinate: coordinate)
         let mapItem = MKMapItem(placemark: placemark)
-        mapItem.name = "\(senderName)'s Relayn Position"
+        mapItem.name = "\(senderName)'s Relyvo Position"
         mapItem.openInMaps(launchOptions: [
             MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
             MKLaunchOptionsMapSpanKey: NSValue(mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))

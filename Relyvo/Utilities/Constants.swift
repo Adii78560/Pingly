@@ -14,7 +14,7 @@ enum Constants {
     
     // MARK: - App Identity
     enum App {
-        static let name = "Relayn"
+        static let name = "Relyvo"
         static let subtitle = "Off-Grid Emergency Mesh & Radio Call"
         static let version = "1.0.0"
         static let build = "1"

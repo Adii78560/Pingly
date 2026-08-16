@@ -48,7 +48,7 @@ struct AnimatedSplashScreenView: View {
                 
                 // Minimalist Branding Title
                 VStack(spacing: 6) {
-                    Text("Relayn")
+                    Text("Relyvo")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     

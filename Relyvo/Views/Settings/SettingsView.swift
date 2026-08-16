@@ -52,7 +52,7 @@ struct SettingsView: View {
                             Text(viewModel.userHandle)
                                 .font(.headline)
                             if let username = AppleSignInManager.shared.username {
-                                Text("Relayn ID: \(username)")
+                                Text("Relyvo ID: \(username)")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundColor(AppTheme.tintColor)
                             } else {
@@ -303,7 +303,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Privacy & Data Controls")
                 } footer: {
-                    Text("Relayn accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location or personal data is shared with 3rd-party ad networks.")
+                    Text("Relyvo accesses hardware GPS coordinates strictly when requested for off-grid SOS drops and direct peer location sharing. Zero location or personal data is shared with 3rd-party ad networks.")
                 }
 
                 // Section 5: SwiftData Local Storage & Cloud Sync
@@ -405,7 +405,7 @@ struct SettingsView: View {
                     Text("About")
                 } footer: {
                     VStack(spacing: 4) {
-                        Text("RadioFy / Relayn • Off-Grid Walkie-Talkie & P2P")
+                        Text("Relyvo • Off-Grid Walkie-Talkie & P2P")
                         Text("Designed for emergency mesh communication.")
                     }
                     .frame(maxWidth: .infinity, alignment: .center)

@@ -30,7 +30,7 @@ struct MainTabView: View {
     // Splash Screen State
     @State private var isSplashFinished = false
     @State private var showIncomingCallSheet = false
-    @State private var incomingPeerName = "Nearby Relayn Node"
+    @State private var incomingPeerName = "Nearby Relyvo Node"
     @State private var selectedTab = 0
 
     

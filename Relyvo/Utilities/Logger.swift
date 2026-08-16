@@ -10,7 +10,7 @@ import os
 
 /// Production Logger wrapper using Swift `os.Logger` for unified, high-performance structured logging.
 enum AppLogger {
-    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.RaiEnterprise.Relayn"
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.RaiEnterprise.Relyvo"
     
     static let general = Logger(subsystem: subsystem, category: "General")
     static let multipeer = Logger(subsystem: subsystem, category: "MultipeerMesh")

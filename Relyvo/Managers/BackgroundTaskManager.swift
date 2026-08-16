@@ -16,8 +16,8 @@ final class BackgroundTaskManager {
     
     static let shared = BackgroundTaskManager()
     
-    static let refreshTaskID = "com.RaiEnterprise.Relayn.refresh"
-    static let processingTaskID = "com.RaiEnterprise.Relayn.pttsync"
+    static let refreshTaskID = "com.RaiEnterprise.Relyvo.refresh"
+    static let processingTaskID = "com.RaiEnterprise.Relyvo.pttsync"
     
     static let legacyRefreshTaskID = "com.RaiEnterprise.RadioFy.refresh"
     static let legacyProcessingTaskID = "com.RaiEnterprise.RadioFy.pttsync"

@@ -24,7 +24,7 @@ struct PrivacyPolicyView: View {
                             .font(.system(size: 36))
                             .foregroundColor(AppTheme.tintColor)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Relayn Privacy Policy")
+                            Text("Relyvo Privacy Policy")
                                 .font(.title2.bold())
                             Text("Privacy-first, off-grid communication")
                                 .font(.subheadline)
@@ -40,7 +40,7 @@ struct PrivacyPolicyView: View {
                         title: "1. Data Minimization & Collection",
                         icon: "shippingbox.fill",
                         color: .blue,
-                        content: "Relayn collects only the minimal data required for off-grid peer-to-peer messaging and Apple Sign-In authorization. Zero 3rd-party advertising or analytics SDKs are integrated into Relayn."
+                        content: "Relyvo collects only the minimal data required for off-grid peer-to-peer messaging and Apple Sign-In authorization. Zero 3rd-party advertising or analytics SDKs are integrated into Relyvo."
                     )
                     
                     // Section 2: Off-Grid P2P Mesh Architecture

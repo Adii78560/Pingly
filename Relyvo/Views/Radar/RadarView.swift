@@ -74,7 +74,7 @@ struct RadarView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This name will be visible to nearby off-grid Relayn devices.")
+                Text("This name will be visible to nearby off-grid Relyvo devices.")
             }
             .onAppear {
                 newBroadcastNameText = viewModel.broadcastName

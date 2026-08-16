@@ -1,14 +1,14 @@
 //
-//  RelaynApp.swift
-//  Relayn
+//  RelyvoApp.swift
+//  Relyvo
 //
-//  Created by Aditya Rai on 08/08/26.
+//  Created by Senior iOS Developer on 16/08/26.
 //
 
 import SwiftUI
 
 @main
-struct RelaynApp: App {
+struct RelyvoApp: App {
     init() {
         BackgroundTaskManager.shared.registerTasks()
         BackgroundAudioSessionManager.shared.configureAudioSession()
@@ -19,6 +19,4 @@ struct RelaynApp: App {
             ContentView()
         }
     }
-
 }
-
