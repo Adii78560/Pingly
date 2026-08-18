@@ -118,7 +118,12 @@ final class MessagesViewModel: ObservableObject {
         }
         
         // Persist message to SwiftData local storage
-        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: conversation.displayName, text: trimmed)
+        _ = SwiftDataService.shared.saveChatMessage(
+            id: newMessage.id,
+            senderName: handle,
+            channel: conversation.displayName,
+            text: trimmed
+        )
         
         // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
         _ = SwiftDataService.shared.enqueuePendingMessage(
@@ -139,7 +144,6 @@ final class MessagesViewModel: ObservableObject {
         } else {
             AppLogger.multipeer.info("Peer '\(conversation.displayName)' is offline. Enqueued message \(newMessage.id) to store-and-forward queue.")
         }
-
 
         
         messageText = ""
@@ -184,6 +188,7 @@ final class MessagesViewModel: ObservableObject {
             }
             
             _ = SwiftDataService.shared.saveChatMessage(
+                id: newMessage.id,
                 senderName: handle,
                 channel: conversation.displayName,
                 text: locationText,
@@ -240,7 +245,12 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(newMessage)
-        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: "GENERAL MESH", text: trimmed)
+        _ = SwiftDataService.shared.saveChatMessage(
+            id: newMessage.id,
+            senderName: handle,
+            channel: "GENERAL MESH",
+            text: trimmed
+        )
         multipeerService.broadcast(message: newMessage)
         messageText = ""
         HapticManager.lightImpact()
@@ -267,7 +277,12 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(sosMessage)
-        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: "EMERGENCY BEACON", text: sosText)
+        _ = SwiftDataService.shared.saveChatMessage(
+            id: sosMessage.id,
+            senderName: handle,
+            channel: "EMERGENCY BEACON",
+            text: sosText
+        )
         multipeerService.broadcast(message: sosMessage)
         HapticManager.warningFeedback()
         AppLogger.emergency.critical("Triggered Emergency SOS Beacon with status: \(status.rawValue)")

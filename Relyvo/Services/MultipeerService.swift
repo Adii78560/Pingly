@@ -123,13 +123,30 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
 
     
     func broadcast(message: Message) {
-        guard let session = session, !session.connectedPeers.isEmpty else { return }
+        let tag = AppLogger.messageTag(message.id)
+        let frameTag = AppLogger.frameTag(message.id)
+        let transportTag = AppLogger.transportTag(message.id)
+        
+        guard let session = session, !session.connectedPeers.isEmpty else {
+            AppLogger.multipeer.info("\(tag) WAITING_FOR_PEER")
+            return
+        }
         do {
+            let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
+            let firstPeerShort = String((session.connectedPeers.first?.displayName ?? "UNKNOWN").prefix(6))
+            
+            AppLogger.multipeer.info("\(tag) CREATED type=\(message.type.rawValue)")
+            AppLogger.multipeer.info("\(tag) sender=\(String(message.senderID.prefix(6)))")
+            AppLogger.multipeer.info("\(tag) recipient=\(String(message.destinationID.prefix(6))) channel=\(message.channelID ?? message.destinationID) payloadBytes=\(message.text.utf8.count)")
+            AppLogger.multipeer.info("\(tag) SEND_ATTEMPT attempt=1 reason=BROADCAST peer=\(firstPeerShort)")
+            
+            AppLogger.multipeer.info("\(frameTag) SERIALIZE_START")
             let data = try JSONEncoder().encode(message)
+            AppLogger.multipeer.info("\(frameTag) SERIALIZE_SUCCESS version=\(message.protocolVersion) type=\(message.type.rawValue) bytes=\(data.count)")
+            
             let sha256 = RelaynTransportLogger.sha256Hex(data: data)
             let hexPrev = RelaynTransportLogger.hexPreview(data: data)
             let utf8Prev = RelaynTransportLogger.utf8Preview(data: data)
-            let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
             
             AppLogger.multipeer.info("""
             [PINGLY_SERIALIZATION]
@@ -170,7 +187,11 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             utf8Preview=\(utf8Prev)
             """)
             
+            AppLogger.multipeer.info("\(transportTag) SEND_START peer=\(firstPeerShort) bytes=\(data.count)")
             try session.send(data, toPeers: session.connectedPeers, with: .reliable)
+            AppLogger.multipeer.info("\(transportTag) SEND_CALL_COMPLETED peer=\(firstPeerShort)")
+            
+            RelaynTransportDiagnosticsManager.shared.recordOutgoingMessage(id: message.id, peer: session.connectedPeers.first?.displayName ?? "Broadcast", result: "Sent")
             RelaynTransportDiagnosticsManager.shared.incrementTxFrames()
             
             AppLogger.multipeer.info("""
@@ -183,6 +204,9 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             
             AppLogger.multipeer.info("Broadcasted emergency message ID: \(message.id) to \(session.connectedPeers.count) peers")
         } catch {
+            let firstPeerShort = String((session.connectedPeers.first?.displayName ?? "UNKNOWN").prefix(6))
+            AppLogger.multipeer.error("\(transportTag) SEND_FAILED peer=\(firstPeerShort) error=\(error.localizedDescription)")
+            RelaynTransportDiagnosticsManager.shared.recordOutgoingMessage(id: message.id, peer: session.connectedPeers.first?.displayName ?? "Broadcast", result: "Failed")
             AppLogger.multipeer.error("""
             [PINGLY_TX_FAILURE]
             frameID=\(message.id.uuidString)
@@ -328,6 +352,7 @@ extension MultipeerService: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            let shortPeer = String(peerID.displayName.prefix(6))
             let stateString: String
             switch state {
             case .connected:
@@ -339,6 +364,8 @@ extension MultipeerService: MCSessionDelegate {
             @unknown default:
                 stateString = "UNKNOWN"
             }
+            
+            AppLogger.multipeer.info("\(AppLogger.peerTag) connection state peer=\(shortPeer) state=\(stateString.lowercased())")
             
             AppLogger.multipeer.info("""
             [PINGLY_PEER_STATE]
@@ -352,6 +379,7 @@ extension MultipeerService: MCSessionDelegate {
             switch state {
             case .connected:
                 AppLogger.multipeer.info("Peer connected: \(peerID.displayName)")
+                RelaynTransportDiagnosticsManager.shared.recordPeerConnection(peer: peerID.displayName)
                 MeshNotificationManager.shared.notifyPeerConnected(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
                 if !self.connectedPeers.contains(where: { $0.id == peerID.displayName }) {
                     let newPeer = PeerDevice(
@@ -392,6 +420,7 @@ extension MultipeerService: MCSessionDelegate {
                 peers=[\(self.connectedPeers.map { $0.displayName }.joined(separator: ", "))]
                 """)
             case .connecting:
+                AppLogger.multipeer.info("\(AppLogger.peerTag) connection attempt peer=\(shortPeer)")
                 AppLogger.multipeer.info("Connecting to peer: \(peerID.displayName)")
             @unknown default:
                 break
@@ -411,7 +440,10 @@ extension MultipeerService: MCSessionDelegate {
                 guard !pendingList.isEmpty else { return }
                 
                 for pending in pendingList {
+                    let msgTag = AppLogger.messageTag(pending.messageID)
+                    
                     guard pending.retryCount < pending.maxRetries else {
+                        AppLogger.multipeer.warning("\(msgTag) MAX_RETRIES_REACHED retryCount=\(pending.maxRetries)")
                         AppLogger.multipeer.warning("Pending message \(pending.messageID) reached max retries (\(pending.maxRetries)). Skipping.")
                         continue
                     }
@@ -423,9 +455,17 @@ extension MultipeerService: MCSessionDelegate {
                     
                     // Prevent forwarding if TTL exhausted
                     guard pending.hopsCount < pending.ttl else {
+                        AppLogger.multipeer.warning("\(AppLogger.routingTag(pending.messageID)) FORWARD_REJECTED reason=TTL_EXPIRED (\(pending.hopsCount)/\(pending.ttl))")
                         AppLogger.multipeer.warning("Pending message \(pending.messageID) TTL exhausted (\(pending.hopsCount)/\(pending.ttl)). Halting forward.")
                         continue
                     }
+                    
+                    let targetPeerName = self.connectedPeers.first?.displayName ?? pending.destinationID
+                    let shortTarget = String(targetPeerName.prefix(6))
+                    
+                    AppLogger.multipeer.info("\(msgTag) PEER_AVAILABLE peer=\(shortTarget)")
+                    AppLogger.multipeer.info("\(msgTag) RETRY_START retryCount=\(pending.retryCount + 1) peer=\(shortTarget)")
+                    AppLogger.multipeer.info("\(msgTag) SEND_ATTEMPT attempt=\(pending.retryCount + 1) reason=QUEUE_PROCESSOR peer=\(shortTarget)")
                     
                     SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .sending)
                     
@@ -459,15 +499,19 @@ extension MultipeerService: MCSessionDelegate {
                     
                     self.broadcast(message: msg)
                     SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .waitingForACK)
+                    AppLogger.multipeer.info("\(msgTag) RETRY_SEND_COMPLETED retryCount=\(pending.retryCount)")
                     AppLogger.multipeer.info("Dispatched \(pending.queueRole.rawValue) message \(pending.messageID) for '\(pending.destinationID)' (Hop \(msg.hopsCount)/\(msg.ttl))")
                     
                     // Schedule ACK timeout verification (5 seconds)
+                    AppLogger.multipeer.info("\(AppLogger.ackTag(pending.messageID)) ACK_TIMER_STARTED timeout=5")
                     Task {
                         try? await Task.sleep(nanoseconds: 5_000_000_000)
                         let checkList = SwiftDataService.shared.fetchPendingMessages()
                         if let item = checkList.first(where: { $0.messageID == pending.messageID }), item.status == .waitingForACK {
-                            SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .failed)
-                            AppLogger.multipeer.warning("ACK Timeout (5s) for pending message \(pending.messageID). Set status to FAILED.")
+                            AppLogger.multipeer.warning("\(AppLogger.ackTag(pending.messageID)) ACK_TIMEOUT retryCount=\(item.retryCount)")
+                            SwiftDataService.shared.updatePendingMessageStatus(messageID: pending.messageID, status: .failed, reason: "ACK_TIMEOUT")
+                        } else {
+                            AppLogger.multipeer.info("\(AppLogger.ackTag(pending.messageID)) ACK_TIMER_CANCELLED")
                         }
                     }
                 }
@@ -478,10 +522,13 @@ extension MultipeerService: MCSessionDelegate {
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         RelaynTransportDiagnosticsManager.shared.incrementRxFrames()
         let timestamp = Date()
+        let shortPeer = String(peerID.displayName.prefix(6))
         let sha256 = RelaynTransportLogger.sha256Hex(data: data)
         let hexPrev = RelaynTransportLogger.hexPreview(data: data)
         let utf8Prev = RelaynTransportLogger.utf8Preview(data: data)
         let threadContext = RelaynTransportLogger.currentThreadDescription()
+        
+        AppLogger.multipeer.info("\(AppLogger.transportTag()) RECEIVE_START peer=\(shortPeer) bytes=\(data.count)")
         
         AppLogger.multipeer.info("""
         [PINGLY_RX_BEGIN]
@@ -504,6 +551,9 @@ extension MultipeerService: MCSessionDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             // Check for PTT audio binary framing (header starts with PTTFrameHeader or 0x5054 magic bytes)
             if PTTFrameHeader.decode(from: data) != nil || (data.count >= 2 && data[0] == 0x50 && data[1] == 0x54) {
+                AppLogger.multipeer.info("\(AppLogger.frameTag()) FRAME_RECEIVED_UNKNOWN_ID peer=\(shortPeer) type=PTT_RAW bytes=\(data.count)")
+                RelaynTransportDiagnosticsManager.shared.recordIncomingMessage(id: nil, peer: peerID.displayName, result: "PTT Raw Frame", decodeRes: "Success")
+                
                 AppLogger.multipeer.info("""
                 [PINGLY_DECODE_BEGIN]
                 peer=\(peerID.displayName)
@@ -537,15 +587,10 @@ extension MultipeerService: MCSessionDelegate {
             }
             
             // Try decoding as ChannelInvite first
-            AppLogger.multipeer.info("""
-            [PINGLY_DECODE_BEGIN]
-            peer=\(peerID.displayName)
-            bytes=\(data.count)
-            decoder=JSONDecoder
-            expectedType=ChannelInvite
-            """)
-            
             if let invite = try? JSONDecoder().decode(ChannelInvite.self, from: data), invite.type == "CHANNEL_SYNC" {
+                AppLogger.multipeer.info("\(AppLogger.frameTag()) FRAME_RECEIVED_UNKNOWN_ID peer=\(shortPeer) type=CHANNEL_SYNC bytes=\(data.count)")
+                RelaynTransportDiagnosticsManager.shared.recordIncomingMessage(id: nil, peer: peerID.displayName, result: "Channel Sync", decodeRes: "Success")
+                
                 AppLogger.multipeer.info("""
                 [PINGLY_DECODE_SUCCESS]
                 peer=\(peerID.displayName)
@@ -573,18 +618,15 @@ extension MultipeerService: MCSessionDelegate {
             }
             
             // Try decoding as emergency / P2P text or voice transcript JSON Message next
-            AppLogger.multipeer.info("""
-            [PINGLY_DECODE_BEGIN]
-            peer=\(peerID.displayName)
-            bytes=\(data.count)
-            decoder=JSONDecoder
-            expectedType=Message
-            """)
+            AppLogger.multipeer.info("\(AppLogger.frameTag()) DESERIALIZE_START")
             
             let message: Message
             do {
                 message = try JSONDecoder().decode(Message.self, from: data)
+                AppLogger.multipeer.info("\(AppLogger.frameTag(message.id)) FRAME_RECEIVED peer=\(shortPeer) bytes=\(data.count)")
+                AppLogger.multipeer.info("\(AppLogger.frameTag(message.id)) DESERIALIZE_SUCCESS")
                 RelaynTransportDiagnosticsManager.shared.incrementDecodeSuccess()
+                RelaynTransportDiagnosticsManager.shared.recordIncomingMessage(id: message.id, peer: peerID.displayName, result: "Received", decodeRes: "Success")
                 
                 AppLogger.multipeer.info("""
                 [PINGLY_DECODE_SUCCESS]
@@ -615,6 +657,10 @@ extension MultipeerService: MCSessionDelegate {
                 RelaynTransportDiagnosticsManager.shared.incrementDecodeFailures()
                 let (errDesc, codingPath) = RelaynTransportLogger.formatDecodingError(error)
                 
+                AppLogger.multipeer.error("\(AppLogger.frameTag()) FRAME_RECEIVED_UNKNOWN_ID peer=\(shortPeer) bytes=\(data.count)")
+                AppLogger.multipeer.error("\(AppLogger.frameTag()) DESERIALIZE_FAILED reason=\(errDesc) path=\(codingPath)")
+                RelaynTransportDiagnosticsManager.shared.recordIncomingMessage(id: nil, peer: peerID.displayName, result: "Rx Failed", decodeRes: errDesc)
+                
                 AppLogger.multipeer.error("""
                 [PINGLY_DECODE_FAILURE]
                 peer=\(peerID.displayName)
@@ -638,16 +684,21 @@ extension MultipeerService: MCSessionDelegate {
             }
             
             // 1. Protocol Version Validation
+            AppLogger.multipeer.info("\(AppLogger.frameTag(message.id)) VALIDATION_START bytes=\(data.count)")
             guard message.protocolVersion <= Constants.Mesh.currentProtocolVersion else {
+                AppLogger.multipeer.error("\(AppLogger.frameTag(message.id)) VALIDATION_FAILED reason=INVALID_PROTOCOL_VERSION actual=\(message.protocolVersion)")
                 AppLogger.multipeer.warning("Rejected packet with unsupported future protocol version \(message.protocolVersion) > \(Constants.Mesh.currentProtocolVersion)")
                 return
             }
             
             // 2. CryptoKit HMAC-SHA256 Envelope Verification
             guard MeshSecurityManager.shared.verify(message: message) else {
+                AppLogger.multipeer.error("\(AppLogger.frameTag(message.id)) VALIDATION_FAILED reason=HMAC_SIGNATURE_MISMATCH")
                 AppLogger.multipeer.error("Security Alert: Invalid HMAC-SHA256 signature tag on message \(message.id). Rejecting forged envelope.")
                 return
             }
+            
+            AppLogger.multipeer.info("\(AppLogger.frameTag(message.id)) VALIDATION_SUCCESS version=\(message.protocolVersion) type=\(message.type.rawValue)")
             
             let localNodeID = NodeIdentity.shared.nodeID
             let localUserHandle = NodeIdentity.shared.displayName
@@ -672,9 +723,11 @@ extension MultipeerService: MCSessionDelegate {
                 return
             }
             
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
                 // Handle incoming Delivery ACK frame
                 if message.type == .ack {
+                    AppLogger.multipeer.info("\(AppLogger.ackTag(message.id)) ACK_RECEIVE_START peer=\(shortPeer)")
                     RelaynTransportDiagnosticsManager.shared.incrementAckReceived()
                     
                     AppLogger.multipeer.info("""
@@ -689,6 +742,8 @@ extension MultipeerService: MCSessionDelegate {
                     let isAckForLocal = (message.originID == localNodeID || message.destinationID == localNodeID || message.destinationID == localUserHandle || message.destinationID.hasPrefix("CH-"))
                     
                     if isAckForLocal {
+                        AppLogger.multipeer.info("\(AppLogger.ackTag(message.id)) ACK_VALIDATION_SUCCESS")
+                        RelaynTransportDiagnosticsManager.shared.recordACKEvent(id: message.id, peer: peerID.displayName, result: "ACK Validated")
                         RelaynTransportDiagnosticsManager.shared.incrementAckMatched()
                         
                         AppLogger.multipeer.info("""
@@ -705,6 +760,7 @@ extension MultipeerService: MCSessionDelegate {
                         NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
                         AppLogger.multipeer.info("Received End-to-End MessageDeliveryACK for message ID \(message.id)")
                     } else {
+                        AppLogger.multipeer.info("\(AppLogger.ackTag(message.id)) ACK_RELAYING destination=\(String(message.destinationID.prefix(6)))")
                         // Intermediate node targeted ACK relaying back toward origin using persistent reverse path
                         RelaynTransportDiagnosticsManager.shared.incrementRelayForwarded()
                         
@@ -766,6 +822,8 @@ extension MultipeerService: MCSessionDelegate {
                 
                 let channelMatches = isChannelMessage || message.channelID == nil || message.destinationID == "BROADCAST"
                 
+                AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) ROUTE_RECEIVED hops=\(message.hopsCount) ttl=\(message.ttl)")
+                
                 AppLogger.multipeer.info("""
                 [PINGLY_CHANNEL_CHECK]
                 messageID=\(message.id.uuidString)
@@ -806,6 +864,9 @@ extension MultipeerService: MCSessionDelegate {
                     
                     // Process chat message / voice transcript / location payload destined for local node
                     let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
+                    AppLogger.multipeer.info("\(AppLogger.messageTag(message.id)) DUPLICATE_CHECK")
+                    AppLogger.multipeer.info("\(AppLogger.messageTag(message.id)) DUPLICATE=\(alreadyProcessed)")
+                    
                     if !alreadyProcessed {
                         self.receivedMessageSubject.send(message)
                         
@@ -830,6 +891,7 @@ extension MultipeerService: MCSessionDelegate {
                             let cleanText = String(message.text.dropFirst("PTT_TRANSCRIPT:".count))
                             let channel = isChannelMessage ? message.destinationID : "CH-1 EMERGENCY"
                             _ = SwiftDataService.shared.saveVoiceTranscript(
+                                id: message.id,
                                 speakerName: message.senderName,
                                 text: cleanText,
                                 channel: channel,
@@ -839,6 +901,7 @@ extension MultipeerService: MCSessionDelegate {
                             AppLogger.multipeer.info("Received P2P Voice Transcript for channel [\(channel)] from \(message.senderName)")
                         } else {
                             _ = SwiftDataService.shared.saveChatMessage(
+                                id: message.id,
                                 senderName: message.senderName,
                                 channel: isChannelMessage ? message.destinationID : message.senderName,
                                 text: message.text,
@@ -851,6 +914,9 @@ extension MultipeerService: MCSessionDelegate {
                     } else {
                         AppLogger.multipeer.info("Deduplication Engine: Message \(message.id) already processed. Re-issuing ACK.")
                     }
+                    
+                    AppLogger.multipeer.info("\(AppLogger.ackTag(message.id)) ACK_CREATE_START")
+                    AppLogger.multipeer.info("\(AppLogger.ackTag(message.id)) ACK_CREATED forMessageID=\(String(message.id.uuidString.prefix(6)))")
                     
                     AppLogger.multipeer.info("""
                     [PINGLY_ACK_CREATE]
@@ -879,6 +945,8 @@ extension MultipeerService: MCSessionDelegate {
                     )
                     
                     let ackData = (try? JSONEncoder().encode(deliveryAck)) ?? Data()
+                    AppLogger.multipeer.info("\(AppLogger.ackTag(deliveryAck.id)) ACK_SEND_START peer=\(shortPeer)")
+                    
                     AppLogger.multipeer.info("""
                     [PINGLY_ACK_TX]
                     ackMessageID=\(deliveryAck.id.uuidString)
@@ -889,7 +957,11 @@ extension MultipeerService: MCSessionDelegate {
                     """)
                     
                     self.broadcast(message: deliveryAck)
+                    AppLogger.multipeer.info("\(AppLogger.ackTag(deliveryAck.id)) ACK_SEND_COMPLETED peer=\(shortPeer)")
+                    RelaynTransportDiagnosticsManager.shared.recordACKEvent(id: message.id, peer: peerID.displayName, result: "ACK Sent")
                 } else {
+                    AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARDING hops=\(message.hopsCount + 1) ttl=\(message.ttl - 1) peer=\(shortPeer)")
+                    
                     AppLogger.multipeer.info("""
                     [PINGLY_ROUTE_DECISION]
                     action=RELAY
@@ -898,16 +970,17 @@ extension MultipeerService: MCSessionDelegate {
                     
                     RelaynTransportDiagnosticsManager.shared.incrementRelayReceived()
                     
-                    // Intermediate node: Persist in relay queue and forward if TTL permits
-                    guard message.hopsCount < message.ttl else {
-                        AppLogger.multipeer.warning("""
-                        [PINGLY_RELAY_DROP]
-                        originalMessageID=\(message.id.uuidString)
-                        reason=TTL_EXHAUSTED
-                        """)
-                        
+                    var relayMsg = message
+                    relayMsg.previousHopID = localNodeID
+                    relayMsg.hopsCount += 1
+                    
+                    if relayMsg.hopsCount <= relayMsg.ttl {
+                        self.broadcast(message: relayMsg)
+                        RelaynTransportDiagnosticsManager.shared.incrementRelayForwarded()
+                        AppLogger.multipeer.info("Relayed message \(relayMsg.id) (Hop \(relayMsg.hopsCount)/\(relayMsg.ttl))")
+                    } else {
+                        AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARD_REJECTED reason=TTL_EXPIRED")
                         RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
-                        AppLogger.multipeer.warning("Received relay message \(message.id) but TTL exhausted (\(message.hopsCount)/\(message.ttl)). Dropping.")
                         return
                     }
                     

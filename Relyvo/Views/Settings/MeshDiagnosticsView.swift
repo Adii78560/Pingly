@@ -13,12 +13,28 @@ struct MeshDiagnosticsView: View {
     @StateObject private var notificationManager = MeshNotificationManager.shared
     @StateObject private var swiftDataService = SwiftDataService.shared
     @StateObject private var multipeerService = MultipeerService.shared
+    @ObservedObject private var transportDiagnostics = RelaynTransportDiagnosticsManager.shared
     @ObservedObject private var compassHapticManager = CompassHapticManager.shared
     
     @State private var notificationEvents: [SDNotificationEvent] = []
     @State private var pendingMessages: [SDPendingMessage] = []
     @State private var diagnosticTestStatus: String? = nil
     @State private var isRunningDiagnosticTest = false
+    @State private var loopbackTestSummary: String? = nil
+    @State private var isRunningLoopbackTest = false
+    
+    private var queuedCount: Int {
+        pendingMessages.filter { $0.status == .queued || $0.status == .created }.count
+    }
+    private var waitingForACKCount: Int {
+        pendingMessages.filter { $0.status == .sending || $0.status == .waitingForACK || $0.status == .sent || $0.status == .transmitting }.count
+    }
+    private var failedCount: Int {
+        pendingMessages.filter { $0.status == .failed || $0.status == .expired }.count
+    }
+    private var ackCount: Int {
+        transportDiagnostics.ackMatchedCount
+    }
     
     private var deviceFingerprint: String {
         let devID = KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString
@@ -137,6 +153,119 @@ struct MeshDiagnosticsView: View {
                     Text(status)
                         .font(.caption.monospaced())
                         .foregroundColor(status.contains("Passed") ? .green : .red)
+                        .padding(.top, 2)
+                }
+            }
+            
+            // Section 0.5: Messaging Pipeline Diagnostics (End-to-End Pipeline Observability)
+            Section("Messaging Pipeline Diagnostics") {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Last Outgoing ID:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastOutgoingMessageID)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.blue)
+                    }
+                    HStack {
+                        Text("Last Incoming ID:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastIncomingMessageID)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.purple)
+                    }
+                    HStack {
+                        Text("Connected Peer:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastConnectedPeerID)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Last Send Result:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastSendResult)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Last Receive Result:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastReceiveResult)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Last Decode Result:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastDecodeResult)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Last ACK Result:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastACKResult)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.green)
+                    }
+                }
+                .padding(.vertical, 2)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Queue Status Breakdown")
+                        .font(.caption.bold())
+                        .foregroundColor(.secondary)
+                    
+                    HStack {
+                        Text("QUEUED: \(queuedCount)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundColor(.orange)
+                        Spacer()
+                        Text("WAITING ACK: \(waitingForACKCount)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundColor(.blue)
+                    }
+                    HStack {
+                        Text("FAILED: \(failedCount)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundColor(.red)
+                        Spacer()
+                        Text("ACKNOWLEDGED: \(ackCount)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundColor(.green)
+                    }
+                }
+                .padding(.vertical, 2)
+                
+                Button(action: {
+                    isRunningLoopbackTest = true
+                    Task { @MainActor in
+                        let res = LoopbackTestHarness.shared.runAllLoopbackTests()
+                        loopbackTestSummary = "Loopback Suite Result: \(res.passedCount) Passed, \(res.failedCount) Failed\n\n" + res.reportSummary
+                        isRunningLoopbackTest = false
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                        Text(isRunningLoopbackTest ? "Running Loopback Suite..." : "Run Simulator Loopback Test Suite")
+                            .font(.subheadline.bold())
+                    }
+                    .foregroundColor(.purple)
+                }
+                .disabled(isRunningLoopbackTest)
+                
+                if let summary = loopbackTestSummary {
+                    Text(summary)
+                        .font(.caption2.monospaced())
+                        .foregroundColor(summary.contains("0 Failed") ? .green : .orange)
                         .padding(.top, 2)
                 }
             }

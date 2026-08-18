@@ -171,6 +171,12 @@ final class RelaynHardeningTests {
         assert(!(dupSeq > currentSeq), "Duplicate sequence 10 rejected")
         assert(!(oldSeq > currentSeq), "Out-of-order sequence 9 rejected")
         
+        // 10. Simulator Messaging Loopback Test Suite
+        Task { @MainActor in
+            let loopbackRes = LoopbackTestHarness.shared.runAllLoopbackTests()
+            AppLogger.multipeer.info("SIMULATOR LOOPBACK SUITE SUMMARY: \(loopbackRes.passedCount) Passed, \(loopbackRes.failedCount) Failed")
+        }
+        
         AppLogger.multipeer.info("HARDENING VERIFICATION SUMMARY: \(passed) Passed, \(failed) Failed.")
         return (passed, failed)
     }

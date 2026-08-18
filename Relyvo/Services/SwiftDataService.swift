@@ -25,8 +25,8 @@ final class SwiftDataService: ObservableObject {
     @Published private(set) var totalUnsyncedCount: Int = 0
     @Published private(set) var isUsingInMemoryFallback: Bool = false
     
-    private init() {
-        AppLogger.multipeer.info("[Persistence] App launch detected")
+    init(inMemory: Bool = false) {
+        AppLogger.multipeer.info("[Persistence] App launch detected (inMemory=\(inMemory))")
         AppLogger.multipeer.info("[Persistence] Starting SwiftData initialization")
         
         let schema = Schema([
@@ -39,7 +39,7 @@ final class SwiftDataService: ObservableObject {
         ])
         AppLogger.multipeer.info("[Persistence] Model schema loaded (6 entities registered)")
 
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         let storeURL = config.url
         let fileManager = FileManager.default
         let storeExists = fileManager.fileExists(atPath: storeURL.path)
@@ -174,8 +174,11 @@ final class SwiftDataService: ObservableObject {
     // MARK: - Voice Transcripts Operations
     
     /// Persists a voice transcript to SwiftData local storage.
-    func saveVoiceTranscript(speakerName: String, text: String, channel: String, isDelivered: Bool = false) -> SDVoiceTranscript {
+    func saveVoiceTranscript(id: UUID = UUID(), speakerName: String, text: String, channel: String, isDelivered: Bool = false) -> SDVoiceTranscript {
+        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
+        AppLogger.multipeer.info("\(tag)_START type=voiceTranscript")
         let transcript = SDVoiceTranscript(
+            id: id,
             speakerName: speakerName,
             text: text,
             channel: channel,
@@ -186,6 +189,7 @@ final class SwiftDataService: ObservableObject {
         context.insert(transcript)
         saveContext()
         updateUnsyncedCount()
+        AppLogger.multipeer.info("\(tag)_SUCCESS type=voiceTranscript")
         AppLogger.audio.info("Persisted Voice Transcript (Delivered: \(isDelivered)): [\(channel)] \(speakerName): \"\(text)\"")
         return transcript
     }
@@ -236,6 +240,7 @@ final class SwiftDataService: ObservableObject {
     
     /// Persists a chat or location message to SwiftData local storage.
     func saveChatMessage(
+        id: UUID = UUID(),
         senderName: String,
         channel: String,
         text: String,
@@ -246,7 +251,10 @@ final class SwiftDataService: ObservableObject {
         altitude: Double? = nil,
         accuracy: Double? = nil
     ) -> SDChatMessage {
+        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
+        AppLogger.multipeer.info("\(tag)_START type=\(messageType.rawValue)")
         let message = SDChatMessage(
+            id: id,
             senderName: senderName,
             channel: channel,
             text: text,
@@ -262,6 +270,7 @@ final class SwiftDataService: ObservableObject {
         context.insert(message)
         saveContext()
         updateUnsyncedCount()
+        AppLogger.multipeer.info("\(tag)_SUCCESS type=\(messageType.rawValue)")
         AppLogger.multipeer.info("Persisted Chat Message (Type: \(messageType.rawValue), Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
         return message
     }
@@ -269,6 +278,7 @@ final class SwiftDataService: ObservableObject {
     @discardableResult
     func saveMessage(_ msg: Message) -> SDChatMessage {
         return saveChatMessage(
+            id: msg.id,
             senderName: msg.senderName,
             channel: msg.destinationID,
             text: msg.text,
@@ -493,7 +503,7 @@ final class SwiftDataService: ObservableObject {
         }
     }
     
-    func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus) {
+    func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus, reason: String? = nil) {
         queueLock.lock()
         defer { queueLock.unlock() }
         
@@ -511,6 +521,13 @@ final class SwiftDataService: ObservableObject {
                 RelaynTransportDiagnosticsManager.shared.incrementQueueFailed()
             }
             saveContext()
+            
+            let tag = AppLogger.messageTag(messageID)
+            if let r = reason {
+                AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(status.rawValue) reason=\(r) retryCount=\(pending.retryCount)")
+            } else {
+                AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(status.rawValue)")
+            }
             
             AppLogger.multipeer.info("""
             [PINGLY_QUEUE_STATE]
@@ -560,6 +577,8 @@ final class SwiftDataService: ObservableObject {
         }
         
         saveContext()
+        
+        AppLogger.multipeer.info("\(AppLogger.messageTag(messageID)) STATE WAITING_FOR_ACK -> ACKNOWLEDGED")
         
         AppLogger.multipeer.info("""
         [PINGLY_QUEUE_STATE]

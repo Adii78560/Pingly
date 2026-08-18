@@ -6,31 +6,91 @@
 //
 
 import Foundation
+import Combine
 import CryptoKit
 import os
 
 /// Thread-safe in-memory diagnostic metrics counter
-final class RelaynTransportDiagnosticsManager {
+final class RelaynTransportDiagnosticsManager: ObservableObject {
     static let shared = RelaynTransportDiagnosticsManager()
     
     private let lock = NSLock()
     
-    private(set) var connectedPeersCount: Int = 0
-    private(set) var txFramesCount: Int = 0
-    private(set) var rxFramesCount: Int = 0
-    private(set) var decodeSuccessCount: Int = 0
-    private(set) var decodeFailuresCount: Int = 0
-    private(set) var ackSentCount: Int = 0
-    private(set) var ackReceivedCount: Int = 0
-    private(set) var ackMatchedCount: Int = 0
-    private(set) var ackUnmatchedCount: Int = 0
-    private(set) var relayReceivedCount: Int = 0
-    private(set) var relayForwardedCount: Int = 0
-    private(set) var relayDroppedCount: Int = 0
-    private(set) var queueFailedCount: Int = 0
-    private(set) var queueDeliveredCount: Int = 0
+    @Published private(set) var connectedPeersCount: Int = 0
+    @Published private(set) var txFramesCount: Int = 0
+    @Published private(set) var rxFramesCount: Int = 0
+    @Published private(set) var decodeSuccessCount: Int = 0
+    @Published private(set) var decodeFailuresCount: Int = 0
+    @Published private(set) var ackSentCount: Int = 0
+    @Published private(set) var ackReceivedCount: Int = 0
+    @Published private(set) var ackMatchedCount: Int = 0
+    @Published private(set) var ackUnmatchedCount: Int = 0
+    @Published private(set) var relayReceivedCount: Int = 0
+    @Published private(set) var relayForwardedCount: Int = 0
+    @Published private(set) var relayDroppedCount: Int = 0
+    @Published private(set) var queueFailedCount: Int = 0
+    @Published private(set) var queueDeliveredCount: Int = 0
+    
+    // Live pipeline tracking for MeshDiagnosticsView UI
+    @Published private(set) var lastOutgoingMessageID: String = "None"
+    @Published private(set) var lastIncomingMessageID: String = "None"
+    @Published private(set) var lastConnectedPeerID: String = "None"
+    @Published private(set) var lastSendResult: String = "None"
+    @Published private(set) var lastReceiveResult: String = "None"
+    @Published private(set) var lastDecodeResult: String = "None"
+    @Published private(set) var lastACKResult: String = "None"
     
     private init() {}
+    
+    func recordOutgoingMessage(id: UUID, peer: String, result: String) {
+        lock.lock()
+        let shortID = String(id.uuidString.prefix(6)).uppercased()
+        let shortPeer = String(peer.prefix(6))
+        let sendRes = "\(result) (\(shortPeer))"
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.lastOutgoingMessageID = shortID
+            self.lastSendResult = sendRes
+        }
+    }
+    
+    func recordIncomingMessage(id: UUID?, peer: String, result: String, decodeRes: String? = nil) {
+        lock.lock()
+        let shortID = id != nil ? String(id!.uuidString.prefix(6)).uppercased() : "UNKNOWN"
+        let shortPeer = String(peer.prefix(6))
+        let rxRes = "\(result) (\(shortPeer))"
+        let decRes = decodeRes ?? "Success"
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.lastIncomingMessageID = shortID
+            self.lastReceiveResult = rxRes
+            self.lastDecodeResult = decRes
+        }
+    }
+    
+    func recordACKEvent(id: UUID, peer: String, result: String) {
+        lock.lock()
+        let shortID = String(id.uuidString.prefix(6)).uppercased()
+        let shortPeer = String(peer.prefix(6))
+        let ackRes = "\(result) for \(shortID) (\(shortPeer))"
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.lastACKResult = ackRes
+        }
+    }
+    
+    func recordPeerConnection(peer: String) {
+        lock.lock()
+        let shortPeer = String(peer.prefix(6))
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.lastConnectedPeerID = shortPeer
+        }
+    }
     
     func updateConnectedPeers(count: Int) {
         lock.lock()
