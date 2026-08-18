@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 /// Diagnostic View displaying active peers, pending offline queue states, delivery ACK status, and persistent notification deduplication events
 struct MeshDiagnosticsView: View {
@@ -16,9 +17,130 @@ struct MeshDiagnosticsView: View {
     
     @State private var notificationEvents: [SDNotificationEvent] = []
     @State private var pendingMessages: [SDPendingMessage] = []
+    @State private var diagnosticTestStatus: String? = nil
+    @State private var isRunningDiagnosticTest = false
+    
+    private var deviceFingerprint: String {
+        let devID = KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString
+        return String(devID.prefix(6))
+    }
+    
+    private var appleAuthSummary: String {
+        let authState = AppleSignInManager.shared.authState.rawValue.capitalized
+        let appleFingerprint = AppleSignInManager.shared.appleUserID != nil ? String(AppleSignInManager.shared.appleUserID!.prefix(6)) : "None"
+        return "State: \(authState) • Fingerprint: \(appleFingerprint)"
+    }
+    
+    private var storeTypeSummary: String {
+        return swiftDataService.isUsingInMemoryFallback ? "In-Memory Fallback" : "Persistent SQLite Disk"
+    }
+    
+    private var chatCount: Int {
+        (try? swiftDataService.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
+    }
+    
+    private var transcriptCount: Int {
+        (try? swiftDataService.context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
+    }
+    
+    private var userCount: Int {
+        (try? swiftDataService.context.fetch(FetchDescriptor<SDUserProfile>()))?.count ?? 0
+    }
+    
+    private var locationSessionCount: Int {
+        (try? swiftDataService.context.fetch(FetchDescriptor<SDLocationShareSession>()))?.count ?? 0
+    }
     
     var body: some View {
         Form {
+            // Section 0: Identity & Persistence System Health (Phase 12)
+            Section("Identity & SwiftData System Diagnostics") {
+                // Identity Diagnostics
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        SettingsIconBadge(systemName: "key.fill", backgroundColor: .indigo)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Device Identity")
+                                .font(.body.weight(.medium))
+                            Text("Exists: True • Fingerprint: \(deviceFingerprint)")
+                                .font(.caption.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        SettingsIconBadge(systemName: "person.badge.key.fill", backgroundColor: .blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Apple Sign-In State")
+                                .font(.body.weight(.medium))
+                            Text(appleAuthSummary)
+                                .font(.caption.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+                
+                // Persistence Diagnostics
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        SettingsIconBadge(systemName: "cylinder.split.1x2.fill", backgroundColor: swiftDataService.isUsingInMemoryFallback ? .orange : .green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("SwiftData Persistent Store")
+                                .font(.body.weight(.medium))
+                            Text("Status: Initialized • Type: \(storeTypeSummary)")
+                                .font(.caption)
+                                .foregroundColor(swiftDataService.isUsingInMemoryFallback ? .orange : .secondary)
+                        }
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Entity Counts")
+                            .font(.caption.bold())
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Messages: \(chatCount)  • Transcripts: \(transcriptCount)")
+                            .font(.caption2.monospaced())
+                            .foregroundColor(.secondary)
+                        Text("• Pending Queue: \(pendingMessages.count)  • Users: \(userCount)  • Sessions: \(locationSessionCount)")
+                            .font(.caption2.monospaced())
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+                
+                // Read / Write Diagnostic Test Execution Button
+                Button(action: {
+                    isRunningDiagnosticTest = true
+                    HapticsManager.shared.mediumImpact()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        let result = swiftDataService.performPersistenceReadWriteDiagnosticTest()
+                        diagnosticTestStatus = result.message
+                        isRunningDiagnosticTest = false
+                        if result.success {
+                            HapticsManager.shared.successFeedback()
+                        } else {
+                            HapticsManager.shared.errorFeedback()
+                        }
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "checkmark.seal.fill")
+                        Text(isRunningDiagnosticTest ? "Running Write/Read Test..." : "Run Persistence Write/Read Test")
+                            .font(.subheadline.bold())
+                    }
+                    .foregroundColor(AppTheme.tintColor)
+                }
+                .disabled(isRunningDiagnosticTest)
+                
+                if let status = diagnosticTestStatus {
+                    Text(status)
+                        .font(.caption.monospaced())
+                        .foregroundColor(status.contains("Passed") ? .green : .red)
+                        .padding(.top, 2)
+                }
+            }
+            
             // Section 1: Notification System & Auth Status
             Section("Notification System Status") {
                 HStack {

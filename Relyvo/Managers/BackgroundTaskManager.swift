@@ -19,35 +19,25 @@ final class BackgroundTaskManager {
     static let refreshTaskID = "com.RaiEnterprise.Relyvo.refresh"
     static let processingTaskID = "com.RaiEnterprise.Relyvo.pttsync"
     
-    static let legacyRefreshTaskID = "com.RaiEnterprise.RadioFy.refresh"
-    static let legacyProcessingTaskID = "com.RaiEnterprise.RadioFy.pttsync"
-    
     private init() {}
     
     /// Registers handlers for iOS BGTaskScheduler. Call in app launch.
     func registerTasks() {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: BackgroundTaskManager.refreshTaskID, using: nil) { task in
+        AppLogger.multipeer.info("[BackgroundTasks] Registration started")
+        
+        AppLogger.multipeer.info("[BackgroundTasks] Registering task identifier = \(BackgroundTaskManager.refreshTaskID)")
+        let refreshSuccess = BGTaskScheduler.shared.register(forTaskWithIdentifier: BackgroundTaskManager.refreshTaskID, using: nil) { task in
             guard let appRefreshTask = task as? BGAppRefreshTask else { return }
             self.handleAppRefresh(task: appRefreshTask)
         }
+        AppLogger.multipeer.info("[BackgroundTasks] Registration succeeded = \(refreshSuccess)")
         
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: BackgroundTaskManager.processingTaskID, using: nil) { task in
+        AppLogger.multipeer.info("[BackgroundTasks] Registering task identifier = \(BackgroundTaskManager.processingTaskID)")
+        let processingSuccess = BGTaskScheduler.shared.register(forTaskWithIdentifier: BackgroundTaskManager.processingTaskID, using: nil) { task in
             guard let processingTask = task as? BGProcessingTask else { return }
             self.handleProcessingTask(task: processingTask)
         }
-        
-        // Legacy identifiers
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: BackgroundTaskManager.legacyRefreshTaskID, using: nil) { task in
-            guard let appRefreshTask = task as? BGAppRefreshTask else { return }
-            self.handleAppRefresh(task: appRefreshTask)
-        }
-        
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: BackgroundTaskManager.legacyProcessingTaskID, using: nil) { task in
-            guard let processingTask = task as? BGProcessingTask else { return }
-            self.handleProcessingTask(task: processingTask)
-        }
-        
-        AppLogger.multipeer.info("BGTaskScheduler tasks registered successfully")
+        AppLogger.multipeer.info("[BackgroundTasks] Registration succeeded = \(processingSuccess)")
     }
     
     /// Schedules periodic background refresh request.
@@ -55,11 +45,13 @@ final class BackgroundTaskManager {
         let request = BGAppRefreshTaskRequest(identifier: BackgroundTaskManager.refreshTaskID)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 min minimum window
         
+        AppLogger.multipeer.info("[BackgroundTasks] Scheduling task identifier = \(request.identifier)")
+        
         do {
             try BGTaskScheduler.shared.submit(request)
-            AppLogger.multipeer.info("Scheduled BGAppRefreshTask successfully")
+            AppLogger.multipeer.info("[BackgroundTasks] Scheduled BGAppRefreshTask successfully")
         } catch {
-            AppLogger.multipeer.error("Could not schedule background app refresh: \(error.localizedDescription)")
+            AppLogger.multipeer.error("[BackgroundTasks][ERROR] Could not schedule background app refresh: \(error.localizedDescription)")
         }
     }
     

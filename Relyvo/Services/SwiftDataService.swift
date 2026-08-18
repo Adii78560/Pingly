@@ -23,8 +23,12 @@ final class SwiftDataService: ObservableObject {
     }
     
     @Published private(set) var totalUnsyncedCount: Int = 0
+    @Published private(set) var isUsingInMemoryFallback: Bool = false
     
     private init() {
+        AppLogger.multipeer.info("[Persistence] App launch detected")
+        AppLogger.multipeer.info("[Persistence] Starting SwiftData initialization")
+        
         let schema = Schema([
             SDVoiceTranscript.self,
             SDChatMessage.self,
@@ -33,25 +37,136 @@ final class SwiftDataService: ObservableObject {
             SDNotificationEvent.self,
             SDLocationShareSession.self
         ])
+        AppLogger.multipeer.info("[Persistence] Model schema loaded (6 entities registered)")
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let storeURL = config.url
+        let fileManager = FileManager.default
+        let storeExists = fileManager.fileExists(atPath: storeURL.path)
+        var fileSizeString = "0 bytes"
+        if storeExists, let attributes = try? fileManager.attributesOfItem(atPath: storeURL.path),
+           let fileSize = attributes[.size] as? Int64 {
+            fileSizeString = "\(fileSize) bytes"
+        }
+        
+        AppLogger.multipeer.info("[Persistence] Persistent store location = \(storeURL.path)")
+        AppLogger.multipeer.info("[Persistence] Persistent store URL exists = \(storeExists)")
+        AppLogger.multipeer.info("[Persistence] Persistent store file size = \(fileSizeString)")
+        AppLogger.multipeer.info("[Persistence] Existing persistent store detected = \(storeExists)")
+        AppLogger.multipeer.info("[Persistence] ModelContainer creation started")
         
         do {
             self.container = try ModelContainer(for: schema, configurations: [config])
-            AppLogger.multipeer.info("SwiftData ModelContainer initialized successfully.")
+            AppLogger.multipeer.info("[Persistence] ModelContainer creation succeeded")
+            AppLogger.multipeer.info("[Persistence] ModelContext created")
+            AppLogger.multipeer.info("[Persistence] Container instance created")
+            AppLogger.multipeer.info("[Persistence] Container configuration = isStoredInMemoryOnly: false")
+            AppLogger.multipeer.info("[Persistence] Store type = persistent")
+            AppLogger.multipeer.info("[Persistence] Store URL = \(storeURL.path)")
+            AppLogger.multipeer.info("[Persistence] Existing store = \(storeExists)")
+            AppLogger.multipeer.info("[Persistence] SwiftData initialization completed")
+            
+            self.isUsingInMemoryFallback = false
             updateUnsyncedCount()
+            logAllEntityCounts()
         } catch {
-            AppLogger.multipeer.error("SwiftData ModelContainer initialization failure: \(error.localizedDescription). Preserving existing disk store files without deletion.")
+            AppLogger.multipeer.error("[Persistence][ERROR] ModelContainer initialization failed")
+            AppLogger.multipeer.error("[Persistence][ERROR] Error = \(error.localizedDescription)")
+            AppLogger.multipeer.error("[Persistence][ERROR] Full error description = \(String(describing: error))")
+            
             // Non-destructive fallback: Initialize in-memory container to allow app runtime startup while preserving disk files safely on disk
             let fallbackConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
                 self.container = try ModelContainer(for: schema, configurations: [fallbackConfig])
-                AppLogger.multipeer.warning("SwiftData ModelContainer operating in non-destructive fallback mode. Disk store files preserved untouched.")
+                self.isUsingInMemoryFallback = true
+                AppLogger.multipeer.warning("[Persistence] Container instance created (FALLBACK)")
+                AppLogger.multipeer.warning("[Persistence] Store type = in-memory")
+                AppLogger.multipeer.warning("[Persistence] SwiftData ModelContainer operating in non-destructive fallback mode. Disk store files preserved untouched.")
                 updateUnsyncedCount()
+                logAllEntityCounts()
             } catch {
+                AppLogger.multipeer.error("[Persistence][ERROR] Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
                 fatalError("Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
             }
         }
+    }
+    
+    /// Diagnostics helper: Queries and logs counts for all persistent entities in SwiftData
+    func logAllEntityCounts() {
+        let chatCount = (try? context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
+        let transcriptCount = (try? context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
+        let pendingCount = (try? context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
+        let userCount = (try? context.fetch(FetchDescriptor<SDUserProfile>()))?.count ?? 0
+        let notificationCount = (try? context.fetch(FetchDescriptor<SDNotificationEvent>()))?.count ?? 0
+        let locationSessionCount = (try? context.fetch(FetchDescriptor<SDLocationShareSession>()))?.count ?? 0
+        
+        AppLogger.multipeer.info("[Persistence] Message count = \(chatCount)")
+        AppLogger.multipeer.info("[Persistence] Voice transcript count = \(transcriptCount)")
+        AppLogger.multipeer.info("[Persistence] Pending message count = \(pendingCount)")
+        AppLogger.multipeer.info("[Persistence] User count = \(userCount)")
+        AppLogger.multipeer.info("[Persistence] Notification event count = \(notificationCount)")
+        AppLogger.multipeer.info("[Persistence] Location share session count = \(locationSessionCount)")
+    }
+    
+    /// Phase 5 Diagnostic: Performs a non-destructive WRITE -> SAVE -> FETCH -> VERIFY -> DELETE cycle to test SwiftData health
+    @discardableResult
+    func performPersistenceReadWriteDiagnosticTest() -> (success: Bool, message: String) {
+        AppLogger.multipeer.info("[PersistenceTest] Test started")
+        let testID = UUID()
+        let testText = "[DIAGNOSTIC_TEST_\(testID.uuidString.prefix(6))]"
+        
+        let testMessage = SDChatMessage(
+            id: testID,
+            senderName: "DiagnosticSystem",
+            channel: "DIAGNOSTIC_CHANNEL",
+            text: testText,
+            timestamp: Date(),
+            isSynced: true,
+            isDelivered: true
+        )
+        
+        // 1. WRITE
+        context.insert(testMessage)
+        AppLogger.multipeer.info("[PersistenceTest] Test record created")
+        
+        // 2. SAVE
+        do {
+            try context.save()
+            AppLogger.multipeer.info("[PersistenceTest] Save succeeded")
+        } catch {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at SAVE stage: \(error.localizedDescription)")
+            return (false, "SAVE failed: \(error.localizedDescription)")
+        }
+        
+        // 3. FETCH
+        let descriptor = FetchDescriptor<SDChatMessage>(
+            predicate: #Predicate { $0.id == testID }
+        )
+        guard let fetched = (try? context.fetch(descriptor))?.first else {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at FETCH stage: Record not found")
+            return (false, "FETCH failed: Record not found")
+        }
+        AppLogger.multipeer.info("[PersistenceTest] Fetch succeeded")
+        
+        // 4. VERIFY
+        guard fetched.text == testText && fetched.senderName == "DiagnosticSystem" else {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at VERIFY stage: Data mismatch")
+            return (false, "VERIFY failed: Record content mismatch")
+        }
+        AppLogger.multipeer.info("[PersistenceTest] Record verification succeeded")
+        
+        // 5. DELETE & CLEANUP
+        context.delete(fetched)
+        do {
+            try context.save()
+            AppLogger.multipeer.info("[PersistenceTest] Cleanup succeeded")
+        } catch {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at CLEANUP stage: \(error.localizedDescription)")
+            return (false, "CLEANUP failed: \(error.localizedDescription)")
+        }
+        
+        AppLogger.multipeer.info("[PersistenceTest] TEST PASSED")
+        return (true, "SwiftData Read/Write Test Passed Successfully")
     }
 
 

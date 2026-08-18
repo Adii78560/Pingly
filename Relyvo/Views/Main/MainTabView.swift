@@ -8,7 +8,7 @@
 import SwiftUI
 import os
 
-/// Main Tab Navigation Host View for RadioFy / Relayn
+/// Main Tab Navigation Host View for Relyvo
 struct MainTabView: View {
 
     
