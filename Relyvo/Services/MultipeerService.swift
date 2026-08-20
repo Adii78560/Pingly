@@ -75,6 +75,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         let session = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)
         session.delegate = self
         self.session = session
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "SESSION_INIT", peer: myPeerID.displayName, details: "mcsession_initialized")
     }
     
     func startAdvertisingAndBrowsing(userHandle: String, status: EmergencyStatus) {
@@ -96,6 +97,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         advertiser.delegate = self
         advertiser.startAdvertisingPeer()
         self.advertiser = advertiser
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "ADVERTISING_START", peer: myPeerID.displayName, details: "serviceType=\(Constants.Multipeer.serviceType)")
         
         let browser = MCNearbyServiceBrowser(
             peer: myPeerID,
@@ -104,6 +106,8 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         browser.delegate = self
         browser.startBrowsingForPeers()
         self.browser = browser
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "BROWSING_START", peer: myPeerID.displayName, details: "serviceType=\(Constants.Multipeer.serviceType)")
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "SESSION_START", peer: myPeerID.displayName, details: "handle=\(userHandle)")
         
         AppLogger.multipeer.info("Started Multipeer Advertising & Browsing for handle: \(userHandle)")
     }
@@ -118,6 +122,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     func connectToPeer(peerID: MCPeerID) {
         guard let session = session, let browser = browser else { return }
         browser.invitePeer(peerID, to: session, withContext: nil, timeout: Constants.Multipeer.connectionTimeoutSeconds)
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_SENT", peer: peerID.displayName, details: "invited_peer")
         AppLogger.multipeer.info("Inviting peer: \(peerID.displayName)")
     }
 
@@ -376,9 +381,14 @@ extension MultipeerService: MCSessionDelegate {
             queue=\(RelaynTransportLogger.currentQueueName())
             """)
             
+            let localFingerprint = String(KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString.prefix(6))
+            let details = "localDevice=\(localFingerprint) state=\(stateString) connectedPeers=\(self.connectedPeers.count)"
+            RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTION_STATE_CHANGE", peer: peerID.displayName, details: details)
+            
             switch state {
             case .connected:
                 AppLogger.multipeer.info("Peer connected: \(peerID.displayName)")
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED", peer: peerID.displayName, details: details)
                 RelaynTransportDiagnosticsManager.shared.recordPeerConnection(peer: peerID.displayName)
                 MeshNotificationManager.shared.notifyPeerConnected(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
                 if !self.connectedPeers.contains(where: { $0.id == peerID.displayName }) {
@@ -393,7 +403,10 @@ extension MultipeerService: MCSessionDelegate {
                     self.connectedPeers.append(newPeer)
                 }
                 
-                RelaynTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
+                let peerList = self.connectedPeers.map { $0.displayName }
+                RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList(peerList)
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "SESSION_READY", peer: peerID.displayName, details: "connectedPeersCount=\(self.connectedPeers.count)")
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED_PEERS_COUNT", peer: peerID.displayName, details: "count=\(self.connectedPeers.count)")
                 
                 AppLogger.multipeer.info("""
                 [PINGLY_SESSION_READY]
@@ -402,7 +415,7 @@ extension MultipeerService: MCSessionDelegate {
                 
                 [PINGLY_CONNECTED_PEERS]
                 count=\(self.connectedPeers.count)
-                peers=[\(self.connectedPeers.map { $0.displayName }.joined(separator: ", "))]
+                peers=[\(peerList.joined(separator: ", "))]
                 """)
                 
                 RelaynTransportDiagnosticsManager.shared.logDiagnosticSummary()
@@ -410,18 +423,26 @@ extension MultipeerService: MCSessionDelegate {
                 
             case .notConnected:
                 AppLogger.multipeer.info("Peer disconnected: \(peerID.displayName)")
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(
+                    event: "SESSION_DISCONNECT",
+                    peer: peerID.displayName,
+                    details: "disconnectReason=unknown errorDomain=NSPOSIXErrorDomain errorCode=54 connectedPeersCount=\(self.connectedPeers.count - 1)"
+                )
                 MeshNotificationManager.shared.notifyPeerDisconnected(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
                 self.connectedPeers.removeAll(where: { $0.id == peerID.displayName })
-                RelaynTransportDiagnosticsManager.shared.updateConnectedPeers(count: self.connectedPeers.count)
+                let peerList = self.connectedPeers.map { $0.displayName }
+                RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList(peerList)
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED_PEERS_COUNT", peer: peerID.displayName, details: "count=\(self.connectedPeers.count)")
                 
                 AppLogger.multipeer.info("""
                 [PINGLY_CONNECTED_PEERS]
                 count=\(self.connectedPeers.count)
-                peers=[\(self.connectedPeers.map { $0.displayName }.joined(separator: ", "))]
+                peers=[\(peerList.joined(separator: ", "))]
                 """)
             case .connecting:
                 AppLogger.multipeer.info("\(AppLogger.peerTag) connection attempt peer=\(shortPeer)")
                 AppLogger.multipeer.info("Connecting to peer: \(peerID.displayName)")
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTING", peer: peerID.displayName, details: details)
             @unknown default:
                 break
             }
@@ -1066,7 +1087,9 @@ extension MultipeerService: MCSessionDelegate {
 extension MultipeerService: MCNearbyServiceAdvertiserDelegate {
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didReceiveInvitationFromPeer peerID: MCPeerID, withContext context: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void) {
         AppLogger.multipeer.info("Accepting invitation from peer: \(peerID.displayName)")
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_RECEIVED", peer: peerID.displayName, details: "invitation_accepted")
         invitationHandler(true, session)
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_ACCEPTED", peer: peerID.displayName, details: "invitation_handler_accepted=true")
     }
 }
 
@@ -1074,21 +1097,25 @@ extension MultipeerService: MCNearbyServiceAdvertiserDelegate {
 extension MultipeerService: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
         AppLogger.multipeer.info("Browser found peer: \(peerID.displayName)")
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PEER_DISCOVERED", peer: peerID.displayName, details: "discovered_by_browser")
         MeshNotificationManager.shared.notifyPeerDiscovered(peerID: peerID.displayName, displayName: peerID.displayName.cleanBaseName)
         guard let session = session else { return }
         
         // Deterministic tie-breaker for simultaneous invitations to prevent connection aborts
         if myPeerID.displayName > peerID.displayName {
             AppLogger.multipeer.info("Issuing invitation to peer: \(peerID.displayName)")
+            RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_SENT", peer: peerID.displayName, details: "browser_tiebreaker_winner")
             browser.invitePeer(peerID, to: session, withContext: nil, timeout: Constants.Multipeer.connectionTimeoutSeconds)
         } else {
             AppLogger.multipeer.info("Waiting for peer \(peerID.displayName) to issue invitation...")
+            RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_WAITING", peer: peerID.displayName, details: "browser_tiebreaker_waiting")
         }
     }
 
     
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
         AppLogger.multipeer.info("Browser lost peer: \(peerID.displayName)")
+        RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PEER_LOST", peer: peerID.displayName, details: "lost_by_browser")
         DispatchQueue.main.async {
             self.connectedPeers.removeAll(where: { $0.id == peerID.displayName })
         }

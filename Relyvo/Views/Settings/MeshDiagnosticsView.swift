@@ -270,6 +270,71 @@ struct MeshDiagnosticsView: View {
                 }
             }
             
+            // Section 0.6: MCSession Connection Health Summary
+            Section("MCSession Connection Health") {
+                HStack {
+                    Text("MCSession State:")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text(transportDiagnostics.currentMCSessionState)
+                        .font(.caption.monospaced().bold())
+                        .foregroundColor(transportDiagnostics.currentMCSessionState == "CONNECTED" ? .green : .orange)
+                }
+                HStack {
+                    Text("Connected Peers (\(transportDiagnostics.connectedPeersCount)):")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text(transportDiagnostics.connectedPeersList.isEmpty ? "None" : transportDiagnostics.connectedPeersList.map { String($0.prefix(6)) }.joined(separator: ", "))
+                        .font(.caption2.monospaced())
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("Reconnects / Disconnects:")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text("\(transportDiagnostics.reconnectCount) / \(transportDiagnostics.disconnectCount)")
+                        .font(.caption.monospaced())
+                        .foregroundColor(.secondary)
+                }
+                if transportDiagnostics.lastSocketError != "None" {
+                    HStack {
+                        Text("Last Error:")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(transportDiagnostics.lastSocketError)
+                            .font(.caption2.monospaced())
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            
+            // Section 0.7: Session Lifecycle Timeline Buffer
+            Section("Session Lifecycle Timeline (Recent)") {
+                if transportDiagnostics.recentLifecycleEvents.isEmpty {
+                    Text("No lifecycle events recorded yet.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(Array(transportDiagnostics.recentLifecycleEvents.suffix(15).reversed())) { event in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(event.event)
+                                    .font(.caption2.monospaced().bold())
+                                    .foregroundColor(.purple)
+                                Spacer()
+                                Text(event.timestamp.logTimeString)
+                                    .font(.caption2.monospaced())
+                                    .foregroundColor(.secondary)
+                            }
+                            Text("peer=\(String(event.peer.prefix(6))) \(event.details)")
+                                .font(.caption2.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+            }
+            
             // Section 1: Notification System & Auth Status
             Section("Notification System Status") {
                 HStack {

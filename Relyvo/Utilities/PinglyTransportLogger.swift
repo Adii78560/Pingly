@@ -10,6 +10,21 @@ import Combine
 import CryptoKit
 import os
 
+struct SessionLifecycleEvent: Identifiable {
+    let id = UUID()
+    let timestamp = Date()
+    let tag: String
+    let event: String
+    let peer: String
+    let details: String
+    
+    var formattedString: String {
+        let timeStr = timestamp.logTimeString
+        let shortPeer = String(peer.prefix(6))
+        return "[\(timeStr)] [\(event)] peer=\(shortPeer) \(details)"
+    }
+}
+
 /// Thread-safe in-memory diagnostic metrics counter
 final class RelaynTransportDiagnosticsManager: ObservableObject {
     static let shared = RelaynTransportDiagnosticsManager()
@@ -40,7 +55,95 @@ final class RelaynTransportDiagnosticsManager: ObservableObject {
     @Published private(set) var lastDecodeResult: String = "None"
     @Published private(set) var lastACKResult: String = "None"
     
+    // Objective 6 & 7: Connection Health & Bounded Session Lifecycle Timeline Buffer (Last 100 Events)
+    @Published private(set) var recentLifecycleEvents: [SessionLifecycleEvent] = []
+    @Published private(set) var currentMCSessionState: String = "NOT_CONNECTED"
+    @Published private(set) var connectedPeersList: [String] = []
+    @Published private(set) var connectionEstablishedTimestamp: Date? = nil
+    @Published private(set) var lastTxTimestamp: Date? = nil
+    @Published private(set) var lastRxTimestamp: Date? = nil
+    @Published private(set) var lastPTTTxTimestamp: Date? = nil
+    @Published private(set) var lastPTTRxTimestamp: Date? = nil
+    @Published private(set) var lastSessionStateChangeTimestamp: Date? = nil
+    @Published private(set) var lastSocketError: String = "None"
+    @Published private(set) var disconnectCount: Int = 0
+    @Published private(set) var reconnectCount: Int = 0
+    
     private init() {}
+    
+    func recordLifecycleEvent(event: String, peer: String = "N/A", details: String = "") {
+        lock.lock()
+        let newEvent = SessionLifecycleEvent(tag: "SessionLifecycle", event: event, peer: peer, details: details)
+        let fingerprint = String(KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString.prefix(6))
+        
+        // Log structured lifecycle log
+        AppLogger.multipeer.info("[Device=\(fingerprint)][SessionLifecycle] event=\(event) peer=\(String(peer.prefix(6))) details=\(details)")
+        
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.recentLifecycleEvents.append(newEvent)
+            if self.recentLifecycleEvents.count > 100 {
+                self.recentLifecycleEvents.removeFirst(self.recentLifecycleEvents.count - 100)
+            }
+            if event == "CONNECTED" {
+                self.reconnectCount += 1
+                self.currentMCSessionState = "CONNECTED"
+                self.connectionEstablishedTimestamp = Date()
+                self.lastSessionStateChangeTimestamp = Date()
+            } else if event == "SESSION_DISCONNECT" || event == "NOT_CONNECTED" {
+                self.disconnectCount += 1
+                self.currentMCSessionState = "NOT_CONNECTED"
+                self.lastSessionStateChangeTimestamp = Date()
+            } else if event == "CONNECTING" {
+                self.currentMCSessionState = "CONNECTING"
+                self.lastSessionStateChangeTimestamp = Date()
+            }
+        }
+    }
+    
+    func recordSocketOrStreamError(errorDescription: String, domain: String = "NSPOSIXErrorDomain", code: Int = 54) {
+        lock.lock()
+        let errDetails = "domain=\(domain) code=\(code) \(errorDescription)"
+        lock.unlock()
+        
+        recordLifecycleEvent(event: "SOCKET_ERROR", details: errDetails)
+        
+        DispatchQueue.main.async {
+            self.lastSocketError = errDetails
+        }
+    }
+    
+    func updateTxTimestamp() {
+        DispatchQueue.main.async {
+            self.lastTxTimestamp = Date()
+        }
+    }
+    
+    func updateRxTimestamp() {
+        DispatchQueue.main.async {
+            self.lastRxTimestamp = Date()
+        }
+    }
+    
+    func updatePTTTxTimestamp() {
+        DispatchQueue.main.async {
+            self.lastPTTTxTimestamp = Date()
+        }
+    }
+    
+    func updatePTTRxTimestamp() {
+        DispatchQueue.main.async {
+            self.lastPTTRxTimestamp = Date()
+        }
+    }
+    
+    func updateConnectedPeersList(_ peers: [String]) {
+        DispatchQueue.main.async {
+            self.connectedPeersList = peers
+            self.connectedPeersCount = peers.count
+        }
+    }
     
     func recordOutgoingMessage(id: UUID, peer: String, result: String) {
         lock.lock()

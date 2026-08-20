@@ -42,6 +42,23 @@ final class SwiftDataService: ObservableObject {
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         let storeURL = config.url
         let fileManager = FileManager.default
+        
+        if !inMemory {
+            let parentDir = storeURL.deletingLastPathComponent()
+            if !fileManager.fileExists(atPath: parentDir.path) {
+                AppLogger.multipeer.info("[Persistence] Application Support directory missing. Creating directory: \(parentDir.path)")
+                do {
+                    try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true, attributes: nil)
+                    AppLogger.multipeer.info("[Persistence] Application Support directory creation succeeded")
+                } catch {
+                    AppLogger.multipeer.error("[Persistence][ERROR] Application Support directory creation failed: \(error.localizedDescription)")
+                    fatalError("[Persistence][CRITICAL] Failed to create Application Support directory: \(error.localizedDescription)")
+                }
+            } else {
+                AppLogger.multipeer.info("[Persistence] Application Support directory verified existing")
+            }
+        }
+        
         let storeExists = fileManager.fileExists(atPath: storeURL.path)
         var fileSizeString = "0 bytes"
         if storeExists, let attributes = try? fileManager.attributesOfItem(atPath: storeURL.path),

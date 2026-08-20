@@ -17,10 +17,20 @@ final class KeychainIdentityService {
     private let legacyDeviceIDKey = "com.adityarai.pingly.deviceID"
     private let serviceName = "com.adityarai.pingly.keychain"
     
+    private let lock = NSLock()
+    private var cachedDeviceID: UUID? = nil
+    
     private init() {}
     
-    /// Fetches existing Device ID from iOS Keychain, or generates & saves a new UUID if absent.
+    /// Fetches existing Device ID from iOS Keychain (or memory cache), or generates & saves a new UUID if absent.
     func fetchOrCreateDeviceID() -> UUID {
+        lock.lock()
+        if let cached = cachedDeviceID {
+            lock.unlock()
+            return cached
+        }
+        
+        // Ensure thread-safe single initialization
         AppLogger.general.info("[Identity] Device identity initialization started")
         AppLogger.general.info("[Identity] Keychain lookup started")
         
@@ -43,6 +53,7 @@ final class KeychainIdentityService {
             AppLogger.general.info("[Identity] Migrated legacy Keychain Device ID to primary key.")
         }
         
+        let finalUUID: UUID
         if existingFound, let uuid = loadedUUID {
             let fingerprint = String(uuid.uuidString.prefix(6))
             AppLogger.general.info("[Identity] Existing device identity found = true")
@@ -51,24 +62,32 @@ final class KeychainIdentityService {
             AppLogger.general.info("[Identity] Device identity persisted = true")
             AppLogger.general.info("[Identity] Device ID fingerprint = \(fingerprint)")
             AppLogger.general.info("[Identity] Device identity initialization completed")
-            return uuid
+            finalUUID = uuid
+        } else {
+            // 3. Generate NEW UUID if no existing identity found in Keychain
+            let newUUID = UUID()
+            saveKeychainItem(key: primaryDeviceIDKey, value: newUUID.uuidString)
+            let fingerprint = String(newUUID.uuidString.prefix(6))
+            
+            AppLogger.general.info("[Identity] Existing device identity found = false")
+            AppLogger.general.info("[Identity] Device identity generated = true")
+            AppLogger.general.info("[Identity] Device identity persisted = true")
+            AppLogger.general.info("[Identity] Device ID fingerprint = \(fingerprint)")
+            AppLogger.general.info("[Identity] Device identity initialization completed")
+            finalUUID = newUUID
         }
         
-        // 3. Generate NEW UUID if no existing identity found in Keychain
-        let newUUID = UUID()
-        saveKeychainItem(key: primaryDeviceIDKey, value: newUUID.uuidString)
-        let fingerprint = String(newUUID.uuidString.prefix(6))
-        
-        AppLogger.general.info("[Identity] Existing device identity found = false")
-        AppLogger.general.info("[Identity] Device identity generated = true")
-        AppLogger.general.info("[Identity] Device identity persisted = true")
-        AppLogger.general.info("[Identity] Device ID fingerprint = \(fingerprint)")
-        AppLogger.general.info("[Identity] Device identity initialization completed")
-        return newUUID
+        cachedDeviceID = finalUUID
+        lock.unlock()
+        return finalUUID
     }
     
     /// Permanently deletes Device ID from iOS Keychain (strictly during explicit account deletion)
     func clearDeviceID() {
+        lock.lock()
+        cachedDeviceID = nil
+        lock.unlock()
+        
         deleteKeychainItem(key: primaryDeviceIDKey)
         deleteKeychainItem(key: legacyDeviceIDKey)
         AppLogger.general.info("Cleared Relayn Device ID from iOS Keychain.")

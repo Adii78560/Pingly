@@ -180,6 +180,8 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
         multipeerService.sendRawPTTPacket(packet)
     }
     
+    private let audioDecodeQueue = DispatchQueue(label: "com.relyvo.audio.decodeQueue", qos: .userInitiated)
+    
     private func setupPacketReceiver() {
         NotificationCenter.default.addObserver(
             self,
@@ -195,22 +197,25 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
         
         let payload = packet.subdata(in: PTTFrameHeader.headerSize..<packet.count)
         
-        DispatchQueue.main.async { [weak self] in
+        audioDecodeQueue.async { [weak self] in
             guard let self = self else { return }
             
             switch header.type {
             case .start:
-                self.activeFloorSenderID = "REMOTE_PEER"
-                self.lastReceivedSequenceNo = nil
-                self.lastReceivedTimestampMs = header.timestampMs
-                self.lastArrivalRealTime = Date()
-                self.totalDroppedFramesCount = 0
-                self.totalOutofOrderFramesCount = 0
+                DispatchQueue.main.async {
+                    self.activeFloorSenderID = "REMOTE_PEER"
+                    self.lastReceivedSequenceNo = nil
+                    self.lastReceivedTimestampMs = header.timestampMs
+                    self.lastArrivalRealTime = Date()
+                    self.totalDroppedFramesCount = 0
+                    self.totalOutofOrderFramesCount = 0
+                }
                 
                 // Reset Adaptive Jitter Buffer for new PTT session
                 AdaptiveJitterBufferManager.shared.resetSession()
                 AudioStreamEngine.shared.playConnectChirp()
                 AppLogger.multipeer.info("PTT_START received from sender \(header.senderHash)")
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_START", peer: "REMOTE", details: "senderHash=\(header.senderHash)")
                 
             case .chunk:
                 guard !self.isFloorLockedBySelf else { return } // Reject echo loops
@@ -234,7 +239,7 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 
                 self.trackPacketLossAndJitter(header: header)
                 
-                // Decode Opus packet to 20ms raw Int16 PCM frame
+                // Decode Opus packet to 20ms raw Int16 PCM frame (off main thread)
                 let decodedPCM = OpusCodecManager.shared.decodeOpusToPCM(payload)
                 
                 // Enqueue frame into WebRTC NetEQ Adaptive Jitter Buffer for 40-60ms pre-buffered playback
@@ -245,15 +250,17 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 )
                 
             case .end:
-                self.activeFloorSenderID = nil
-                self.lastReceivedSequenceNo = nil
+                DispatchQueue.main.async {
+                    self.activeFloorSenderID = nil
+                    self.lastReceivedSequenceNo = nil
+                }
                 
                 // Flush remaining buffered frames and stop jitter timer
                 AdaptiveJitterBufferManager.shared.flushRemainingSession()
                 AudioStreamEngine.shared.playConnectChirp()
                 AppLogger.multipeer.info("PTT_END received. Diagnostic Summary - Dropped Frames: \(self.totalDroppedFramesCount), Out-Of-Order: \(self.totalOutofOrderFramesCount)")
+                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_END", peer: "REMOTE", details: "dropped=\(self.totalDroppedFramesCount) outOfOrder=\(self.totalOutofOrderFramesCount)")
             }
-
         }
     }
 
