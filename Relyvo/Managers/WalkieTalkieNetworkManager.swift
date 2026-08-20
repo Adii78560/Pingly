@@ -182,6 +182,10 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
     
     private let audioDecodeQueue = DispatchQueue(label: "com.relyvo.audio.decodeQueue", qos: .userInitiated)
     
+    private var currentPTTStartTimestamp: Date? = nil
+    private var currentPTTRxFrames: Int = 0
+    private var firstPacketLogged: Bool = false
+    
     private func setupPacketReceiver() {
         NotificationCenter.default.addObserver(
             self,
@@ -202,6 +206,10 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             
             switch header.type {
             case .start:
+                self.currentPTTStartTimestamp = Date()
+                self.currentPTTRxFrames = 0
+                self.firstPacketLogged = false
+                
                 DispatchQueue.main.async {
                     self.activeFloorSenderID = "REMOTE_PEER"
                     self.lastReceivedSequenceNo = nil
@@ -216,9 +224,26 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 AudioStreamEngine.shared.playConnectChirp()
                 AppLogger.multipeer.info("PTT_START received from sender \(header.senderHash)")
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_START", peer: "REMOTE", details: "senderHash=\(header.senderHash)")
+                RelaynTransportDiagnosticsManager.shared.incrementPhysicalTestPTTSessions()
+                RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_TEST_BEGIN", peer: "REMOTE")
+                RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_START", peer: "REMOTE", details: "senderHash=\(header.senderHash)")
                 
             case .chunk:
                 guard !self.isFloorLockedBySelf else { return } // Reject echo loops
+                
+                self.currentPTTRxFrames += 1
+                RelaynTransportDiagnosticsManager.shared.addPhysicalTestPTTRxFrames(count: 1)
+                
+                if !self.firstPacketLogged {
+                    self.firstPacketLogged = true
+                    let latencyMs = self.currentPTTStartTimestamp != nil ? Int(Date().timeIntervalSince(self.currentPTTStartTimestamp!) * 1000) : 0
+                    RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_FIRST_PACKET", peer: "REMOTE", details: "latencyMs=\(latencyMs)")
+                }
+                
+                if self.currentPTTRxFrames % 100 == 0 {
+                    let durationMs = self.currentPTTStartTimestamp != nil ? Int(Date().timeIntervalSince(self.currentPTTStartTimestamp!) * 1000) : 0
+                    RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_PROGRESS", peer: "REMOTE", details: "durationMs=\(durationMs) rxFrames=\(self.currentPTTRxFrames) droppedFrames=\(self.totalDroppedFramesCount)")
+                }
                 
                 // Perform Packet Loss Concealment (PLC) if sequence gap is detected
                 if let lastSeq = self.lastReceivedSequenceNo {
@@ -250,6 +275,10 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 )
                 
             case .end:
+                let durationMs = self.currentPTTStartTimestamp != nil ? Int(Date().timeIntervalSince(self.currentPTTStartTimestamp!) * 1000) : 0
+                RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_END", peer: "REMOTE", details: "durationMs=\(durationMs) totalRxFrames=\(self.currentPTTRxFrames) droppedFrames=\(self.totalDroppedFramesCount)")
+                RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_TEST_RESULT", peer: "REMOTE", details: "result=COMPLETED sessionState=CONNECTED")
+                
                 DispatchQueue.main.async {
                     self.activeFloorSenderID = nil
                     self.lastReceivedSequenceNo = nil

@@ -86,6 +86,13 @@ final class SwiftDataService: ObservableObject {
             self.isUsingInMemoryFallback = false
             updateUnsyncedCount()
             logAllEntityCounts()
+            
+            let chatCount = (try? self.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
+            let transcriptCount = (try? self.context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
+            let pendingCount = (try? self.context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
+            
+            RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_RESTORE_CHECK", details: "chatCount=\(chatCount) voiceTranscriptCount=\(transcriptCount) pendingMessageCount=\(pendingCount)")
+            RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_SNAPSHOT", details: "storeExists=\(storeExists) fileSize=\(fileSizeString)")
         } catch {
             AppLogger.multipeer.error("[Persistence][ERROR] ModelContainer initialization failed")
             AppLogger.multipeer.error("[Persistence][ERROR] Error = \(error.localizedDescription)")

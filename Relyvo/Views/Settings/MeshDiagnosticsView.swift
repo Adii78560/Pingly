@@ -335,6 +335,53 @@ struct MeshDiagnosticsView: View {
                 }
             }
             
+            // Section 0.8: Physical Device Test Summary
+            Section("Physical Device Test Summary") {
+                HStack {
+                    Text("Test Run ID:")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text(transportDiagnostics.testRunID)
+                        .font(.caption.monospaced().bold())
+                        .foregroundColor(.purple)
+                }
+                HStack {
+                    Text("Device Fingerprint:")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text(String(KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString.prefix(6)))
+                        .font(.caption.monospaced().bold())
+                        .foregroundColor(.blue)
+                }
+                HStack {
+                    Text("Messages (Sent/Rx/ACK/Fail):")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text("\(transportDiagnostics.physicalTestMessagesSentCount) / \(transportDiagnostics.physicalTestMessagesReceivedCount) / \(transportDiagnostics.physicalTestMessagesACKedCount) / \(transportDiagnostics.physicalTestMessageFailuresCount)")
+                        .font(.caption2.monospaced())
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("PTT (Sessions/Tx/Rx/Drop):")
+                        .font(.caption.bold())
+                    Spacer()
+                    Text("\(transportDiagnostics.physicalTestPTTSessionsCount) / \(transportDiagnostics.physicalTestPTTTxFramesCount) / \(transportDiagnostics.physicalTestPTTRxFramesCount) / \(transportDiagnostics.physicalTestPTTDroppedFramesCount)")
+                        .font(.caption2.monospaced())
+                        .foregroundColor(.secondary)
+                }
+                
+                Button(action: {
+                    transportDiagnostics.resetPhysicalTestDiagnostics()
+                }) {
+                    HStack {
+                        Image(systemName: "trash.circle.fill")
+                        Text("Reset Physical Test Metrics")
+                            .font(.caption.bold())
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+            
             // Section 1: Notification System & Auth Status
             Section("Notification System Status") {
                 HStack {

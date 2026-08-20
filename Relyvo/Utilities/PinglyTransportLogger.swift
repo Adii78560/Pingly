@@ -28,9 +28,10 @@ struct SessionLifecycleEvent: Identifiable {
 /// Thread-safe in-memory diagnostic metrics counter
 final class RelaynTransportDiagnosticsManager: ObservableObject {
     static let shared = RelaynTransportDiagnosticsManager()
+    static let physicalTestRunID: String = String(UUID().uuidString.prefix(6)).uppercased()
     
     private let lock = NSLock()
-    
+    @Published private(set) var testRunID: String = RelaynTransportDiagnosticsManager.physicalTestRunID
     @Published private(set) var connectedPeersCount: Int = 0
     @Published private(set) var txFramesCount: Int = 0
     @Published private(set) var rxFramesCount: Int = 0
@@ -45,6 +46,17 @@ final class RelaynTransportDiagnosticsManager: ObservableObject {
     @Published private(set) var relayDroppedCount: Int = 0
     @Published private(set) var queueFailedCount: Int = 0
     @Published private(set) var queueDeliveredCount: Int = 0
+    
+    // Physical Test Diagnostics Counter tracking
+    @Published private(set) var physicalTestMessagesSentCount: Int = 0
+    @Published private(set) var physicalTestMessagesReceivedCount: Int = 0
+    @Published private(set) var physicalTestMessagesACKedCount: Int = 0
+    @Published private(set) var physicalTestMessageFailuresCount: Int = 0
+    @Published private(set) var physicalTestPTTSessionsCount: Int = 0
+    @Published private(set) var physicalTestPTTTxFramesCount: Int = 0
+    @Published private(set) var physicalTestPTTRxFramesCount: Int = 0
+    @Published private(set) var physicalTestPTTDroppedFramesCount: Int = 0
+    @Published private(set) var physicalTestPTTDecodeFailuresCount: Int = 0
     
     // Live pipeline tracking for MeshDiagnosticsView UI
     @Published private(set) var lastOutgoingMessageID: String = "None"
@@ -70,6 +82,80 @@ final class RelaynTransportDiagnosticsManager: ObservableObject {
     @Published private(set) var reconnectCount: Int = 0
     
     private init() {}
+    
+    func recordPhysicalTestEvent(category: String = "SessionLifecycle", event: String, peer: String = "N/A", details: String = "") {
+        lock.lock()
+        let runID = RelaynTransportDiagnosticsManager.physicalTestRunID
+        let deviceFingerprint = String(KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString.prefix(6))
+        let shortPeer = String(peer.prefix(6))
+        
+        let logLine = "[PhysicalTest][run=\(runID)][device=\(deviceFingerprint)][\(category)] \(event) peer=\(shortPeer) \(details)"
+        AppLogger.multipeer.info("\(logLine)")
+        
+        let newEvent = SessionLifecycleEvent(tag: category, event: event, peer: peer, details: details)
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.recentLifecycleEvents.append(newEvent)
+            if self.recentLifecycleEvents.count > 100 {
+                self.recentLifecycleEvents.removeFirst(self.recentLifecycleEvents.count - 100)
+            }
+        }
+    }
+    
+    func resetPhysicalTestDiagnostics() {
+        lock.lock()
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.physicalTestMessagesSentCount = 0
+            self.physicalTestMessagesReceivedCount = 0
+            self.physicalTestMessagesACKedCount = 0
+            self.physicalTestMessageFailuresCount = 0
+            self.physicalTestPTTSessionsCount = 0
+            self.physicalTestPTTTxFramesCount = 0
+            self.physicalTestPTTRxFramesCount = 0
+            self.physicalTestPTTDroppedFramesCount = 0
+            self.physicalTestPTTDecodeFailuresCount = 0
+            self.disconnectCount = 0
+            self.reconnectCount = 0
+            self.lastSocketError = "None"
+            self.recentLifecycleEvents.removeAll()
+            self.recordPhysicalTestEvent(category: "Diagnostics", event: "TEST_RUN_METRICS_RESET", peer: "N/A", details: "counters_cleared")
+        }
+    }
+    
+    func incrementPhysicalTestSent() {
+        DispatchQueue.main.async { self.physicalTestMessagesSentCount += 1 }
+    }
+    
+    func incrementPhysicalTestReceived() {
+        DispatchQueue.main.async { self.physicalTestMessagesReceivedCount += 1 }
+    }
+    
+    func incrementPhysicalTestACKed() {
+        DispatchQueue.main.async { self.physicalTestMessagesACKedCount += 1 }
+    }
+    
+    func incrementPhysicalTestMessageFailures() {
+        DispatchQueue.main.async { self.physicalTestMessageFailuresCount += 1 }
+    }
+    
+    func incrementPhysicalTestPTTSessions() {
+        DispatchQueue.main.async { self.physicalTestPTTSessionsCount += 1 }
+    }
+    
+    func addPhysicalTestPTTTxFrames(count: Int) {
+        DispatchQueue.main.async { self.physicalTestPTTTxFramesCount += count }
+    }
+    
+    func addPhysicalTestPTTRxFrames(count: Int) {
+        DispatchQueue.main.async { self.physicalTestPTTRxFramesCount += count }
+    }
+    
+    func addPhysicalTestPTTDroppedFrames(count: Int) {
+        DispatchQueue.main.async { self.physicalTestPTTDroppedFramesCount += count }
+    }
     
     func recordLifecycleEvent(event: String, peer: String = "N/A", details: String = "") {
         lock.lock()
