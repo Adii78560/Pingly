@@ -316,6 +316,9 @@ final class SwiftDataService: ObservableObject {
     /// Persists a chat or location message to SwiftData local storage.
     func saveChatMessage(
         id: UUID = UUID(),
+        originID: String? = nil,
+        senderID: String? = nil,
+        destinationID: String? = nil,
         senderName: String,
         channel: String,
         text: String,
@@ -328,8 +331,14 @@ final class SwiftDataService: ObservableObject {
     ) -> SDChatMessage {
         let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
         AppLogger.multipeer.info("\(tag)_START type=\(messageType.rawValue)")
+        let resolvedSenderID = senderID ?? NodeIdentity.shared.nodeID
+        let resolvedOriginID = originID ?? resolvedSenderID
+        let resolvedDestinationID = destinationID ?? channel
         let message = SDChatMessage(
             id: id,
+            originID: resolvedOriginID,
+            senderID: resolvedSenderID,
+            destinationID: resolvedDestinationID,
             senderName: senderName,
             channel: channel,
             text: text,
@@ -354,6 +363,9 @@ final class SwiftDataService: ObservableObject {
     func saveMessage(_ msg: Message) -> SDChatMessage {
         return saveChatMessage(
             id: msg.id,
+            originID: msg.originID,
+            senderID: msg.senderID,
+            destinationID: msg.destinationID,
             senderName: msg.senderName,
             channel: msg.destinationID,
             text: msg.text,

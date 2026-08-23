@@ -33,7 +33,7 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(conversationMessages) { message in
-                            let isMe = (message.senderName == NodeIdentity.shared.displayName)
+                            let isMe = (message.senderID == NodeIdentity.shared.nodeID || message.originID == NodeIdentity.shared.nodeID)
                             iMessageBubbleRow(message: message, isSentByMe: isMe)
                                 .id(message.id)
                         }

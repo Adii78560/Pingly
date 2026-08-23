@@ -126,6 +126,9 @@ final class MessagesViewModel: ObservableObject {
         // Persist message to SwiftData local storage
         _ = SwiftDataService.shared.saveChatMessage(
             id: newMessage.id,
+            originID: localNodeID,
+            senderID: localNodeID,
+            destinationID: conversation.recipientNodeID,
             senderName: handle,
             channel: conversation.recipientNodeID,
             text: trimmed
@@ -196,6 +199,9 @@ final class MessagesViewModel: ObservableObject {
             
             _ = SwiftDataService.shared.saveChatMessage(
                 id: newMessage.id,
+                originID: localNodeID,
+                senderID: localNodeID,
+                destinationID: conversation.recipientNodeID,
                 senderName: handle,
                 channel: conversation.recipientNodeID,
                 text: locationText,
@@ -345,6 +351,9 @@ final class MessagesViewModel: ObservableObject {
         
         _ = SwiftDataService.shared.saveChatMessage(
             id: message.id,
+            originID: message.originID,
+            senderID: message.senderID,
+            destinationID: message.destinationID,
             senderName: message.senderName,
             channel: senderNodeID,
             text: message.text,
@@ -368,9 +377,9 @@ final class MessagesViewModel: ObservableObject {
                 
                 let msg = Message(
                     id: item.id,
-                    originID: item.channel,
-                    destinationID: item.channel,
-                    senderID: item.channel,
+                    originID: item.originID.isEmpty ? item.channel : item.originID,
+                    destinationID: item.destinationID.isEmpty ? item.channel : item.destinationID,
+                    senderID: item.senderID.isEmpty ? item.channel : item.senderID,
                     senderName: item.senderName,
                     text: item.text,
                     timestamp: item.timestamp,
@@ -384,7 +393,7 @@ final class MessagesViewModel: ObservableObject {
                     continue
                 }
                 if let last = msgList.last {
-                    let peerName = msgList.first(where: { $0.senderName != NodeIdentity.shared.displayName })?.senderName ?? last.senderName
+                    let peerName = msgList.first(where: { $0.senderID != NodeIdentity.shared.nodeID && $0.senderName != NodeIdentity.shared.displayName })?.senderName ?? last.senderName
                     
                     if let idx = conversations.firstIndex(where: { $0.id == nodeID }) {
                         conversations[idx].messages = msgList
