@@ -18,6 +18,7 @@ struct VoiceTranscript: Identifiable, Equatable {
     let channel: String
     let timestamp: Date
     var isDelivered: Bool
+    var sessionID: UUID?
     
     init(
         id: UUID = UUID(),
@@ -25,7 +26,8 @@ struct VoiceTranscript: Identifiable, Equatable {
         text: String,
         channel: String = "CH-1 EMERGENCY",
         timestamp: Date = Date(),
-        isDelivered: Bool = false
+        isDelivered: Bool = false,
+        sessionID: UUID? = nil
     ) {
         self.id = id
         self.speakerName = speakerName
@@ -33,6 +35,7 @@ struct VoiceTranscript: Identifiable, Equatable {
         self.channel = channel
         self.timestamp = timestamp
         self.isDelivered = isDelivered
+        self.sessionID = sessionID
     }
 }
 
@@ -70,15 +73,18 @@ final class SpeechTranscriberManager: ObservableObject {
         }
     }
     
+    var currentSessionID: UUID?
+    
     // MARK: - Public Control API
     
     /// Starts live speech-to-text transcription for active speaker.
-    func startTranscribing(speakerName: String, channel: String = "CH-1 EMERGENCY") {
+    func startTranscribing(speakerName: String, channel: String = "CH-1 EMERGENCY", sessionID: UUID? = nil) {
         guard !isTranscribing else { return }
         self.activeSpeakerName = speakerName
         self.activeChannel = channel
         self.currentTranscriptText = ""
         self.accumulatedSegments.removeAll()
+        self.currentSessionID = sessionID
         
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -180,12 +186,15 @@ final class SpeechTranscriberManager: ObservableObject {
             
             let isConnected = !MultipeerService.shared.connectedPeers.isEmpty
             
+            let sessionIDToSave = self.currentSessionID
+            
             // Persist VoiceTranscript to SwiftData with initial delivery status indicator (Gray offline)
             let sdTranscript = SwiftDataService.shared.saveVoiceTranscript(
                 speakerName: finalSpeaker,
                 text: textToSave,
                 channel: channel,
-                isDelivered: false
+                isDelivered: false,
+                sessionID: sessionIDToSave
             )
             
             let transcript = VoiceTranscript(
@@ -193,7 +202,8 @@ final class SpeechTranscriberManager: ObservableObject {
                 speakerName: finalSpeaker,
                 text: textToSave,
                 channel: channel,
-                isDelivered: false
+                isDelivered: false,
+                sessionID: sessionIDToSave
             )
             self.transcriptHistory.append(transcript)
             
@@ -203,8 +213,8 @@ final class SpeechTranscriberManager: ObservableObject {
             _ = SwiftDataService.shared.enqueuePendingMessage(
                 messageID: sdTranscript.id,
                 originID: localNodeID,
-                destinationID: channel,
-                recipientName: channel,
+                destinationID: "BROADCAST",
+                recipientName: "Broadcast",
                 senderName: finalSpeaker,
                 text: "[\(channel)] \(textToSave)",
                 channel: channel
@@ -214,14 +224,18 @@ final class SpeechTranscriberManager: ObservableObject {
             let netMessage = Message(
                 id: sdTranscript.id,
                 originID: localNodeID,
-                destinationID: channel,
+                destinationID: "BROADCAST",
                 senderID: localNodeID,
                 senderName: finalSpeaker,
+                channelID: channel,
                 text: "[\(channel)] \(textToSave)",
                 timestamp: Date(),
                 hopsCount: 0,
-                type: .transcript
+                type: .transcript,
+                sessionID: sessionIDToSave
             )
+            
+            self.currentSessionID = nil
 
 
             

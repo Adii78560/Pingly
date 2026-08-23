@@ -35,9 +35,10 @@ final class SwiftDataService: ObservableObject {
             SDPendingMessage.self,
             SDUserProfile.self,
             SDNotificationEvent.self,
-            SDLocationShareSession.self
+            SDLocationShareSession.self,
+            SDAudioSegment.self
         ])
-        AppLogger.multipeer.info("[Persistence] Model schema loaded (6 entities registered)")
+        AppLogger.multipeer.info("[Persistence] Model schema loaded (7 entities registered)")
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         let storeURL = config.url
@@ -198,7 +199,7 @@ final class SwiftDataService: ObservableObject {
     // MARK: - Voice Transcripts Operations
     
     /// Persists a voice transcript to SwiftData local storage.
-    func saveVoiceTranscript(id: UUID = UUID(), speakerName: String, text: String, channel: String, isDelivered: Bool = false) -> SDVoiceTranscript {
+    func saveVoiceTranscript(id: UUID = UUID(), speakerName: String, text: String, channel: String, isDelivered: Bool = false, sessionID: UUID? = nil) -> SDVoiceTranscript {
         let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
         AppLogger.multipeer.info("\(tag)_START type=voiceTranscript")
         let transcript = SDVoiceTranscript(
@@ -208,7 +209,8 @@ final class SwiftDataService: ObservableObject {
             channel: channel,
             timestamp: Date(),
             isSynced: false,
-            isDelivered: isDelivered
+            isDelivered: isDelivered,
+            sessionID: sessionID
         )
         context.insert(transcript)
         saveContext()
@@ -256,6 +258,55 @@ final class SwiftDataService: ObservableObject {
             }
             saveContext()
             AppLogger.multipeer.info("Marked \(results.count) transcripts on '\(channel)' as delivered.")
+        }
+    }
+    
+    // MARK: - Audio Segments Operations
+    
+    /// Persists walkie-talkie audio recording metadata to SwiftData local storage.
+    func saveAudioSegment(
+        id: UUID = UUID(),
+        sessionID: UUID,
+        senderID: String,
+        senderName: String,
+        channelID: String,
+        timestamp: Date = Date(),
+        duration: Double,
+        transcriptText: String? = nil,
+        localFileURL: String,
+        directionRaw: String
+    ) -> SDAudioSegment {
+        let segment = SDAudioSegment(
+            id: id,
+            sessionID: sessionID,
+            senderID: senderID,
+            senderName: senderName,
+            channelID: channelID,
+            timestamp: timestamp,
+            duration: duration,
+            transcriptText: transcriptText,
+            localFileURL: localFileURL,
+            directionRaw: directionRaw
+        )
+        context.insert(segment)
+        saveContext()
+        AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SAVE sessionID=\(sessionID) file=\(localFileURL)")
+        AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SUCCESS sessionID=\(sessionID)")
+        return segment
+    }
+    
+    /// Fetches all stored audio segments for a specific channel sorted by timestamp.
+    func fetchAudioSegments(for channel: String) -> [SDAudioSegment] {
+        let targetChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDAudioSegment>(
+            predicate: #Predicate { $0.channelID == targetChannel },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        do {
+            return try context.fetch(descriptor)
+        } catch {
+            AppLogger.audio.error("Failed to fetch audio segments for \(channel): \(error.localizedDescription)")
+            return []
         }
     }
 

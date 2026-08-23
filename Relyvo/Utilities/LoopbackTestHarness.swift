@@ -135,7 +135,12 @@ final class SimulatedNode {
     
     func receiveFrame(data: Data, fromPeerID: String) {
         // Attempt decode as Message
-        guard let message = try? JSONDecoder().decode(Message.self, from: data) else {
+        let message: Message
+        do {
+            message = try JSONDecoder().decode(Message.self, from: data)
+        } catch {
+            let dataStr = String(data: data, encoding: .utf8) ?? data.map { String(format: "%02hhX", $0) }.joined()
+            AppLogger.multipeer.error("[LoopbackTest] JSON DECODE ERROR: \(error.localizedDescription) - Data: \(dataStr)")
             AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=JSON_DECODE_FAILED node=\(self.nodeID)")
             return
         }
@@ -690,6 +695,40 @@ final class LoopbackTestHarness {
             name: "SwiftData Isolation (Prod Protection)",
             success: t14Success,
             details: "prod_count_before=\(prodChatCountBefore) prod_count_after=\(prodChatCountAfter)"
+        )
+        
+        // -------------------------------------------------------------
+        // Test 15: PTT Audio Session Persistence & Metadata Verification
+        // -------------------------------------------------------------
+        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=PTTAudioSessionPersistence")
+        let testNode = SimulatedNode(nodeID: "TEST-PTT", displayName: "PTT Node")
+        let testSessionID = UUID()
+        let testFileURLString = "/tmp/test_session.wav"
+        
+        let sdSegment = testNode.swiftDataService.saveAudioSegment(
+            sessionID: testSessionID,
+            senderID: "TEST-PTT",
+            senderName: "PTT Node",
+            channelID: "CH-1 EMERGENCY",
+            duration: 5.5,
+            transcriptText: "Test PTT transcript",
+            localFileURL: testFileURLString,
+            directionRaw: "SENDER"
+        )
+        
+        let fetchedSegments = testNode.swiftDataService.fetchAudioSegments(for: "CH-1 EMERGENCY")
+        let fetchedSegment = fetchedSegments.first(where: { $0.sessionID == testSessionID })
+        
+        let t15Success = (fetchedSegment != nil) &&
+                        (fetchedSegment?.senderName == "PTT Node") &&
+                        (fetchedSegment?.duration == 5.5) &&
+                        (fetchedSegment?.localFileURL == testFileURLString) &&
+                        (fetchedSegment?.directionRaw == "SENDER")
+                        
+        logResult(
+            name: "PTT Audio Session Persistence & Metadata Verification",
+            success: t15Success,
+            details: "segmentFound=\(fetchedSegment != nil) duration=\(fetchedSegment?.duration ?? 0.0)"
         )
         
         // -------------------------------------------------------------

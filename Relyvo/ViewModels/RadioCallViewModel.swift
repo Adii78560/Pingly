@@ -17,6 +17,8 @@ final class RadioCallViewModel: ObservableObject {
     @Published var selectedChannel: String = "CH-1 EMERGENCY" {
         didSet {
             loadSwiftDataTranscripts()
+            networkManager.selectedChannel = selectedChannel
+            multipeerService.activeChannelID = selectedChannel
         }
     }
     
@@ -38,12 +40,13 @@ final class RadioCallViewModel: ObservableObject {
             object: nil,
             userInfo: [
                 "peerName": peer.displayName,
+                "nodeID": peer.id,
                 "channel": selectedChannel
             ]
         )
         isAddedToMessages = true
         HapticManager.successFeedback()
-        AppLogger.multipeer.info("Added AirDrop peer '\(peer.displayName)' on \(self.selectedChannel) to Messages directory.")
+        AppLogger.multipeer.info("Added AirDrop peer '\(peer.displayName)' (NodeID: \(peer.id)) on \(self.selectedChannel) to Messages directory.")
     }
 
     
@@ -79,6 +82,8 @@ final class RadioCallViewModel: ObservableObject {
     init(multipeerService: MultipeerService, audioService: RadioAudioService) {
         self.multipeerService = multipeerService
         self.audioService = audioService
+        self.networkManager.selectedChannel = selectedChannel
+        self.multipeerService.activeChannelID = selectedChannel
         setupSubscriptions()
         loadSwiftDataTranscripts()
     }
@@ -248,9 +253,9 @@ final class RadioCallViewModel: ObservableObject {
         session.activeSpeakerName = handle
         let acquired = networkManager.acquireFloor()
         if acquired {
-            speechTranscriber.startTranscribing(speakerName: handle, channel: selectedChannel)
+            speechTranscriber.startTranscribing(speakerName: handle, channel: selectedChannel, sessionID: self.networkManager.currentSessionID)
             HapticManager.mediumImpact()
-            AppLogger.audio.info("Acquired floor lock; transmitting PTT voice call on \(self.selectedChannel)")
+            AppLogger.audio.info("Acquired floor lock; transmitting PTT voice call on \(self.selectedChannel) with sessionID \(self.networkManager.currentSessionID?.uuidString ?? "nil")")
         } else {
             HapticManager.warningFeedback()
         }

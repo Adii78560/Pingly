@@ -18,6 +18,7 @@ final class SDVoiceTranscript {
     var timestamp: Date
     var isSynced: Bool
     var isDelivered: Bool = false
+    var sessionID: UUID?
     
     init(
         id: UUID = UUID(),
@@ -26,7 +27,8 @@ final class SDVoiceTranscript {
         channel: String = "CH-1 EMERGENCY",
         timestamp: Date = Date(),
         isSynced: Bool = false,
-        isDelivered: Bool = false
+        isDelivered: Bool = false,
+        sessionID: UUID? = nil
     ) {
         self.id = id
         self.speakerName = speakerName
@@ -35,6 +37,7 @@ final class SDVoiceTranscript {
         self.timestamp = timestamp
         self.isSynced = isSynced
         self.isDelivered = isDelivered
+        self.sessionID = sessionID
     }
 }
 

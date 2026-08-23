@@ -44,6 +44,11 @@ struct RelyvoApp: App {
         BackgroundAudioSessionManager.shared.configureAudioSession()
         
         AppLogger.multipeer.info("[AppLifecycle] Main UI initialization started")
+        
+        // Run self-testing verification suite on launch
+        DispatchQueue.global(qos: .background).async {
+            _ = RelaynHardeningTests.shared.runAllVerificationTests()
+        }
     }
     
     var body: some Scene {

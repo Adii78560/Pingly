@@ -65,6 +65,7 @@ struct Message: Identifiable, Codable, Hashable {
     var type: P2PMessageType
     var protocolVersion: Int
     var authTag: String?
+    var sessionID: UUID?
     
     init(
         id: UUID = UUID(),
@@ -88,7 +89,8 @@ struct Message: Identifiable, Codable, Hashable {
         ttl: Int = Constants.Emergency.broadcastTTL,
         type: P2PMessageType = .chat,
         protocolVersion: Int = Constants.Mesh.currentProtocolVersion,
-        authTag: String? = nil
+        authTag: String? = nil,
+        sessionID: UUID? = nil
     ) {
         let finalOrigin = originID ?? senderID
         self.id = id
@@ -120,6 +122,7 @@ struct Message: Identifiable, Codable, Hashable {
             timestamp: timestamp,
             text: text
         )
+        self.sessionID = sessionID
     }
 
 

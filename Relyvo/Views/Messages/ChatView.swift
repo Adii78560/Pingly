@@ -267,7 +267,7 @@ struct CustomCornerShape: Shape {
 #Preview {
     ChatView(
         viewModel: MessagesViewModel(multipeerService: MultipeerService.shared, locationService: LocationService.shared),
-        conversation: Conversation(id: "1", displayName: "Aditya", isOnline: true, lastMessage: "Hello", lastTimestamp: "10:00 AM", messages: [])
+        conversation: Conversation(id: "1", displayName: "Aditya", recipientNodeID: "10000000-0000-0000-0000-000000000000", isOnline: true, lastMessage: "Hello", lastTimestamp: "10:00 AM", messages: [])
     )
 }
 

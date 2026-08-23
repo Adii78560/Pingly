@@ -11,6 +11,108 @@ import Combine
 import os
 
 
+extension UUID {
+    var uuidData: Data {
+        var uuid = self.uuid
+        return Data(bytes: &uuid, count: 16)
+    }
+    
+    init?(uuidData data: Data) {
+        guard data.count >= 16 else { return nil }
+        let uuid: uuid_t = data.withUnsafeBytes { $0.load(as: uuid_t.self) }
+        self.init(uuid: uuid)
+    }
+}
+
+func createWavHeader(dataLength: Int, sampleRate: Int32, channels: Int16, bitsPerSample: Int16) -> Data {
+    var header = Data()
+    header.append("RIFF".data(using: .utf8)!)
+    let fileSize = Int32(dataLength + 36)
+    var fileSizeLE = fileSize.littleEndian
+    header.append(Data(bytes: &fileSizeLE, count: 4))
+    header.append("WAVE".data(using: .utf8)!)
+    header.append("fmt ".data(using: .utf8)!)
+    var fmtSize: Int32 = 16
+    var fmtSizeLE = fmtSize.littleEndian
+    header.append(Data(bytes: &fmtSizeLE, count: 4))
+    var audioFormat: Int16 = 1
+    var audioFormatLE = audioFormat.littleEndian
+    header.append(Data(bytes: &audioFormatLE, count: 2))
+    var numChannels = channels
+    var numChannelsLE = numChannels.littleEndian
+    header.append(Data(bytes: &numChannelsLE, count: 2))
+    var sRate = sampleRate
+    var sRateLE = sRate.littleEndian
+    header.append(Data(bytes: &sRateLE, count: 4))
+    let byteRate = sampleRate * Int32(channels) * Int32(bitsPerSample / 8)
+    var byteRateLE = byteRate.littleEndian
+    header.append(Data(bytes: &byteRateLE, count: 4))
+    let blockAlign = channels * (bitsPerSample / 8)
+    var blockAlignLE = blockAlign.littleEndian
+    header.append(Data(bytes: &blockAlignLE, count: 2))
+    var bPerSample = bitsPerSample
+    var bPerSampleLE = bPerSample.littleEndian
+    header.append(Data(bytes: &bPerSampleLE, count: 2))
+    header.append("data".data(using: .utf8)!)
+    var dLength = Int32(dataLength)
+    var dLengthLE = dLength.littleEndian
+    header.append(Data(bytes: &dLengthLE, count: 4))
+    return header
+}
+
+final class AudioRecorderContext {
+    let sessionID: UUID
+    let fileURL: URL
+    private var pcmDataAccumulator = Data()
+    private let queue = DispatchQueue(label: "com.pingly.audiorecorder", qos: .utility)
+    
+    init(sessionID: UUID, fileURL: URL) {
+        self.sessionID = sessionID
+        self.fileURL = fileURL
+    }
+    
+    func append(pcmData: Data) {
+        queue.async {
+            self.pcmDataAccumulator.append(pcmData)
+        }
+    }
+    
+    func finalize(completion: @escaping (Bool) -> Void) {
+        queue.async { [weak self] in
+            guard let self = self else {
+                completion(false)
+                return
+            }
+            guard !self.pcmDataAccumulator.isEmpty else {
+                completion(false)
+                return
+            }
+            
+            let sampleRate: Int32 = 16000
+            let channels: Int16 = 1
+            let bitsPerSample: Int16 = 16
+            
+            let header = createWavHeader(dataLength: self.pcmDataAccumulator.count, sampleRate: sampleRate, channels: channels, bitsPerSample: bitsPerSample)
+            
+            var wavData = Data()
+            wavData.append(header)
+            wavData.append(self.pcmDataAccumulator)
+            
+            do {
+                let dir = self.fileURL.deletingLastPathComponent()
+                if !FileManager.default.fileExists(atPath: dir.path) {
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                }
+                try wavData.write(to: self.fileURL)
+                completion(true)
+            } catch {
+                AppLogger.audio.error("Failed to write WAV file: \(error.localizedDescription)")
+                completion(false)
+            }
+        }
+    }
+}
+
 enum PTTFrameType: UInt8 {
     case start = 0x01
     case chunk = 0x02
@@ -71,6 +173,28 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
         return MultipeerService.shared
     }
     
+    // Active Channel Synced from View Model
+    var selectedChannel: String = "CH-1 EMERGENCY"
+    
+    // PTT Session Tracking (Sender)
+    var currentSessionID: UUID? = nil
+    private var currentSenderRecorder: AudioRecorderContext? = nil
+    
+    // PTT Session Tracking (Receiver)
+    var currentRemoteSessionID: UUID? = nil
+    private var currentReceiverRecorder: AudioRecorderContext? = nil
+    private var remoteSessionStartTime: Date? = nil
+    private var remoteSessionSenderName: String? = nil
+    private var remoteSessionSenderID: String? = nil
+    
+    // Inactivity Timeout Timer
+    private var remoteInactivityWorkItem: DispatchWorkItem?
+    
+    func getAudioSegmentsDirectory() -> URL {
+        let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupportURL.appendingPathComponent("AudioSegments", isDirectory: true)
+    }
+    
     // Sender Sequence & Session Timers
     private var sessionSequenceNo: UInt16 = 0
     private var sessionStartTime: Date? = nil
@@ -98,14 +222,22 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             return false
         }
         
+        let sessionID = UUID()
+        self.currentSessionID = sessionID
+        
+        AppLogger.audio.info("[PINGLY_PTT_SESSION] START sessionID=\(sessionID.uuidString) sender=\(NodeIdentity.shared.nodeID)")
+        
+        let fileURL = getAudioSegmentsDirectory().appendingPathComponent("\(sessionID.uuidString).wav")
+        self.currentSenderRecorder = AudioRecorderContext(sessionID: sessionID, fileURL: fileURL)
+        
         BackgroundAudioSessionManager.shared.beginBackgroundTask()
         isFloorLockedBySelf = true
         activeFloorSenderID = "LOCAL_SELF"
         sessionSequenceNo = 0
         sessionStartTime = Date()
         
-        // Send PTT_START packet to remote peers
-        sendPTTPacket(type: .start, payload: Data())
+        // Send PTT_START packet to remote peers with sessionID payload
+        sendPTTPacket(type: .start, payload: sessionID.uuidData)
         
         // Start live low-latency capture
         let started = AudioStreamEngine.shared.startCapture()
@@ -118,12 +250,44 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
         
         AudioStreamEngine.shared.stopCapture()
         
-        // Send PTT_END packet to remote peer
-        sendPTTPacket(type: .end, payload: Data())
+        let sessionID = self.currentSessionID ?? UUID()
+        
+        // Send PTT_END packet to remote peer with sessionID payload
+        sendPTTPacket(type: .end, payload: sessionID.uuidData)
+        
+        if let recorder = self.currentSenderRecorder {
+            let fileURL = recorder.fileURL
+            let startTime = self.sessionStartTime ?? Date()
+            let duration = Date().timeIntervalSince(startTime)
+            let channel = self.selectedChannel
+            
+            recorder.finalize { success in
+                guard success else {
+                    AppLogger.audio.error("[PINGLY_AUDIO_PERSIST] FAILURE sessionID=\(sessionID.uuidString) error=file_write_failed")
+                    return
+                }
+                AppLogger.audio.info("[PINGLY_PTT_SESSION] END sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
+                
+                // Save metadata in SwiftData
+                DispatchQueue.main.async {
+                    _ = SwiftDataService.shared.saveAudioSegment(
+                        sessionID: sessionID,
+                        senderID: NodeIdentity.shared.nodeID,
+                        senderName: NodeIdentity.shared.displayName,
+                        channelID: channel,
+                        duration: duration,
+                        localFileURL: fileURL.path,
+                        directionRaw: "SENDER"
+                    )
+                }
+            }
+        }
         
         isFloorLockedBySelf = false
         activeFloorSenderID = nil
         sessionStartTime = nil
+        self.currentSenderRecorder = nil
+        self.currentSessionID = nil
         BackgroundAudioSessionManager.shared.endBackgroundTask()
     }
     
@@ -131,6 +295,10 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
     
     func audioStreamEngine(_ engine: AudioStreamEngine, didCaptureAudioChunk chunkData: Data) {
         guard isFloorLockedBySelf else { return }
+        
+        // Record captured microphone raw PCM
+        currentSenderRecorder?.append(pcmData: chunkData)
+        
         sessionSequenceNo = sessionSequenceNo &+ 1
         
         let elapsedMs: UInt32
@@ -193,6 +361,82 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             name: .didReceiveRawPTTPacket,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioPlayed(_:)),
+            name: .audioStreamEngineDidPlayAudioChunk,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAudioPlayed(_ notification: Notification) {
+        guard let data = notification.userInfo?["data"] as? Data else { return }
+        audioDecodeQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.currentReceiverRecorder?.append(pcmData: data)
+        }
+    }
+    
+    private func resetRemoteInactivityTimer() {
+        remoteInactivityWorkItem?.cancel()
+        
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            if self.currentRemoteSessionID != nil {
+                AppLogger.audio.warning("PTT Remote Session Inactivity Timeout! Finalizing session.")
+                self.finalizeRemotePTTSession(actualSessionID: nil)
+            }
+        }
+        
+        remoteInactivityWorkItem = workItem
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5.0, execute: workItem)
+    }
+    
+    private func finalizeRemotePTTSession(actualSessionID: UUID?) {
+        remoteInactivityWorkItem?.cancel()
+        remoteInactivityWorkItem = nil
+        
+        guard let recorder = self.currentReceiverRecorder else { return }
+        self.currentReceiverRecorder = nil
+        
+        let sessionID = actualSessionID ?? recorder.sessionID
+        let fileURL = recorder.fileURL
+        let startTime = self.remoteSessionStartTime ?? Date()
+        let duration = Date().timeIntervalSince(startTime)
+        let senderName = self.remoteSessionSenderName ?? "Unknown"
+        let senderID = self.remoteSessionSenderID ?? "Unknown"
+        let channel = self.selectedChannel
+        
+        recorder.finalize { success in
+            guard success else {
+                AppLogger.audio.error("[PINGLY_AUDIO_PERSIST] FAILURE sessionID=\(sessionID.uuidString) error=file_write_failed")
+                return
+            }
+            AppLogger.audio.info("[PINGLY_PTT_RECEIVE] END sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
+            
+            // Save metadata in SwiftData
+            DispatchQueue.main.async {
+                _ = SwiftDataService.shared.saveAudioSegment(
+                    sessionID: sessionID,
+                    senderID: senderID,
+                    senderName: senderName,
+                    channelID: channel,
+                    duration: duration,
+                    localFileURL: fileURL.path,
+                    directionRaw: "RECEIVER"
+                )
+            }
+        }
+        
+        self.currentRemoteSessionID = nil
+        self.remoteSessionStartTime = nil
+        self.remoteSessionSenderName = nil
+        self.remoteSessionSenderID = nil
+        
+        DispatchQueue.main.async {
+            self.activeFloorSenderID = nil
+            self.lastReceivedSequenceNo = nil
+        }
     }
     
     @objc private func handleIncomingRawPacket(_ notification: Notification) {
@@ -206,6 +450,20 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             
             switch header.type {
             case .start:
+                let sessionID = UUID(uuidData: payload) ?? UUID()
+                self.currentRemoteSessionID = sessionID
+                self.remoteSessionStartTime = Date()
+                
+                let peerID = notification.userInfo?["peerID"] as? MCPeerID
+                let senderDisplayName = peerID?.displayName ?? "Remote Speaker"
+                self.remoteSessionSenderName = senderDisplayName
+                self.remoteSessionSenderID = peerID?.displayName ?? "Remote Node"
+                
+                AppLogger.audio.info("[PINGLY_PTT_RECEIVE] START sessionID=\(sessionID.uuidString) sender=\(self.remoteSessionSenderID ?? "")")
+                
+                let fileURL = self.getAudioSegmentsDirectory().appendingPathComponent("\(sessionID.uuidString).wav")
+                self.currentReceiverRecorder = AudioRecorderContext(sessionID: sessionID, fileURL: fileURL)
+                
                 self.currentPTTStartTimestamp = Date()
                 self.currentPTTRxFrames = 0
                 self.firstPacketLogged = false
@@ -222,14 +480,28 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 // Reset Adaptive Jitter Buffer for new PTT session
                 AdaptiveJitterBufferManager.shared.resetSession()
                 AudioStreamEngine.shared.playConnectChirp()
-                AppLogger.multipeer.info("PTT_START received from sender \(header.senderHash)")
+                AppLogger.multipeer.info("PTT_START received from sender \(header.senderHash) with sessionID \(sessionID.uuidString)")
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_START", peer: "REMOTE", details: "senderHash=\(header.senderHash)")
                 RelaynTransportDiagnosticsManager.shared.incrementPhysicalTestPTTSessions()
                 RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_TEST_BEGIN", peer: "REMOTE")
                 RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_START", peer: "REMOTE", details: "senderHash=\(header.senderHash)")
                 
+                self.resetRemoteInactivityTimer()
+                
             case .chunk:
                 guard !self.isFloorLockedBySelf else { return } // Reject echo loops
+                
+                guard self.currentRemoteSessionID != nil else {
+                    // Log orphan chunk frames without active sessionID and safely discard/skip processing
+                    AppLogger.multipeer.warning("[PINGLY_PTT_RECEIVE] ORPHAN CHUNK sessionID=nil seq=\(header.sequenceNo) sender=\(header.senderHash)")
+                    return
+                }
+                
+                self.resetRemoteInactivityTimer()
+                
+                if header.sequenceNo % 50 == 0 {
+                    AppLogger.audio.info("[PINGLY_PTT_SESSION] FRAME sessionID=\(self.currentRemoteSessionID?.uuidString ?? "") seq=\(header.sequenceNo)")
+                }
                 
                 self.currentPTTRxFrames += 1
                 RelaynTransportDiagnosticsManager.shared.addPhysicalTestPTTRxFrames(count: 1)
@@ -279,16 +551,15 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_END", peer: "REMOTE", details: "durationMs=\(durationMs) totalRxFrames=\(self.currentPTTRxFrames) droppedFrames=\(self.totalDroppedFramesCount)")
                 RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_TEST_RESULT", peer: "REMOTE", details: "result=COMPLETED sessionState=CONNECTED")
                 
-                DispatchQueue.main.async {
-                    self.activeFloorSenderID = nil
-                    self.lastReceivedSequenceNo = nil
-                }
+                let endSessionID = UUID(uuidData: payload) ?? self.currentRemoteSessionID
                 
                 // Flush remaining buffered frames and stop jitter timer
                 AdaptiveJitterBufferManager.shared.flushRemainingSession()
                 AudioStreamEngine.shared.playConnectChirp()
                 AppLogger.multipeer.info("PTT_END received. Diagnostic Summary - Dropped Frames: \(self.totalDroppedFramesCount), Out-Of-Order: \(self.totalOutofOrderFramesCount)")
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_END", peer: "REMOTE", details: "dropped=\(self.totalDroppedFramesCount) outOfOrder=\(self.totalOutofOrderFramesCount)")
+                
+                self.finalizeRemotePTTSession(actualSessionID: endSessionID)
             }
         }
     }

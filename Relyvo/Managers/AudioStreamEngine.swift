@@ -11,6 +11,10 @@ import AudioToolbox
 import Combine
 import os
 
+extension Notification.Name {
+    static let audioStreamEngineDidPlayAudioChunk = Notification.Name("AudioStreamEngineDidPlayAudioChunk")
+}
+
 protocol AudioStreamEngineDelegate: AnyObject {
     func audioStreamEngine(_ engine: AudioStreamEngine, didCaptureAudioChunk chunkData: Data)
 }
@@ -153,6 +157,13 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     /// Enqueues and plays incoming real-time audio data frame from network packet.
     func playAudioChunk(_ data: Data) {
         guard !data.isEmpty else { return }
+        
+        NotificationCenter.default.post(
+            name: .audioStreamEngineDidPlayAudioChunk,
+            object: self,
+            userInfo: ["data": data]
+        )
+        
         calculateAudioLevel(from: data)
         
         let mixerFormat = audioEngine.mainMixerNode.outputFormat(forBus: 0)
