@@ -123,15 +123,19 @@ final class SpeechTranscriberManager: ObservableObject {
                 AppLogger.audio.info("SFSpeechRecognitionTask text: \"\(latestString)\" (isFinal: \(result.isFinal))")
                 
                 DispatchQueue.main.async {
-                    var parts = self.accumulatedSegments
-                    if !latestString.isEmpty {
-                        parts.append(latestString)
-                    }
-                    let fullText = parts.joined(separator: " ")
-                    self.currentTranscriptText = fullText
+                    guard !latestString.isEmpty else { return }
                     
-                    if result.isFinal && !latestString.isEmpty {
+                    if self.accumulatedSegments.isEmpty {
+                        self.currentTranscriptText = latestString
+                    } else {
+                        let prefixFiltered = self.accumulatedSegments.filter { !latestString.hasPrefix($0) }
+                        let combined = (prefixFiltered + [latestString]).joined(separator: " ")
+                        self.currentTranscriptText = combined
+                    }
+                    
+                    if result.isFinal {
                         if !self.accumulatedSegments.contains(latestString) {
+                            self.accumulatedSegments.removeAll(where: { latestString.hasPrefix($0) || $0 == latestString })
                             self.accumulatedSegments.append(latestString)
                         }
                     }
