@@ -156,6 +156,38 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         browser = nil
     }
     
+    /// Safely disconnects the existing MCSession, unregisters its delegate, re-instantiates a fresh MCSession, and reassigns self as delegate.
+    func teardownAndResetSession() {
+        let resetWork = { [weak self] in
+            guard let self = self else { return }
+            AppLogger.multipeer.warning("Tearing down and resetting MCSession...")
+            if let existingSession = self.session {
+                existingSession.disconnect()
+                existingSession.delegate = nil
+            }
+            self.session = nil
+            self.connectedPeers.removeAll()
+            self.peerIDToNodeIDMap.removeAll()
+            self.peerIDToHandleMap.removeAll()
+            
+            RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList([])
+            RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "SESSION_TEARDOWN_RESET", peer: self.myPeerID.displayName, details: "session_reset_complete")
+            
+            self.setupSession()
+            
+            if self.advertiser != nil || self.browser != nil {
+                self.stopAdvertisingAndBrowsing()
+                self.startAdvertisingAndBrowsing(userHandle: self.currentHandle, status: self.currentStatus)
+            }
+        }
+        
+        if Thread.isMainThread {
+            resetWork()
+        } else {
+            DispatchQueue.main.async(execute: resetWork)
+        }
+    }
+    
     func connectToPeer(peerID: MCPeerID) {
         guard let session = session, let browser = browser else { return }
         let contextData = NodeIdentity.shared.nodeID.data(using: .utf8)
@@ -527,7 +559,9 @@ extension MultipeerService: MCSessionDelegate {
                     details: "disconnectReason=unknown errorDomain=NSPOSIXErrorDomain errorCode=54 connectedPeersCount=\(self.connectedPeers.count - 1)"
                 )
                 MeshNotificationManager.shared.notifyPeerDisconnected(peerID: resolvedNodeID, displayName: cleanName)
-                self.connectedPeers.removeAll(where: { $0.id == resolvedNodeID })
+                self.connectedPeers.removeAll(where: { $0.id == resolvedNodeID || $0.mcPeerID == peerID })
+                self.peerIDToNodeIDMap.removeValue(forKey: peerID)
+                self.peerIDToHandleMap.removeValue(forKey: peerID)
                 let peerList = self.connectedPeers.map { $0.displayName }
                 RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList(peerList)
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED_PEERS_COUNT", peer: resolvedNodeID, details: "count=\(self.connectedPeers.count)")
@@ -1265,7 +1299,13 @@ extension MultipeerService: MCNearbyServiceBrowserDelegate {
         RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PEER_LOST", peer: peerID.displayName, details: "lost_by_browser")
         RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "PEER_LOST", peer: peerID.displayName)
         DispatchQueue.main.async {
-            self.connectedPeers.removeAll(where: { $0.id == peerID.displayName })
+            let resolvedNodeID = self.peerIDToNodeIDMap[peerID] ?? peerID.displayName
+            self.connectedPeers.removeAll(where: { $0.id == resolvedNodeID || $0.mcPeerID == peerID })
+            self.peerIDToNodeIDMap.removeValue(forKey: peerID)
+            self.peerIDToHandleMap.removeValue(forKey: peerID)
+            let peerList = self.connectedPeers.map { $0.displayName }
+            RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList(peerList)
+            RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED_PEERS_COUNT", peer: resolvedNodeID, details: "count=\(self.connectedPeers.count)")
         }
     }
 }
