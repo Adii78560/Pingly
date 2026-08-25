@@ -987,9 +987,12 @@ extension MultipeerService: MCSessionDelegate {
                 
                 let channelMatches = isChannelMessage ? (message.channelID?.uppercased() == self.activeChannelID.uppercased()) : true
                 
+                // Channel-targeted broadcasts are gated strictly by channelMatches so PTT
+                // from CH-3 does NOT bleed into a device subscribed to CH-1.
+                // Plain broadcasts with no channelID are delivered unconditionally.
                 let shouldDeliverLocally = (message.destinationID == localNodeID) ||
-                                           (message.destinationID == "BROADCAST") ||
-                                           (isChannelMessage && channelMatches)
+                                           (isChannelMessage && channelMatches) ||
+                                           (!isChannelMessage && message.destinationID == "BROADCAST")
                 
                 let shouldForward = (!isForMe) || isChannelMessage
                 
@@ -1068,7 +1071,10 @@ extension MultipeerService: MCSessionDelegate {
                             AppLogger.location.info("Processed P2P Location Protocol packet from \(message.senderName)")
                         } else if message.type == .transcript || message.text.hasPrefix("PTT_TRANSCRIPT:") {
                             let cleanText = message.text.hasPrefix("PTT_TRANSCRIPT:") ? String(message.text.dropFirst("PTT_TRANSCRIPT:".count)) : message.text
-                            let channel = isChannelMessage ? message.channelID! : "CH-1 EMERGENCY"
+                            // Use the sender's channelID when present; fall back to this
+                            // device's active channel rather than the hardcoded default so
+                            // multi-channel transcript history stays accurate.
+                            let channel = isChannelMessage ? message.channelID! : self.activeChannelID
                             _ = SwiftDataService.shared.saveVoiceTranscript(
                                 id: message.id,
                                 speakerName: message.senderName,

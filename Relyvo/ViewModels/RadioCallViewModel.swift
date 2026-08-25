@@ -12,13 +12,22 @@ import os
 /// View model driving the Push-To-Talk (PTT) Off-Grid Radio Call screen
 final class RadioCallViewModel: ObservableObject {
     
+    /// The UserDefaults key for persisting the active channel across app restarts.
+    private static let activeChannelKey = "com.RaiEnterprise.Relyvo.activeChannel"
+    /// The UserDefaults key for user-created custom channels.
+    static let customChannelsKey = "com.RaiEnterprise.Relyvo.customChannels"
+
     @Published var session: RadioSession = RadioSession()
     @Published var isPTTPressed: Bool = false
-    @Published var selectedChannel: String = "CH-1 EMERGENCY" {
+    @Published var selectedChannel: String = UserDefaults.standard.string(forKey: "com.RaiEnterprise.Relyvo.activeChannel") ?? "CH-1 EMERGENCY" {
         didSet {
+            // Persist active channel so app restores the correct channel after a relaunch.
+            let newChannel = self.selectedChannel
+            UserDefaults.standard.set(newChannel, forKey: RadioCallViewModel.activeChannelKey)
             loadSwiftDataTranscripts()
-            networkManager.selectedChannel = selectedChannel
-            multipeerService.activeChannelID = selectedChannel
+            networkManager.selectedChannel = newChannel
+            multipeerService.activeChannelID = newChannel
+            AppLogger.multipeer.info("[ChannelSwitch] Active channel changed to: \(newChannel)")
         }
     }
     
@@ -56,10 +65,17 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     @Published var availableChannels: [String] = {
-        let saved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
         let defaultChannels = ["CH-1 EMERGENCY", "CH-2 RESCUE MESH", "CH-3 MOUNTAIN OPS", "CH-4 GENERAL P2P"]
-        let set = Set(defaultChannels + saved)
-        return Array(set).sorted()
+        // Migrate from legacy key if needed
+        let legacySaved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
+        let saved = UserDefaults.standard.stringArray(forKey: "com.RaiEnterprise.Relyvo.customChannels") ?? legacySaved
+        // Preserve insertion order: defaults first, then unique custom additions.
+        // Avoid Set which randomises order and breaks the CH-1 EMERGENCY priority position.
+        var result = defaultChannels
+        for ch in saved where !result.contains(ch) {
+            result.append(ch)
+        }
+        return result
     }()
     
     var filteredTranscripts: [VoiceTranscript] {
@@ -101,12 +117,13 @@ final class RadioCallViewModel: ObservableObject {
     func createChannel(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !trimmed.isEmpty else { return }
-        let channelName = trimmed.hasPrefix("CH-") ? trimmed : "CH- " + trimmed
+        // Bug fix: was "CH- " + trimmed (with trailing space), producing "CH- MYNAME".
+        let channelName = trimmed.hasPrefix("CH-") ? trimmed : "CH-" + trimmed
         if !availableChannels.contains(channelName) {
             availableChannels.append(channelName)
-            var saved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
+            var saved = UserDefaults.standard.stringArray(forKey: RadioCallViewModel.customChannelsKey) ?? []
             saved.append(channelName)
-            UserDefaults.standard.set(saved, forKey: "Relayn.CustomChannels")
+            UserDefaults.standard.set(saved, forKey: RadioCallViewModel.customChannelsKey)
         }
         selectedChannel = channelName
         multipeerService.broadcastChannelSync(channelName: channelName)
@@ -130,9 +147,10 @@ final class RadioCallViewModel: ObservableObject {
                 
                 if !self.availableChannels.contains(channelName) {
                     self.availableChannels.append(channelName)
-                    var saved = UserDefaults.standard.stringArray(forKey: "Relayn.CustomChannels") ?? []
+                    // Persist peer-synced channel under the canonical key.
+                    var saved = UserDefaults.standard.stringArray(forKey: RadioCallViewModel.customChannelsKey) ?? []
                     saved.append(channelName)
-                    UserDefaults.standard.set(saved, forKey: "Relayn.CustomChannels")
+                    UserDefaults.standard.set(saved, forKey: RadioCallViewModel.customChannelsKey)
                 }
                 self.latestTextSnippet = "\(creator) shared channel: \(channelName)"
                 HapticManager.successFeedback()
