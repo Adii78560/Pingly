@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AVFoundation
 import MultipeerConnectivity
 import Combine
 import os
@@ -32,17 +33,15 @@ func createWavHeader(dataLength: Int, sampleRate: Int32, channels: Int16, bitsPe
     header.append(Data(bytes: &fileSizeLE, count: 4))
     header.append("WAVE".data(using: .utf8)!)
     header.append("fmt ".data(using: .utf8)!)
-    var fmtSize: Int32 = 16
+    let fmtSize: Int32 = 16
     var fmtSizeLE = fmtSize.littleEndian
     header.append(Data(bytes: &fmtSizeLE, count: 4))
-    var audioFormat: Int16 = 1
+    let audioFormat: Int16 = 1
     var audioFormatLE = audioFormat.littleEndian
     header.append(Data(bytes: &audioFormatLE, count: 2))
-    var numChannels = channels
-    var numChannelsLE = numChannels.littleEndian
+    var numChannelsLE = channels.littleEndian
     header.append(Data(bytes: &numChannelsLE, count: 2))
-    var sRate = sampleRate
-    var sRateLE = sRate.littleEndian
+    var sRateLE = sampleRate.littleEndian
     header.append(Data(bytes: &sRateLE, count: 4))
     let byteRate = sampleRate * Int32(channels) * Int32(bitsPerSample / 8)
     var byteRateLE = byteRate.littleEndian
@@ -50,12 +49,10 @@ func createWavHeader(dataLength: Int, sampleRate: Int32, channels: Int16, bitsPe
     let blockAlign = channels * (bitsPerSample / 8)
     var blockAlignLE = blockAlign.littleEndian
     header.append(Data(bytes: &blockAlignLE, count: 2))
-    var bPerSample = bitsPerSample
-    var bPerSampleLE = bPerSample.littleEndian
+    var bPerSampleLE = bitsPerSample.littleEndian
     header.append(Data(bytes: &bPerSampleLE, count: 2))
     header.append("data".data(using: .utf8)!)
-    var dLength = Int32(dataLength)
-    var dLengthLE = dLength.littleEndian
+    var dLengthLE = Int32(dataLength).littleEndian
     header.append(Data(bytes: &dLengthLE, count: 4))
     return header
 }
@@ -289,6 +286,48 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
         self.currentSenderRecorder = nil
         self.currentSessionID = nil
         BackgroundAudioSessionManager.shared.endBackgroundTask()
+    }
+    
+    /// Hard-stops all in-flight audio on both transmit and receive sides immediately.
+    ///
+    /// Called when the user switches channels so that audio from the previous channel
+    /// does not bleed into the newly selected one. Unlike `releaseFloor()`, this method
+    /// does not require the device to own the floor lock — it terminates any active
+    /// remote session as well and immediately silences the player node.
+    func stopActiveAudioStream() {
+        AppLogger.audio.info("[ChannelSwitch] Stopping all active audio streams before channel switch")
+        
+        // Stop transmit side if we are currently holding the floor
+        if isFloorLockedBySelf {
+            AudioStreamEngine.shared.stopCapture()
+            let sessionID = self.currentSessionID ?? UUID()
+            sendPTTPacket(type: .end, payload: sessionID.uuidData)
+            isFloorLockedBySelf = false
+            sessionStartTime = nil
+            currentSenderRecorder = nil
+            currentSessionID = nil
+            BackgroundAudioSessionManager.shared.endBackgroundTask()
+            AppLogger.audio.info("[ChannelSwitch] TX floor released during channel switch")
+        }
+        
+        // Stop receive side: cancel inactivity timer, finalize remote recorder, silence player
+        remoteInactivityWorkItem?.cancel()
+        remoteInactivityWorkItem = nil
+        
+        if currentRemoteSessionID != nil {
+            finalizeRemotePTTSession(actualSessionID: nil)
+            AppLogger.audio.info("[ChannelSwitch] RX remote session finalized during channel switch")
+        }
+        
+        // Immediately stop playback queue and reset floor publisher state
+        AudioStreamEngine.shared.playerNode.stop()
+        
+        DispatchQueue.main.async {
+            self.activeFloorSenderID = nil
+            self.lastReceivedSequenceNo = nil
+        }
+        
+        AppLogger.audio.info("[ChannelSwitch] Audio stream fully stopped; player node flushed")
     }
     
     // MARK: - Audio Stream Delegate

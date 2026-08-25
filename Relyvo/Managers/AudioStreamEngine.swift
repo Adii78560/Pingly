@@ -29,7 +29,7 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     
     // Core Engine Nodes
     private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    let playerNode = AVAudioPlayerNode()  // internal: accessed by WalkieTalkieNetworkManager for channel-switch cutoff
     private let bandpassEQ = AVAudioUnitEQ(numberOfBands: 2)
     
     private(set) var isRecording = false

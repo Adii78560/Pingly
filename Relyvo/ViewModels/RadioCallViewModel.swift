@@ -21,9 +21,12 @@ final class RadioCallViewModel: ObservableObject {
     @Published var isPTTPressed: Bool = false
     @Published var selectedChannel: String = UserDefaults.standard.string(forKey: "com.RaiEnterprise.Relyvo.activeChannel") ?? "CH-1 EMERGENCY" {
         didSet {
-            // Persist active channel so app restores the correct channel after a relaunch.
             let newChannel = self.selectedChannel
+            // Persist active channel so app restores the correct channel after a relaunch.
             UserDefaults.standard.set(newChannel, forKey: RadioCallViewModel.activeChannelKey)
+            // Immediately halt any in-flight audio from the previous channel so it
+            // cannot bleed into the newly selected channel's session.
+            networkManager.stopActiveAudioStream()
             loadSwiftDataTranscripts()
             networkManager.selectedChannel = newChannel
             multipeerService.activeChannelID = newChannel
@@ -134,6 +137,38 @@ final class RadioCallViewModel: ObservableObject {
     func shareActiveChannel() {
         multipeerService.broadcastChannelSync(channelName: selectedChannel)
         HapticManager.successFeedback()
+    }
+    
+    /// Deletes a custom channel from the available list and UserDefaults.
+    ///
+    /// Safety rules:
+    /// - Default channels ("CH-1 EMERGENCY" through "CH-4 GENERAL P2P") cannot be deleted.
+    /// - If the channel being deleted is currently selected, `selectedChannel` falls back to
+    ///   "CH-1 EMERGENCY" before the deletion completes, preventing orphaned state.
+    func deleteChannel(named channelName: String) {
+        let defaultChannels = ["CH-1 EMERGENCY", "CH-2 RESCUE MESH", "CH-3 MOUNTAIN OPS", "CH-4 GENERAL P2P"]
+        guard !defaultChannels.contains(channelName) else {
+            AppLogger.multipeer.warning("[ChannelDelete] Attempted to delete protected default channel: \(channelName). Ignored.")
+            return
+        }
+        
+        // If we are currently on the channel being deleted, switch first to avoid orphaned state.
+        // This triggers selectedChannel.didSet which also stops in-flight audio.
+        if selectedChannel == channelName {
+            AppLogger.multipeer.info("[ChannelDelete] Active channel '\(channelName)' deleted — falling back to CH-1 EMERGENCY")
+            selectedChannel = "CH-1 EMERGENCY"
+        }
+        
+        // Remove from in-memory list
+        availableChannels.removeAll { $0 == channelName }
+        
+        // Remove from UserDefaults (canonical key only — legacy key is read-only on migration)
+        var saved = UserDefaults.standard.stringArray(forKey: RadioCallViewModel.customChannelsKey) ?? []
+        saved.removeAll { $0 == channelName }
+        UserDefaults.standard.set(saved, forKey: RadioCallViewModel.customChannelsKey)
+        
+        HapticManager.warningFeedback()
+        AppLogger.multipeer.info("[ChannelDelete] Removed channel '\(channelName)' from available channels list")
     }
     
     private func setupSubscriptions() {

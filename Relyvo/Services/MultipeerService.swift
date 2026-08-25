@@ -994,6 +994,13 @@ extension MultipeerService: MCSessionDelegate {
                                            (isChannelMessage && channelMatches) ||
                                            (!isChannelMessage && message.destinationID == "BROADCAST")
                 
+                // Relay independence: a node that is NOT subscribed to the incoming channel
+                // (channelMatches == false) MUST still forward the packet onward so that the
+                // mesh topology can route it to nodes that ARE on that channel.
+                // This is the core multi-channel hop property:
+                //   CH-1 node  --relay-->  CH-3 packet  --delivers-->  CH-3 node
+                // Rule: forward if (a) not addressed to this device, OR (b) it's a channel
+                // broadcast (always forward so all subscribers beyond this hop receive it).
                 let shouldForward = (!isForMe) || isChannelMessage
                 
                 AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) ROUTE_RECEIVED hops=\(message.hopsCount) ttl=\(message.ttl)")
@@ -1027,6 +1034,7 @@ extension MultipeerService: MCSessionDelegate {
                 isDestination=\(isForMe)
                 isForCurrentDevice=\(isForMe)
                 isForCurrentChannel=\(isChannelMessage && channelMatches)
+                willRelayRegardlessOfChannel=\(isChannelMessage && !channelMatches)
                 """)
                 
                 let shortMsgID = String(message.id.uuidString.prefix(6)).uppercased()
