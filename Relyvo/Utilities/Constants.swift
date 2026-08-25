@@ -35,6 +35,13 @@ enum Constants {
         static let currentProtocolVersion: Int = 2
         static let maxPayloadBytes: Int = 64 * 1024 // 64 KB limit for text/transcript envelopes
         static let queueExpirationDays: Int = 7     // 7 days persistent store-and-forward retention
+        /// Maximum number of relay hops a packet may traverse before being dropped.
+        /// A packet with hopsCount == maxMeshHops is NOT forwarded (strict less-than check).
+        static let maxMeshHops: Int = 5
+        /// Maximum number of message IDs held in the in-memory seen cache.
+        static let seenCacheMaxSize: Int = 1000
+        /// Seconds after which a seen-cache entry is evicted (prevents memory growth).
+        static let seenCacheTTLSeconds: TimeInterval = 120
     }
 
     

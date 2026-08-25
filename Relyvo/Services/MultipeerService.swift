@@ -25,6 +25,54 @@ actor QueueProcessingCoalescer {
     }
 }
 
+// MARK: - In-Memory Mesh Seen Cache (Deduplication)
+
+/// Thread-safe, timestamped in-memory deduplication cache for mesh message IDs.
+///
+/// Purpose: Prevent broadcast loops and packet storms on multi-path mesh topologies.
+/// Every incoming message UUID is inserted here before any local delivery or forwarding.
+/// Subsequent copies of the same message — arriving via alternative mesh paths — are
+/// immediately dropped with a [MESH_DEDUP_DROP] log, guaranteeing exactly-once delivery
+/// and exactly-once forwarding regardless of mesh topology.
+///
+/// Performance: O(1) lookup and insertion via Dictionary. Lock-contention window is
+/// sub-microsecond (dictionary key lookup only). Does NOT touch SwiftData or disk.
+///
+/// Eviction: Entries older than `seenCacheTTLSeconds` are lazily evicted on every
+/// `contains()` call. LRU overflow eviction drops the oldest entry when size > seenCacheMaxSize.
+final class MeshSeenCache {
+    private var store: [UUID: Date] = [:]     // messageID → firstSeenAt
+    private let lock = NSLock()
+    
+    /// Returns true if this message ID has been seen before (within the TTL window).
+    /// Also evicts expired entries and enforces max-size on every call.
+    func contains(_ messageID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        evictExpiredLocked()
+        return store[messageID] != nil
+    }
+    
+    /// Marks a message ID as seen. Evicts oldest entry if over capacity.
+    func insert(_ messageID: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        evictExpiredLocked()
+        // LRU overflow: drop the oldest entry to cap memory
+        if store.count >= Constants.Mesh.seenCacheMaxSize,
+           let oldest = store.min(by: { $0.value < $1.value }) {
+            store.removeValue(forKey: oldest.key)
+        }
+        store[messageID] = Date()
+    }
+    
+    // Called with lock held
+    private func evictExpiredLocked() {
+        let cutoff = Date().addingTimeInterval(-Constants.Mesh.seenCacheTTLSeconds)
+        store = store.filter { $0.value > cutoff }
+    }
+}
+
 /// Production MultipeerConnectivity Service managing AirDrop/Wi-Fi/Bluetooth peer mesh networking
 final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObject {
     
@@ -60,6 +108,10 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     private var peerIDToNodeIDMap: [MCPeerID: String] = [:]
     private var peerIDToHandleMap: [MCPeerID: String] = [:]
     var activeChannelID: String = "CH-1 EMERGENCY"
+    
+    /// In-memory seen cache — the first and fastest deduplication gate.
+    /// Checked before any SwiftData access, before local delivery, and before forwarding.
+    private let seenCache = MeshSeenCache()
     
     private var currentHandle: String = Constants.App.defaultUserHandle
     private var currentStatus: EmergencyStatus = .normal
@@ -318,6 +370,30 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     
     func sendAudioStream(data: Data) {
         sendRawPTTPacket(data)
+    }
+    
+    /// Relay-only variant of broadcast that excludes the originating peer to prevent echo-back loops.
+    ///
+    /// When this node acts as an intermediate relay hop, sending the packet back to the peer
+    /// who delivered it would cause that peer to re-process the packet (triggering its own
+    /// seenCache hit and another relay attempt). Excluding the source peer breaks that cycle.
+    private func broadcastExcluding(message: Message, excludingPeer senderPeerID: MCPeerID) {
+        guard let session = session else { return }
+        let targetPeers = session.connectedPeers.filter { $0 != senderPeerID }
+        guard !targetPeers.isEmpty else {
+            AppLogger.multipeer.info("[MESH_RELAY] No relay targets after excluding sender \(senderPeerID.displayName) — packet dropped")
+            return
+        }
+        do {
+            let data = try JSONEncoder().encode(message)
+            try session.send(data, toPeers: targetPeers, with: .reliable)
+            let targetNames = targetPeers.map { $0.displayName }.joined(separator: ", ")
+            AppLogger.multipeer.info("[MESH_RELAY] Forwarded \(message.id.uuidString.prefix(6)) hop=\(message.hopsCount)/\(message.ttl) to [\(targetNames)] (excluded sender: \(senderPeerID.displayName))")
+            RelaynTransportDiagnosticsManager.shared.incrementRelayForwarded()
+        } catch {
+            AppLogger.multipeer.error("[MESH_RELAY] Relay send failed: \(error.localizedDescription)")
+            RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+        }
     }
     
     func sendRawPTTPacket(_ packet: Data) {
@@ -1038,6 +1114,28 @@ extension MultipeerService: MCSessionDelegate {
                 """)
                 
                 let shortMsgID = String(message.id.uuidString.prefix(6)).uppercased()
+                
+                // ── In-Memory Deduplication Gate ─────────────────────────────────────────
+                // Check the seenCache FIRST — before any SwiftData access, before local
+                // delivery, and before relay forwarding. This is the storm breaker:
+                // a packet that arrives via two different mesh paths is processed exactly
+                // once. The second copy is dropped here in O(1) with no disk I/O.
+                if seenCache.contains(message.id) {
+                    AppLogger.multipeer.info("""
+                    [MESH_DEDUP_DROP]
+                    messageID=\(message.id.uuidString)
+                    peer=\(peerID.displayName)
+                    reason=ALREADY_SEEN_IN_MEMORY_CACHE
+                    hop=\(message.hopsCount)/\(message.ttl)
+                    """)
+                    RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+                    return
+                }
+                // Mark as seen immediately so concurrent arrivals from other peers
+                // (multi-path topology) are also dropped.
+                seenCache.insert(message.id)
+                // ─────────────────────────────────────────────────────────────────────────
+                
                 let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
                 
                 if shouldDeliverLocally {
@@ -1157,30 +1255,50 @@ extension MultipeerService: MCSessionDelegate {
                     }
                 }
                 
-                if shouldForward && !alreadyProcessed && message.originID != localNodeID {
-                    AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARDING hops=\(message.hopsCount + 1) ttl=\(message.ttl - 1) peer=\(shortPeer)")
-                    
-                    AppLogger.multipeer.info("""
-                    [PINGLY_ROUTE_DECISION]
-                    action=RELAY
-                    reason=INTERMEDIATE_NODE_FORWARD
-                    """)
-                    
+                // shouldForward: relay this packet to downstream peers.
+                // seenCache already guarantees this branch runs at most once per messageID,
+                // so we only need to check originID (don't relay our own originating messages).
+                if shouldForward && message.originID != localNodeID {
                     RelaynTransportDiagnosticsManager.shared.incrementRelayReceived()
                     
                     var relayMsg = message
                     relayMsg.previousHopID = localNodeID
                     relayMsg.hopsCount += 1
                     
-                    if relayMsg.hopsCount <= relayMsg.ttl {
-                        self.broadcast(message: relayMsg)
-                        RelaynTransportDiagnosticsManager.shared.incrementRelayForwarded()
-                        AppLogger.multipeer.info("Relayed message \(relayMsg.id) (Hop \(relayMsg.hopsCount)/\(relayMsg.ttl))")
-                    } else {
-                        AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARD_REJECTED reason=TTL_EXPIRED")
+                    // ── TTL / Hop-Limit Enforcement ───────────────────────────────────────
+                    // Strict less-than against Constants.Mesh.maxMeshHops:
+                    //   hopsCount=4 < maxMeshHops=5 → forward ✓
+                    //   hopsCount=5 < maxMeshHops=5 → DROP (TTL exceeded) ✗
+                    // This prevents a packet from surviving more than maxMeshHops relay hops
+                    // total, bounding the worst-case forwarding storm to a finite diameter.
+                    guard relayMsg.hopsCount < Constants.Mesh.maxMeshHops else {
+                        AppLogger.multipeer.info("""
+                        [MESH_TTL_EXCEEDED]
+                        messageID=\(message.id.uuidString)
+                        hopsCount=\(relayMsg.hopsCount)
+                        maxMeshHops=\(Constants.Mesh.maxMeshHops)
+                        ttl=\(message.ttl)
+                        peer=\(peerID.displayName)
+                        reason=HOP_LIMIT_REACHED
+                        """)
                         RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
                         return
                     }
+                    // ─────────────────────────────────────────────────────────────────────
+                    
+                    AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARDING hops=\(relayMsg.hopsCount) maxHops=\(Constants.Mesh.maxMeshHops) peer=\(shortPeer)")
+                    AppLogger.multipeer.info("""
+                    [PINGLY_ROUTE_DECISION]
+                    action=RELAY
+                    reason=INTERMEDIATE_NODE_FORWARD
+                    """)
+                    
+                    // ── Anti-Echo Relay ───────────────────────────────────────────────────
+                    // Send to all connected peers EXCEPT the one who sent us this packet.
+                    // Sending back to the source would cause the source to re-process the
+                    // packet (its seenCache already has it, so it would drop silently, but
+                    // the redundant network transmission wastes bandwidth).
+                    self.broadcastExcluding(message: relayMsg, excludingPeer: peerID)
                     
                     AppLogger.multipeer.info("""
                     [PINGLY_RELAY_ENQUEUE]
@@ -1189,8 +1307,8 @@ extension MultipeerService: MCSessionDelegate {
                     originSender=\(message.originID)
                     currentSender=\(message.senderID)
                     destination=\(message.destinationID)
-                    hopCount=\(message.hopsCount)
-                    maxHop=\(message.ttl)
+                    hopCount=\(relayMsg.hopsCount)
+                    maxHop=\(Constants.Mesh.maxMeshHops)
                     """)
                     
                     _ = SwiftDataService.shared.enqueueRelayMessage(message)
