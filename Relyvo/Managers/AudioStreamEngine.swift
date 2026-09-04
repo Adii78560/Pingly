@@ -40,7 +40,7 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         setupEngineNodes()
     }
     
-    // MARK: - Setup Engine Architecture
+    // MARK: - Setup & Recovery Engine Architecture
     
     private func setupEngineNodes() {
         // Enable Voice Processing (Voice Isolation, Acoustic Echo Cancellation, Noise Suppression)
@@ -57,6 +57,35 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         // Connect player directly to main mixer using hardware output format
         let mixerFormat = audioEngine.mainMixerNode.outputFormat(forBus: 0)
         audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: mixerFormat)
+    }
+    
+    /// Prepares player and engine nodes following an interruption recovery.
+    func preparePlaybackEngine() {
+        if !audioEngine.isRunning {
+            try? audioEngine.start()
+        }
+        if !playerNode.isPlaying {
+            playerNode.play()
+        }
+        AppLogger.audio.info("[AUDIO_ENGINE_READY] Playback engine primed after interruption")
+    }
+    
+    /// Completely tears down and reconstructs the AVAudioEngine upon media server reset.
+    func reconstructAudioEngine() {
+        stopCapture()
+        playerNode.stop()
+        audioEngine.stop()
+        audioEngine.reset()
+        
+        setupEngineNodes()
+        
+        do {
+            try audioEngine.start()
+            playerNode.play()
+            AppLogger.audio.info("[AUDIO_MEDIA_SERVER_RESET] AVAudioEngine successfully reconstructed and restarted")
+        } catch {
+            AppLogger.audio.error("[AUDIO_MEDIA_SERVER_RESET_ERR] Failed to restart reconstructed engine: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Public Recording Engine
@@ -83,9 +112,6 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         inputNode.removeTap(onBus: 0)
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] (buffer, time) in
             guard let self = self, self.isRecording else { return }
-            
-            // Forward buffer to live speech transcriber
-            SpeechTranscriberManager.shared.processAudioBuffer(buffer)
             
             // Direct float buffer RMS level calculation
             if let floatChannelData = buffer.floatChannelData?[0] {
@@ -154,9 +180,29 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     
     // MARK: - Streaming Playback Engine
     
-    /// Enqueues and plays incoming real-time audio data frame from network packet.
-    func playAudioChunk(_ data: Data) {
+    private var highestPlayedSequenceNo: UInt16? = nil
+    
+    /// Resets the monotonic sequence tracker when starting a new stream session.
+    func resetSequenceTracker() {
+        highestPlayedSequenceNo = nil
+    }
+    
+    /// Enqueues and plays incoming real-time audio data frame from network packet,
+    /// rejecting out-of-order or duplicate jitter packets.
+    func playAudioChunk(_ data: Data, sequenceNumber: UInt16? = nil) {
         guard !data.isEmpty else { return }
+        
+        // Sequence & Jitter Protection (accounting for UInt16 wraparound)
+        if let incomingSeq = sequenceNumber {
+            if let highestSeq = highestPlayedSequenceNo {
+                let diff = Int16(bitPattern: incomingSeq &- highestSeq)
+                if diff <= 0 {
+                    AppLogger.audio.warning("[AUDIO_JITTER_DROP] seq=\(incomingSeq) expected>=\(highestSeq)")
+                    return
+                }
+            }
+            highestPlayedSequenceNo = incomingSeq
+        }
         
         NotificationCenter.default.post(
             name: .audioStreamEngineDidPlayAudioChunk,

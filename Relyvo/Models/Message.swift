@@ -133,4 +133,54 @@ struct Message: Identifiable, Codable, Hashable {
     }
 }
 
+/// Model representing a high-priority emergency SOS alert received over the mesh.
+struct SOSAlertPayload: Identifiable, Equatable {
+    let id: UUID
+    let senderID: String
+    let senderAlias: String
+    let timestamp: Date
+    let latitude: Double?
+    let longitude: Double?
+    let altitude: Double?
+    let accuracy: Double?
+    let channelID: String
+    let text: String
+    
+    var formattedCoordinates: String {
+        guard let lat = latitude, let lon = longitude else { return "Coordinates Unavailable" }
+        return String(format: "%.4f° N, %.4f° E", lat, lon)
+    }
+    
+    func distanceAndBearing(from currentLocation: CLLocation?) -> (distanceString: String, bearingString: String)? {
+        guard let lat = latitude, let lon = longitude, let current = currentLocation else { return nil }
+        let target = CLLocation(latitude: lat, longitude: lon)
+        let distanceMeters = current.distance(from: target)
+        
+        let distStr: String
+        if distanceMeters < 1000 {
+            distStr = String(format: "%.0fm away", distanceMeters)
+        } else {
+            distStr = String(format: "%.1fkm away", distanceMeters / 1000.0)
+        }
+        
+        // Bearing Calculation
+        let lat1 = current.coordinate.latitude * .pi / 180.0
+        let lon1 = current.coordinate.longitude * .pi / 180.0
+        let lat2 = lat * .pi / 180.0
+        let lon2 = lon * .pi / 180.0
+        let dLon = lon2 - lon1
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        var radiansBearing = atan2(y, x)
+        if radiansBearing < 0.0 { radiansBearing += 2 * .pi }
+        let degrees = radiansBearing * 180.0 / .pi
+        
+        let compass = ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"]
+        let index = Int(round(degrees.truncatingRemainder(dividingBy: 360) / 45))
+        let bearingStr = "\(Int(degrees))° \(compass[index])"
+        
+        return (distStr, bearingStr)
+    }
+}
+
 

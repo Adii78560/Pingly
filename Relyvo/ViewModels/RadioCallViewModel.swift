@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import CoreLocation
 import os
 
 /// View model driving the Push-To-Talk (PTT) Off-Grid Radio Call screen
@@ -19,6 +20,7 @@ final class RadioCallViewModel: ObservableObject {
 
     @Published var session: RadioSession = RadioSession()
     @Published var isPTTPressed: Bool = false
+    @Published var activeChannelMembers: [ChannelPeer] = []
     @Published var selectedChannel: String = UserDefaults.standard.string(forKey: "com.RaiEnterprise.Relyvo.activeChannel") ?? "CH-1 EMERGENCY" {
         didSet {
             let newChannel = self.selectedChannel
@@ -27,9 +29,12 @@ final class RadioCallViewModel: ObservableObject {
             // Immediately halt any in-flight audio from the previous channel so it
             // cannot bleed into the newly selected channel's session.
             networkManager.stopActiveAudioStream()
+            loadVoiceMessages()
             loadSwiftDataTranscripts()
             networkManager.selectedChannel = newChannel
             multipeerService.activeChannelID = newChannel
+            ChannelPresenceManager.shared.setActiveChannel(newChannel)
+            AppLogger.multipeer.info("[DIAG_CHANNEL_SWITCH] localNode=\(NodeIdentity.shared.nodeID) oldChannel=\(oldValue) newChannel=\(newChannel)")
             AppLogger.multipeer.info("[ChannelSwitch] Active channel changed to: \(newChannel)")
         }
     }
@@ -38,8 +43,12 @@ final class RadioCallViewModel: ObservableObject {
     @Published var connectedPeerRSSI: Int = 0
     @Published var isConnected: Bool = false
     @Published var isAddedToMessages: Bool = false
-    @Published var latestTextSnippet: String = "Standing by for live voice transcripts..."
+    @Published var latestTextSnippet: String = "Standing by for live voice transmissions..."
     @Published var transcriptHistory: [VoiceTranscript] = []
+    @Published var voiceMessages: [VoiceMessage] = []
+    @Published var liveActiveSpeaker: String? = nil
+    @Published var activeSOSAlert: SOSAlertPayload? = nil
+    @Published var currentLocation: CLLocation? = nil
 
     
     var channelPeers: [PeerDevice] {
@@ -88,7 +97,6 @@ final class RadioCallViewModel: ObservableObject {
     private let multipeerService: MultipeerService
     private let audioService: RadioAudioService
     private let networkManager = WalkieTalkieNetworkManager.shared
-    private let speechTranscriber = SpeechTranscriberManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     var activeStatusText: String {
@@ -103,8 +111,14 @@ final class RadioCallViewModel: ObservableObject {
         self.audioService = audioService
         self.networkManager.selectedChannel = selectedChannel
         self.multipeerService.activeChannelID = selectedChannel
+        ChannelPresenceManager.shared.setActiveChannel(selectedChannel)
         setupSubscriptions()
+        loadVoiceMessages()
         loadSwiftDataTranscripts()
+    }
+    
+    func loadVoiceMessages() {
+        self.voiceMessages = SwiftDataService.shared.fetchVoiceMessages(for: selectedChannel)
     }
     
     func loadSwiftDataTranscripts() {
@@ -132,6 +146,22 @@ final class RadioCallViewModel: ObservableObject {
         multipeerService.broadcastChannelSync(channelName: channelName)
         HapticManager.successFeedback()
         AppLogger.multipeer.info("Created and broadcasted custom Walkie-Talkie channel: \(channelName)")
+    }
+    
+    func tuneToEmergencyChannel() {
+        self.selectedChannel = "CH-1 EMERGENCY"
+        self.activeSOSAlert = nil
+        HapticManager.successFeedback()
+        AppLogger.multipeer.warning("[CHANNEL_SWITCH] Tuned directly to CH-1 EMERGENCY via SOS quick-action")
+    }
+    
+    func dismissSOSAlert() {
+        self.activeSOSAlert = nil
+    }
+    
+    func triggerEmergencySOSBeacon(notes: String? = nil) {
+        multipeerService.broadcastEmergencySOS(location: currentLocation, notes: notes)
+        HapticManager.errorFeedback()
     }
     
     func shareActiveChannel() {
@@ -193,6 +223,50 @@ final class RadioCallViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
+        // Listen for incoming Emergency SOS beacons
+        NotificationCenter.default.publisher(for: .didReceiveEmergencySOS)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notif in
+                guard let self = self, let msg = notif.userInfo?["message"] as? Message else { return }
+                let alert = SOSAlertPayload(
+                    id: msg.id,
+                    senderID: msg.senderID,
+                    senderAlias: msg.senderName,
+                    timestamp: msg.timestamp,
+                    latitude: msg.latitude,
+                    longitude: msg.longitude,
+                    altitude: msg.altitude,
+                    accuracy: msg.accuracy,
+                    channelID: msg.channelID ?? "CH-1 EMERGENCY",
+                    text: msg.text
+                )
+                self.activeSOSAlert = alert
+                let distBearing = alert.distanceAndBearing(from: self.currentLocation)
+                let distStr = distBearing?.distanceString ?? "unknown"
+                let bearingStr = distBearing?.bearingString ?? "unknown"
+                AppLogger.multipeer.info("""
+                [DIAG_LOC_RX]
+                originNode=\(msg.senderID)
+                senderAlias=\(msg.senderName)
+                parsedCoords=(\(msg.latitude ?? 0), \(msg.longitude ?? 0))
+                distanceMeters=\(distStr)
+                bearing=\(bearingStr)
+                timestamp=\(msg.timestamp)
+                """)
+                HapticManager.errorFeedback()
+                AppLogger.multipeer.warning("[SOS_VIEWMODEL_INGEST] Active SOS beacon registered from \(msg.senderName)")
+            }
+            .store(in: &cancellables)
+            
+        // Listen for newly saved voice messages to update channel timeline
+        NotificationCenter.default.publisher(for: .didSaveVoiceMessage)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.loadVoiceMessages()
+            }
+            .store(in: &cancellables)
+            
         // Listen for newly saved voice transcripts to update channel history
         NotificationCenter.default.publisher(for: .didSaveVoiceTranscript)
             .receive(on: DispatchQueue.main)
@@ -206,16 +280,7 @@ final class RadioCallViewModel: ObservableObject {
             .store(in: &cancellables)
 
 
-            
-        // Live speech recognition snippet preview
-        speechTranscriber.$currentTranscriptText
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] liveText in
-                guard let self = self, !liveText.isEmpty else { return }
-                let speaker = self.isPTTPressed ? self.localUserHandle : self.connectedPeerName
-                self.latestTextSnippet = "\(speaker): \"\(liveText)...\""
-            }
-            .store(in: &cancellables)
+
         
         // Observe WalkieTalkieNetworkManager floor locks
         networkManager.$isFloorLockedBySelf
@@ -231,9 +296,11 @@ final class RadioCallViewModel: ObservableObject {
             .sink { [weak self] senderID in
                 guard let self = self else { return }
                 if let senderID = senderID, senderID != "LOCAL_SELF" {
+                    self.liveActiveSpeaker = self.connectedPeerName
                     self.session.isReceivingAudio = true
                     self.session.activeSpeakerName = self.connectedPeerName
                 } else {
+                    self.liveActiveSpeaker = nil
                     self.session.isReceivingAudio = false
                     self.session.activeSpeakerName = nil
                 }
@@ -263,6 +330,14 @@ final class RadioCallViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        
+        // Channel presence tuned-in members binding
+        ChannelPresenceManager.shared.$activeChannelMembers
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] members in
+                self?.activeChannelMembers = members
+            }
+            .store(in: &cancellables)
         
         // Connected peer count updates & delivery status flushing
         multipeerService.connectedPeersPublisher
@@ -306,7 +381,6 @@ final class RadioCallViewModel: ObservableObject {
         session.activeSpeakerName = handle
         let acquired = networkManager.acquireFloor()
         if acquired {
-            speechTranscriber.startTranscribing(speakerName: handle, channel: selectedChannel, sessionID: self.networkManager.currentSessionID)
             HapticManager.mediumImpact()
             AppLogger.audio.info("Acquired floor lock; transmitting PTT voice call on \(self.selectedChannel) with sessionID \(self.networkManager.currentSessionID?.uuidString ?? "nil")")
         } else {
@@ -316,7 +390,6 @@ final class RadioCallViewModel: ObservableObject {
 
     
     func stopTransmittingVoice() {
-        speechTranscriber.stopTranscribing()
         networkManager.releaseFloor()
         session.activeSpeakerName = nil
         HapticManager.lightImpact()

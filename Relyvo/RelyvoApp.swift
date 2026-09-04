@@ -42,6 +42,7 @@ struct RelyvoApp: App {
         
         BackgroundTaskManager.shared.registerTasks()
         BackgroundAudioSessionManager.shared.configureAudioSession()
+        VoiceStorageManager.shared.startStorageMonitoring()
         
         AppLogger.multipeer.info("[AppLifecycle] Main UI initialization started")
         

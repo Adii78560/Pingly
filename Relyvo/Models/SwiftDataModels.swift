@@ -118,6 +118,7 @@ enum PendingMessageStatus: String, Codable {
     case cancelled = "CANCELLED"
     
     // Legacy Raw Value Aliases for Backward Compatibility
+    static var pending: PendingMessageStatus { .queued }
     static var sending: PendingMessageStatus { .transmitting }
     static var waitingForACK: PendingMessageStatus { .sent }
     static var acknowledged: PendingMessageStatus { .delivered }

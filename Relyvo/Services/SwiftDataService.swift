@@ -36,9 +36,10 @@ final class SwiftDataService: ObservableObject {
             SDUserProfile.self,
             SDNotificationEvent.self,
             SDLocationShareSession.self,
-            SDAudioSegment.self
+            SDAudioSegment.self,
+            SDVoiceMessage.self
         ])
-        AppLogger.multipeer.info("[Persistence] Model schema loaded (7 entities registered)")
+        AppLogger.multipeer.info("[Persistence] Model schema loaded (8 entities registered)")
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         let storeURL = config.url
@@ -311,6 +312,110 @@ final class SwiftDataService: ObservableObject {
     }
 
     
+    // MARK: - Voice Message Operations (Replacing Text Transcripts)
+    
+    /// Persists a finalized walkie-talkie audio recording note to SwiftData under the channel.
+    @discardableResult
+    func saveVoiceMessage(
+        id: UUID = UUID(),
+        sessionID: UUID,
+        channelID: String,
+        senderID: String,
+        senderAlias: String,
+        timestamp: Date = Date(),
+        duration: Double,
+        audioFilePath: String,
+        directionRaw: String = "SENDER",
+        isDelivered: Bool = true
+    ) -> SDVoiceMessage {
+        let normalizedChannel = channelID.uppercased()
+        let vm = SDVoiceMessage(
+            id: id,
+            sessionID: sessionID,
+            channelID: normalizedChannel,
+            senderID: senderID,
+            senderAlias: senderAlias,
+            timestamp: timestamp,
+            duration: duration,
+            audioFilePath: audioFilePath,
+            isPlayed: false,
+            directionRaw: directionRaw,
+            isDelivered: isDelivered
+        )
+        context.insert(vm)
+        saveContext()
+        AppLogger.audio.info("[VOICE_MESSAGE_PERSIST] SAVE sessionID=\(sessionID.uuidString) channel=\(normalizedChannel) duration=\(duration)s file=\(audioFilePath)")
+        NotificationCenter.default.post(name: .didSaveVoiceMessage, object: nil)
+        return vm
+    }
+    
+    /// Fetches all stored voice messages for a specific channel sorted by timestamp.
+    func fetchVoiceMessages(for channel: String) -> [VoiceMessage] {
+        let normalizedChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.channelID == normalizedChannel },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        do {
+            let records = try context.fetch(descriptor)
+            return records.map {
+                VoiceMessage(
+                    id: $0.id,
+                    sessionID: $0.sessionID,
+                    channelID: $0.channelID,
+                    senderID: $0.senderID,
+                    senderAlias: $0.senderAlias,
+                    timestamp: $0.timestamp,
+                    duration: $0.duration,
+                    audioFilePath: $0.audioFilePath,
+                    isPlayed: $0.isPlayed,
+                    directionRaw: $0.directionRaw,
+                    isDelivered: $0.isDelivered
+                )
+            }
+        } catch {
+            AppLogger.audio.error("Failed to fetch voice messages for \(channel): \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    /// Marks a specific voice message as played/listened.
+    func markVoiceMessageAsPlayed(id: UUID) {
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.id == id }
+        )
+        if let record = try? context.fetch(descriptor).first {
+            record.isPlayed = true
+            saveContext()
+        }
+    }
+    
+    /// Marks all pending voice messages in a channel as delivered.
+    func markVoiceMessagesAsDelivered(for channel: String) {
+        let normalizedChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.channelID == normalizedChannel && !$0.isDelivered }
+        )
+        if let records = try? context.fetch(descriptor) {
+            for r in records {
+                r.isDelivered = true
+            }
+            saveContext()
+        }
+    }
+
+    /// Updates the audioFilePath of an SDVoiceMessage upon successful M4A compression.
+    func updateVoiceMessageFilePath(sessionID: UUID, newPath: String) {
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.sessionID == sessionID }
+        )
+        if let record = try? context.fetch(descriptor).first {
+            record.audioFilePath = newPath
+            saveContext()
+            NotificationCenter.default.post(name: .didSaveVoiceMessage, object: nil)
+        }
+    }
+
     // MARK: - Chat Messages Operations
     
     /// Persists a chat or location message to SwiftData local storage.
@@ -520,6 +625,34 @@ final class SwiftDataService: ObservableObject {
         """)
         
         AppLogger.multipeer.info("Enqueued pending \(queueRole.rawValue) message \(messageID) for recipient '\(recipientName)' (Dest: \(destinationID)): \"\(text.prefix(30))...\"")
+        return pending
+    }
+    
+    @discardableResult
+    func enqueuePendingMessage(
+        _ message: Message,
+        status: PendingMessageStatus = .pending,
+        queueRole: QueueRole = .origin
+    ) -> SDPendingMessage? {
+        let pending = enqueuePendingMessage(
+            messageID: message.id,
+            originID: message.originID,
+            destinationID: message.destinationID,
+            recipientName: message.destinationID,
+            senderName: message.senderName,
+            previousHopID: message.previousHopID,
+            text: message.text,
+            channel: message.channelID ?? "CH-1 EMERGENCY",
+            isSOS: message.isSOS,
+            priorityRaw: message.isSOS ? 1 : 0,
+            queueRole: queueRole,
+            hopsCount: message.hopsCount,
+            ttl: message.ttl
+        )
+        if status != .pending, let p = pending {
+            p.status = status
+            saveContext()
+        }
         return pending
     }
     

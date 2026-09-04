@@ -608,6 +608,10 @@ final class LocationShareManager: ObservableObject {
         if isConnected {
             MultipeerService.shared.broadcast(message: msg)
         } else {
+            if packet.type == "LOCATION_UPDATE" {
+                AppLogger.location.info("[LocationShare] Discarding ephemeral LOCATION_UPDATE for offline peer \(destinationID)")
+                return
+            }
             // Queue control event for durable offline delivery
             _ = SwiftDataService.shared.savePendingMessage(
                 messageID: packet.id,

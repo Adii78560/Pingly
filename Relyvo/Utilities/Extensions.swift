@@ -155,8 +155,10 @@ extension Notification.Name {
     static let didReceiveRawPTTPacket = Notification.Name("didReceiveRawPTTPacket")
     static let didReceiveChannelSync = Notification.Name("didReceiveChannelSync")
     static let didSaveVoiceTranscript = Notification.Name("didSaveVoiceTranscript")
+    static let didSaveVoiceMessage = Notification.Name("didSaveVoiceMessage")
     static let didAddPeerToMessages = Notification.Name("didAddPeerToMessages")
     static let didReceiveChatMessage = Notification.Name("didReceiveChatMessage")
+    static let didReceiveEmergencySOS = Notification.Name("didReceiveEmergencySOS")
 }
 
 

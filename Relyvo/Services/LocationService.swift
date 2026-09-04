@@ -128,6 +128,37 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         }
     }
     
+    // MARK: - Peer Location Cache
+    
+    private var peerLocations: [UUID: CLLocation] = [:]
+    private let peerLocationsLock = NSLock()
+    
+    /// Updates cached coordinate for a remote peer node.
+    func updatePeerLocation(nodeID: UUID, location: CLLocation) {
+        peerLocationsLock.lock()
+        peerLocations[nodeID] = location
+        peerLocationsLock.unlock()
+        AppLogger.location.info("[PEER_LOCATION_UPDATE] nodeID=\(nodeID.uuidString) lat=\(location.coordinate.latitude) lon=\(location.coordinate.longitude)")
+    }
+    
+    /// Retrieves cached coordinate for a remote peer node.
+    func getPeerLocation(nodeID: UUID) -> CLLocation? {
+        peerLocationsLock.lock()
+        defer { peerLocationsLock.unlock() }
+        return peerLocations[nodeID]
+    }
+    
+    /// Relative Vector Computation:
+    /// Checks `peerLocations[targetID]`. If live coordinates are missing, falls back to fallback coordinate.
+    func relativeVector(to targetID: UUID, fallbackLat: Double? = nil, fallbackLon: Double? = nil) -> (distanceMeters: Double, initialBearing: Double, relativeBearing: Double, distanceFormatted: String, compassDirection: String)? {
+        if let cachedLoc = getPeerLocation(nodeID: targetID) {
+            return relativeBearing(toLat: cachedLoc.coordinate.latitude, lon: cachedLoc.coordinate.longitude)
+        } else if let lat = fallbackLat, let lon = fallbackLon {
+            return relativeBearing(toLat: lat, lon: lon)
+        }
+        return nil
+    }
+    
     // MARK: - Distance & Bearing Calculation Helpers
     
     /// Calculates relative direction angle (0...360 degrees) accounting for user heading and initial bearing
@@ -197,8 +228,16 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         DispatchQueue.main.async {
             self.authorizationStatus = manager.authorizationStatus
+            let isAuthorized = (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways)
+            let accuracyAuth = manager.accuracyAuthorization.rawValue
+            AppLogger.location.info("""
+            [DIAG_LOC_AUTH]
+            status=\(manager.authorizationStatus.rawValue)
+            isAuthorized=\(isAuthorized)
+            accuracyAuth=\(accuracyAuth)
+            """)
             AppLogger.location.info("Location authorization changed: \(manager.authorizationStatus.rawValue)")
-            if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+            if isAuthorized {
                 if self.isSharingLocation {
                     manager.startUpdatingLocation()
                     self.startUpdatingHeading()
@@ -251,6 +290,15 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
+        let age = Date().timeIntervalSince(location.timestamp)
+        AppLogger.location.info("""
+        [DIAG_LOC_UPDATE]
+        lat=\(location.coordinate.latitude)
+        lon=\(location.coordinate.longitude)
+        alt=\(location.altitude)
+        accuracy=\(location.horizontalAccuracy)
+        age=\(age)s
+        """)
         DispatchQueue.main.async {
             self.currentCoordinate = location.coordinate
             self.currentAltitude = location.altitude
@@ -265,6 +313,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        AppLogger.location.error("[DIAG_LOC_ERROR] error=\(error.localizedDescription)")
         AppLogger.location.error("Location manager didFailWithError: \(error.localizedDescription)")
         if let completion = self.oneShotCompletion {
             completion(locationManager.location)

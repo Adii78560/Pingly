@@ -60,17 +60,75 @@ func createWavHeader(dataLength: Int, sampleRate: Int32, channels: Int16, bitsPe
 final class AudioRecorderContext {
     let sessionID: UUID
     let fileURL: URL
+    private var audioFile: AVAudioFile?
     private var pcmDataAccumulator = Data()
+    private var writtenFrames: AVAudioFramePosition = 0
     private let queue = DispatchQueue(label: "com.pingly.audiorecorder", qos: .utility)
+    
+    private let pcmFormat: AVAudioFormat? = {
+        return AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16000.0,
+            channels: 1,
+            interleaved: true
+        )
+    }()
     
     init(sessionID: UUID, fileURL: URL) {
         self.sessionID = sessionID
         self.fileURL = fileURL
+        
+        let dir = fileURL.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        
+        do {
+            self.audioFile = try AVAudioFile(
+                forWriting: fileURL,
+                settings: settings,
+                commonFormat: .pcmFormatInt16,
+                interleaved: true
+            )
+            AppLogger.audio.info("[AUDIO_RECORDER] Opened AVAudioFile for stream writing: \(fileURL.lastPathComponent)")
+        } catch {
+            AppLogger.audio.warning("[AUDIO_RECORDER] AVAudioFile init fallback: \(error.localizedDescription)")
+        }
     }
     
     func append(pcmData: Data) {
-        queue.async {
+        guard !pcmData.isEmpty else { return }
+        queue.async { [weak self] in
+            guard let self = self else { return }
             self.pcmDataAccumulator.append(pcmData)
+            
+            guard let format = self.pcmFormat, let file = self.audioFile else { return }
+            let frameCount = AVAudioFrameCount(pcmData.count / 2) // 16-bit mono = 2 bytes per frame
+            guard frameCount > 0, let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
+            
+            pcmBuffer.frameLength = frameCount
+            pcmData.withUnsafeBytes { rawBuffer in
+                if let baseAddress = rawBuffer.baseAddress, let channelData = pcmBuffer.int16ChannelData?[0] {
+                    memcpy(channelData, baseAddress, pcmData.count)
+                }
+            }
+            
+            do {
+                try file.write(from: pcmBuffer)
+                self.writtenFrames += AVAudioFramePosition(frameCount)
+            } catch {
+                AppLogger.audio.error("[AUDIO_RECORDER] Write chunk error: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -80,30 +138,39 @@ final class AudioRecorderContext {
                 completion(false)
                 return
             }
+            
+            // Release open AVAudioFile handle
+            self.audioFile = nil
+            
             guard !self.pcmDataAccumulator.isEmpty else {
+                AppLogger.audio.warning("[AUDIO_RECORDER] Finalize rejected — zero PCM bytes captured")
                 completion(false)
                 return
             }
             
+            // Validate file on disk; if AVAudioFile wrote valid frames, succeed immediately
+            if self.writtenFrames > 0 && FileManager.default.fileExists(atPath: self.fileURL.path) {
+                AppLogger.audio.info("[AUDIO_RECORDER] Finalized AVAudioFile successfully (\(self.writtenFrames) frames)")
+                completion(true)
+                return
+            }
+            
+            // Fallback WAV header writer to guarantee zero data loss
             let sampleRate: Int32 = 16000
             let channels: Int16 = 1
             let bitsPerSample: Int16 = 16
             
             let header = createWavHeader(dataLength: self.pcmDataAccumulator.count, sampleRate: sampleRate, channels: channels, bitsPerSample: bitsPerSample)
-            
             var wavData = Data()
             wavData.append(header)
             wavData.append(self.pcmDataAccumulator)
             
             do {
-                let dir = self.fileURL.deletingLastPathComponent()
-                if !FileManager.default.fileExists(atPath: dir.path) {
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                }
                 try wavData.write(to: self.fileURL)
+                AppLogger.audio.info("[AUDIO_RECORDER] Finalized fallback WAV file successfully (\(wavData.count) bytes)")
                 completion(true)
             } catch {
-                AppLogger.audio.error("Failed to write WAV file: \(error.localizedDescription)")
+                AppLogger.audio.error("[AUDIO_RECORDER] Failed to finalize audio file: \(error.localizedDescription)")
                 completion(false)
             }
         }
@@ -188,8 +255,12 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
     private var remoteInactivityWorkItem: DispatchWorkItem?
     
     func getAudioSegmentsDirectory() -> URL {
-        let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupportURL.appendingPathComponent("AudioSegments", isDirectory: true)
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dir = docs.appendingPathComponent("VoiceNotes", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
     }
     
     // Sender Sequence & Session Timers
@@ -257,25 +328,32 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             let startTime = self.sessionStartTime ?? Date()
             let duration = Date().timeIntervalSince(startTime)
             let channel = self.selectedChannel
+            let alias = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? NodeIdentity.shared.displayName
             
             recorder.finalize { success in
                 guard success else {
                     AppLogger.audio.error("[PINGLY_AUDIO_PERSIST] FAILURE sessionID=\(sessionID.uuidString) error=file_write_failed")
                     return
                 }
+                AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SUCCESS sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
                 AppLogger.audio.info("[PINGLY_PTT_SESSION] END sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
                 
-                // Save metadata in SwiftData
+                // Save Voice Message in SwiftData
                 DispatchQueue.main.async {
-                    _ = SwiftDataService.shared.saveAudioSegment(
+                    _ = SwiftDataService.shared.saveVoiceMessage(
                         sessionID: sessionID,
-                        senderID: NodeIdentity.shared.nodeID,
-                        senderName: NodeIdentity.shared.displayName,
                         channelID: channel,
+                        senderID: NodeIdentity.shared.nodeID,
+                        senderAlias: alias,
+                        timestamp: startTime,
                         duration: duration,
-                        localFileURL: fileURL.path,
-                        directionRaw: "SENDER"
+                        audioFilePath: fileURL.path,
+                        directionRaw: "SENDER",
+                        isDelivered: true
                     )
+                    
+                    // Asynchronously compress intermediate WAV to M4A container
+                    VoiceStorageManager.shared.compressWAVToM4A(wavURL: fileURL, sessionID: sessionID)
                 }
             }
         }
@@ -406,6 +484,30 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             name: .audioStreamEngineDidPlayAudioChunk,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleIncomingSOS(_:)),
+            name: .didReceiveEmergencySOS,
+            object: nil
+        )
+    }
+    
+    @objc func handleIncomingSOS(_ notification: Notification) {
+        audioDecodeQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            if self.isFloorLockedBySelf {
+                AppLogger.multipeer.warning("[FLOOR_PREEMPTED_BY_SOS] Forcibly revoking local PTT floor lock due to emergency SOS beacon")
+                DispatchQueue.main.async {
+                    self.releaseFloor()
+                }
+            }
+            
+            // Trigger emergency tactical alert tone and haptic vibration
+            AudioServicesPlaySystemSound(1005)
+            HapticManager.errorFeedback()
+            AppLogger.multipeer.warning("[SOS_ALERT_SOUND_PLAYED] High-priority SOS audio alarm dispatched")
+        }
     }
     
     @objc private func handleAudioPlayed(_ notification: Notification) {
@@ -451,19 +553,25 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 AppLogger.audio.error("[PINGLY_AUDIO_PERSIST] FAILURE sessionID=\(sessionID.uuidString) error=file_write_failed")
                 return
             }
+            AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SUCCESS sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
             AppLogger.audio.info("[PINGLY_PTT_RECEIVE] END sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
             
-            // Save metadata in SwiftData
+            // Save Voice Message in SwiftData
             DispatchQueue.main.async {
-                _ = SwiftDataService.shared.saveAudioSegment(
+                _ = SwiftDataService.shared.saveVoiceMessage(
                     sessionID: sessionID,
-                    senderID: senderID,
-                    senderName: senderName,
                     channelID: channel,
+                    senderID: senderID,
+                    senderAlias: senderName,
+                    timestamp: startTime,
                     duration: duration,
-                    localFileURL: fileURL.path,
-                    directionRaw: "RECEIVER"
+                    audioFilePath: fileURL.path,
+                    directionRaw: "RECEIVER",
+                    isDelivered: true
                 )
+                
+                // Asynchronously compress intermediate WAV to M4A container
+                VoiceStorageManager.shared.compressWAVToM4A(wavURL: fileURL, sessionID: sessionID)
             }
         }
         
@@ -475,6 +583,20 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
         DispatchQueue.main.async {
             self.activeFloorSenderID = nil
             self.lastReceivedSequenceNo = nil
+        }
+    }
+    /// Explicit EOT handler to instantly tear down playback and release floor locks without waiting for timeouts.
+    func handleExplicitEOT() {
+        audioDecodeQueue.async { [weak self] in
+            guard let self = self else { return }
+            AppLogger.audio.info("[EOT_TEARDOWN] Explicit EOT signal executed — terminating remote playback & locks")
+            self.remoteInactivityWorkItem?.cancel()
+            self.remoteInactivityWorkItem = nil
+            AudioStreamEngine.shared.playerNode.stop()
+            AdaptiveJitterBufferManager.shared.flushRemainingSession()
+            AudioStreamEngine.shared.resetSequenceTracker()
+            AudioStreamEngine.shared.playConnectChirp()
+            self.finalizeRemotePTTSession(actualSessionID: nil)
         }
     }
     
@@ -489,6 +611,28 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             
             switch header.type {
             case .start:
+                // Deterministic PTT Floor Arbitration (Collision Resolution)
+                if self.isFloorLockedBySelf {
+                    let localNodeID = NodeIdentity.shared.nodeID
+                    let peerID = notification.userInfo?["peerID"] as? MCPeerID
+                    let remoteNodeID = peerID?.displayName ?? String(header.senderHash)
+                    
+                    if localNodeID <= remoteNodeID {
+                        // Local node wins tie-breaker (lexicographically smaller UUID/ID)
+                        AppLogger.multipeer.warning("[FLOOR_COLLISION_RESOLVED] winner=\(localNodeID) loser=\(remoteNodeID) channel=\(self.selectedChannel)")
+                        return
+                    } else {
+                        // Remote node wins tie-breaker (local yields floor immediately)
+                        AppLogger.multipeer.warning("[FLOOR_COLLISION_RESOLVED] winner=\(remoteNodeID) loser=\(localNodeID) channel=\(self.selectedChannel)")
+                        AudioStreamEngine.shared.stopCapture()
+                        self.isFloorLockedBySelf = false
+                        self.sessionStartTime = nil
+                        self.currentSenderRecorder = nil
+                        self.currentSessionID = nil
+                        BackgroundAudioSessionManager.shared.endBackgroundTask()
+                    }
+                }
+                
                 let sessionID = UUID(uuidData: payload) ?? UUID()
                 self.currentRemoteSessionID = sessionID
                 self.remoteSessionStartTime = Date()
@@ -516,8 +660,9 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                     self.totalOutofOrderFramesCount = 0
                 }
                 
-                // Reset Adaptive Jitter Buffer for new PTT session
+                // Reset Adaptive Jitter Buffer & Sequence Tracker for new PTT session
                 AdaptiveJitterBufferManager.shared.resetSession()
+                AudioStreamEngine.shared.resetSequenceTracker()
                 AudioStreamEngine.shared.playConnectChirp()
                 AppLogger.multipeer.info("PTT_START received from sender \(header.senderHash) with sessionID \(sessionID.uuidString)")
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_START", peer: "REMOTE", details: "senderHash=\(header.senderHash)")
@@ -535,6 +680,16 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                     AppLogger.multipeer.warning("[PINGLY_PTT_RECEIVE] ORPHAN CHUNK sessionID=nil seq=\(header.sequenceNo) sender=\(header.senderHash)")
                     return
                 }
+                
+                // Audio Packet Sequencing & Jitter Reordering Check (accounting for UInt16 wraparound)
+                if let lastSeq = self.lastReceivedSequenceNo {
+                    let diff = Int16(bitPattern: header.sequenceNo &- lastSeq)
+                    if diff <= 0 {
+                        AppLogger.audio.warning("[AUDIO_JITTER_DROP] seq=\(header.sequenceNo) expected>=\(lastSeq)")
+                        return
+                    }
+                }
+                self.lastReceivedSequenceNo = header.sequenceNo
                 
                 self.resetRemoteInactivityTimer()
                 
@@ -556,23 +711,6 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                     RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "PTTFunnel", event: "PTT_PROGRESS", peer: "REMOTE", details: "durationMs=\(durationMs) rxFrames=\(self.currentPTTRxFrames) droppedFrames=\(self.totalDroppedFramesCount)")
                 }
                 
-                // Perform Packet Loss Concealment (PLC) if sequence gap is detected
-                if let lastSeq = self.lastReceivedSequenceNo {
-                    let expectedSeq = lastSeq &+ 1
-                    if header.sequenceNo > expectedSeq {
-                        let missingCount = min(Int(header.sequenceNo - expectedSeq), 5) // Cap PLC to 5 frames max
-                        for offset in 0..<missingCount {
-                            let missingSeq = expectedSeq &+ UInt16(offset)
-                            let plcPCM = OpusCodecManager.shared.decodePLCFrame()
-                            AdaptiveJitterBufferManager.shared.enqueueFrame(
-                                sequenceNo: missingSeq,
-                                timestampMs: header.timestampMs,
-                                pcmData: plcPCM
-                            )
-                        }
-                    }
-                }
-                
                 self.trackPacketLossAndJitter(header: header)
                 
                 // Decode Opus packet to 20ms raw Int16 PCM frame (off main thread)
@@ -592,8 +730,12 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 
                 let endSessionID = UUID(uuidData: payload) ?? self.currentRemoteSessionID
                 
-                // Flush remaining buffered frames and stop jitter timer
+                // Explicit Stream Teardown (EOT): flush remaining buffered frames and cancel inactivity timer immediately
+                AppLogger.audio.info("[EOT_TEARDOWN] Explicit End-of-Transmission received for session=\(endSessionID?.uuidString ?? "")")
+                self.remoteInactivityWorkItem?.cancel()
+                self.remoteInactivityWorkItem = nil
                 AdaptiveJitterBufferManager.shared.flushRemainingSession()
+                AudioStreamEngine.shared.resetSequenceTracker()
                 AudioStreamEngine.shared.playConnectChirp()
                 AppLogger.multipeer.info("PTT_END received. Diagnostic Summary - Dropped Frames: \(self.totalDroppedFramesCount), Out-Of-Order: \(self.totalOutofOrderFramesCount)")
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "PTT_END", peer: "REMOTE", details: "dropped=\(self.totalDroppedFramesCount) outOfOrder=\(self.totalOutofOrderFramesCount)")
