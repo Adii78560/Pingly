@@ -34,8 +34,8 @@ final class OpusCodecManager {
             guard let pcmPtr = rawPtr.bindMemory(to: Int16.self).baseAddress else { return }
             
             // Frame Header: 1st sample (2 bytes)
-            var firstSampleBE = pcmPtr[0].bigEndian
-            opusBuffer.append(Data(bytes: &firstSampleBE, count: 2))
+            let firstSampleBE = pcmPtr[0].bigEndian
+            withUnsafeBytes(of: firstSampleBE) { opusBuffer.append(contentsOf: $0) }
             
             // Encode 319 deltas as 4-bit nibbles (160 bytes)
             var currentVal = Int32(pcmPtr[0])
@@ -91,7 +91,7 @@ final class OpusCodecManager {
         }
         
         self.lastDecodedSamples = pcmSamples
-        return Data(bytes: pcmSamples, count: pcmBytesPerFrame)
+        return pcmSamples.withUnsafeBytes { Data($0) }
     }
     
     // MARK: - Built-in Packet Loss Concealment (PLC) Engine
@@ -116,6 +116,6 @@ final class OpusCodecManager {
         
         self.lastDecodedSamples = plcSamples
         AppLogger.audio.info("Opus PLC Synthesized 20ms Packet Loss Concealment Frame.")
-        return Data(bytes: plcSamples, count: pcmBytesPerFrame)
+        return plcSamples.withUnsafeBytes { Data($0) }
     }
 }

@@ -22,6 +22,10 @@ final class IdentityManager: ObservableObject {
         // Device ID is loaded from iOS Keychain
         self.deviceID = KeychainIdentityService.shared.fetchOrCreateDeviceID()
         self.displayName = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
+        if let savedAccountIDStr = UserDefaults.standard.string(forKey: "com.adityarai.pingly.accountID"),
+           let uuid = UUID(uuidString: savedAccountIDStr) {
+            self.accountID = uuid
+        }
     }
     
     /// Binds active Apple user session to a stable Relayn Account ID
@@ -54,6 +58,7 @@ final class IdentityManager: ObservableObject {
     func resetSession() {
         self.accountID = nil
         self.username = nil
+        UserDefaults.standard.removeObject(forKey: "com.adityarai.pingly.accountID")
     }
     
     /// Debug summary for verification during development

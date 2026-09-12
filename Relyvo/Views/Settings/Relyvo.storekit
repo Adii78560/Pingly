@@ -1,0 +1,108 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "350F1AD3",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "39.99",
+      "familyShareable" : false,
+      "internalID" : "6811099745",
+      "localizations" : [
+        {
+          "description" : "Unlock Relyvo's offline communication, messaging, maps",
+          "displayName" : "Relyvo Pro Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.RaiEnterprise.Relyvo.pro.forever",
+      "referenceName" : "Relyvo Pro Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6801918572",
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_developerTeamID" : "G96FB38L7X",
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 810838153.39572501,
+    "_locale" : "en_US",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "22376928",
+      "localizations" : [
+        {
+          "description" : "",
+          "displayName" : "Relyvo PRO",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "Relyvo Annual",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "billingPlans" : [
+            {
+              "billingPlanType" : "BILLED_UPFRONT",
+              "commitmentDisplayPrice" : "14.99",
+              "displayPrice" : "14.99",
+              "internalID" : "6811097269_BILLED_UPFRONT",
+              "isEnabled" : true
+            }
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "14.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6811097269",
+          "introductoryOffers" : [
+
+          ],
+          "localizations" : [
+            {
+              "description" : "Unlock Relyvo's offline communication, messaging, maps",
+              "displayName" : "Relyvo Pro Annual",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.RaiEnterprise.Relyvo.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Relyvo Pro Annual",
+          "subscriptionGroupID" : "22376928",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 5,
+    "minor" : 0
+  }
+}

@@ -59,11 +59,9 @@ final class AppleSignInManager: NSObject, ObservableObject {
         
         if isAuth, let userID = appleUserID {
             self.authState = .authenticated
-            DispatchQueue.main.async {
-                if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
-                    self.username = profile.username
-                    IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
-                }
+            if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
+                self.username = profile.username
+                IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
             }
         } else {
             self.authState = .unauthenticated
@@ -194,6 +192,11 @@ final class AppleSignInManager: NSObject, ObservableObject {
             self.username = profile.username
             self.authState = .authenticated
             IdentityManager.shared.bindSession(accountID: profile.accountID, username: profile.username, displayName: profile.displayName)
+            
+            // Synchronize customer identity with RevenueCat
+            Task {
+                try? await SubscriptionManager.shared.identify(appUserID: profile.accountID.uuidString)
+            }
         }
         AppLogger.multipeer.info("[Auth] Sign-in completed successfully")
     }
@@ -218,6 +221,11 @@ final class AppleSignInManager: NSObject, ObservableObject {
         self.username = nil
         self.authState = .unauthenticated
         IdentityManager.shared.resetSession()
+        
+        // Reset RevenueCat customer identity to anonymous
+        Task {
+            try? await SubscriptionManager.shared.resetIdentity()
+        }
 
         AppLogger.multipeer.info("[Auth] Logout completed. Signed out of Apple ID session successfully. Device ID & SwiftData store remain intact.")
     }
@@ -239,7 +247,12 @@ final class AppleSignInManager: NSObject, ObservableObject {
             KeychainIdentityService.shared.clearDeviceID()
             IdentityManager.shared.resetSession()
             
-            // 4. Clear all persistent session keys in UserDefaults
+            // 4. Reset RevenueCat customer identity
+            Task {
+                try? await SubscriptionManager.shared.resetIdentity()
+            }
+            
+            // 5. Clear all persistent session keys in UserDefaults
             UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userID)
             UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userEmail)
             UserDefaults.standard.removeObject(forKey: AppleSignInKeys.userFullName)
@@ -247,7 +260,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
             UserDefaults.standard.set(false, forKey: AppleSignInKeys.isAuthenticated)
             UserDefaults.standard.removeObject(forKey: "com.adityarai.pingly.hasPromptedATT")
             
-            // 5. Reset in-memory auth state to return user to AppleSignInScreen
+            // 6. Reset in-memory auth state to return user to AppleSignInScreen
             self.appleUserID = nil
             self.userEmail = nil
             self.userFullName = nil

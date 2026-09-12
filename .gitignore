@@ -36,3 +36,7 @@ Carthage/Build/
 
 # User-specific Xcode workspace settings
 *.xcuserdata
+
+# Sensitive constants & API Keys
+Constants.swift
+Relyvo/Utilities/Constants.swift

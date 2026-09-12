@@ -6,20 +6,20 @@
 //
 
 import SwiftUI
+import RevenueCatUI
 import os
 
 /// Main Tab Navigation Host View for Relyvo
 struct MainTabView: View {
-
-    
     @Environment(\.scenePhase) private var scenePhase
     
     // MARK: - Core Services (Singletons)
     @StateObject private var multipeerService = MultipeerService.shared
-
     @StateObject private var bleBeaconService = BLEBeaconService.shared
     @StateObject private var radioAudioService = RadioAudioService.shared
     @StateObject private var locationService = LocationService.shared
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @StateObject private var featureAccessManager = FeatureAccessManager.shared
     
     // MARK: - ViewModels
     @StateObject private var radarViewModel: RadarViewModel
@@ -32,7 +32,6 @@ struct MainTabView: View {
     @State private var showIncomingCallSheet = false
     @State private var incomingPeerName = "Nearby Relyvo Node"
     @State private var selectedTab = 0
-
     
     init() {
         let mp = MultipeerService.shared
@@ -45,8 +44,6 @@ struct MainTabView: View {
         _radioCallViewModel = StateObject(wrappedValue: RadioCallViewModel(multipeerService: mp, audioService: audio))
         _settingsViewModel = StateObject(wrappedValue: SettingsViewModel(multipeerService: mp, bleBeaconService: ble))
     }
-
-
     
     var body: some View {
         ZStack {
@@ -59,13 +56,13 @@ struct MainTabView: View {
                 
                 RadioCallView(viewModel: radioCallViewModel)
                     .tabItem {
-                        Label("Walkie-Talkie", systemImage: "waveform")
+                        Label(subscriptionManager.isPro ? "Walkie-Talkie" : "Walkie-Talkie 🔒", systemImage: "waveform")
                     }
                     .tag(1)
                 
                 MessagesView(viewModel: messagesViewModel)
                     .tabItem {
-                        Label("Messages", systemImage: "message.fill")
+                        Label(subscriptionManager.isPro ? "Messages" : "Messages 🔒", systemImage: "message.fill")
                     }
                     .tag(2)
                 
@@ -77,12 +74,14 @@ struct MainTabView: View {
             }
             .tint(AppTheme.tintColor)
 
-            
             if !isSplashFinished {
                 AnimatedSplashScreenView(isFinished: $isSplashFinished)
                     .transition(.opacity)
                     .zIndex(100)
             }
+        }
+        .sheet(isPresented: $featureAccessManager.showPaywall) {
+            SubscriptionPaywallView(feature: featureAccessManager.activePaywallFeature)
         }
         .fullScreenCover(isPresented: $showIncomingCallSheet) {
             IncomingRequestView(
@@ -105,7 +104,6 @@ struct MainTabView: View {
             multipeerService.startAdvertisingAndBrowsing(userHandle: handle, status: settingsViewModel.selectedEmergencyStatus)
             bleBeaconService.startScanningAndAdvertising(userHandle: handle, allowDuplicates: false)
         }
-
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .background:
@@ -119,7 +117,6 @@ struct MainTabView: View {
                 break
             }
         }
-
     }
 }
 

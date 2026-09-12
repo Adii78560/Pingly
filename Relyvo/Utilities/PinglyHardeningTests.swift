@@ -697,6 +697,83 @@ final class RelaynHardeningTests {
         let isEphemeral = (ephemeralLocMsg.type == .location && !ephemeralLocMsg.isSOS) || ephemeralLocMsg.text.hasPrefix("LOCATION_PROTOCOL:")
         assert(isEphemeral == true, "Continuous location broadcasts identified as ephemeral")
         
+        // 21. RevenueCat Subscription & Entitlement Architecture Tests
+        // A. SubscriptionStatus domain truth table
+        let subAnnual = SubscriptionStatus.activeAnnual(expirationDate: Date().addingTimeInterval(86400 * 365), willRenew: true, isTrial: false)
+        let subTrial = SubscriptionStatus.activeAnnual(expirationDate: Date().addingTimeInterval(86400 * 7), willRenew: true, isTrial: true)
+        let subLifetime = SubscriptionStatus.activeLifetime
+        let subGrace = SubscriptionStatus.inGracePeriod(expirationDate: Date().addingTimeInterval(3600))
+        let subExpired = SubscriptionStatus.expired(expirationDate: Date().addingTimeInterval(-86400))
+        let subInactive = SubscriptionStatus.notSubscribed
+        let subBilling = SubscriptionStatus.billingIssue
+        let subLoading = SubscriptionStatus.loading
+        let subUnknown = SubscriptionStatus.unknown
+        
+        assert(subAnnual.isPro == true, "Active annual subscription grants Pro privileges")
+        assert(subTrial.isPro == true, "Active trial period grants Pro privileges")
+        assert(subLifetime.isPro == true, "Active lifetime purchase grants Pro privileges")
+        assert(subLifetime.isLifetime == true, "Lifetime purchase identified as non-recurring")
+        assert(subAnnual.isLifetime == false, "Annual subscription identified as recurring")
+        assert(subGrace.isPro == true, "Grace period retains Pro privileges")
+        assert(subExpired.isPro == false, "Expired subscription revokes Pro privileges")
+        assert(subInactive.isPro == false, "Inactive subscription revokes Pro privileges")
+        assert(subBilling.isPro == false, "Billing issue denies Pro privileges")
+        assert(subLoading.isPro == false, "Loading state denies premature privileges")
+        assert(subUnknown.isPro == false, "Unknown state denies premature privileges")
+        
+        // B. Constants & Identifiers Verification
+        assert(Constants.Subscriptions.entitlementID == "pro", "RevenueCat pro entitlement constant is 'pro'")
+        assert(Constants.Subscriptions.offeringID == "default", "RevenueCat offering constant is 'default'")
+        assert(Constants.Subscriptions.annualProductID == "com.RaiEnterprise.Relyvo.pro.yearly", "Annual product ID matches yearly spec")
+        assert(Constants.Subscriptions.legacyAnnualProductID == "com.RaiEnterprise.Relyvo.pro.annual", "Legacy annual product ID alias matches spec")
+        assert(Constants.Subscriptions.annualPackageID == "$rc_annual", "Annual package ID matches '$rc_annual'")
+        assert(Constants.Subscriptions.lifetimeProductID == "com.RaiEnterprise.Relyvo.pro.forever", "Lifetime product ID matches forever spec")
+        assert(Constants.Subscriptions.legacyLifetimeProductID == "com.RaiEnterprise.Relyvo.pro.lifetime", "Legacy lifetime product ID alias matches spec")
+        assert(Constants.Subscriptions.lifetimePackageID == "$rc_lifetime", "Lifetime package ID matches '$rc_lifetime'")
+        assert(Constants.Subscriptions.apiKey == "test_hgaTGoexYnzezVzkyZNkxbLdnha", "RevenueCat test SDK API key is configured")
+        assert(Constants.Subscriptions.privacyPolicyURL.absoluteString == "https://nutrisence-ai.blogspot.com/2026/09/relyvo-privacy-policy.html", "Privacy policy URL matches production blogspot endpoint")
+        assert(Constants.Subscriptions.termsOfServiceURL.absoluteString == "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/", "Terms of service URL matches Apple Standard EULA endpoint")
+        
+        // 22. Feature Gating & Central Access Controller Verification
+        // A. RelyvoFeature Pro-requirement classification
+        assert(RelyvoFeature.radar.isProRequired == false, "Radar is 100% Free feature")
+        assert(RelyvoFeature.walkieTalkie.isProRequired == true, "Walkie-Talkie requires Pro entitlement")
+        assert(RelyvoFeature.messaging.isProRequired == true, "Offline Messaging requires Pro entitlement")
+        assert(RelyvoFeature.createChannel.isProRequired == true, "Custom Channel Creation requires Pro entitlement")
+        
+        // B. Feature contextual paywall strings
+        assert(RelyvoFeature.walkieTalkie.paywallTitle.contains("Walkie-Talkie"), "Walkie-Talkie paywall title contains 'Walkie-Talkie'")
+        assert(RelyvoFeature.messaging.paywallTitle.contains("Messaging"), "Messaging paywall title contains 'Messaging'")
+        assert(RelyvoFeature.createChannel.paywallTitle.contains("Channels"), "Channel creation paywall title contains 'Channels'")
+        
+        // C. FeatureAccessManager Access Policy Evaluation
+        Task { @MainActor in
+            let mgr = SubscriptionManager.shared
+            let gate = FeatureAccessManager.shared
+            
+            // Radar is always accessible regardless of subscription state
+            assert(gate.canAccess(.radar) == true, "FeatureAccessManager permits Radar for all users")
+            
+            // Pro features follow SubscriptionManager.isPro
+            let expectedProAccess = mgr.isPro
+            assert(gate.canAccess(.walkieTalkie) == expectedProAccess, "Walkie-Talkie access strictly reflects SubscriptionManager.isPro")
+            assert(gate.canAccess(.messaging) == expectedProAccess, "Messaging access strictly reflects SubscriptionManager.isPro")
+            assert(gate.canAccess(.createChannel) == expectedProAccess, "Create Channel access strictly reflects SubscriptionManager.isPro")
+            
+            // Access enforcement callback verification
+            var callbackTriggered = false
+            if expectedProAccess {
+                gate.requireAccess(to: .walkieTalkie, onGranted: { callbackTriggered = true })
+                assert(callbackTriggered == true, "requireAccess triggers onGranted when user is Pro")
+            } else {
+                gate.requireAccess(to: .walkieTalkie, onGranted: { callbackTriggered = true })
+                assert(callbackTriggered == false, "requireAccess blocks onGranted when user is non-Pro")
+                assert(gate.showPaywall == true, "requireAccess presents paywall when user is non-Pro")
+                gate.dismissPaywall()
+                assert(gate.showPaywall == false, "dismissPaywall successfully clears paywall presentation flag")
+            }
+        }
+
         // 10. Simulator Messaging Loopback Test Suite
         Task { @MainActor in
             let loopbackRes = LoopbackTestHarness.shared.runAllLoopbackTests()

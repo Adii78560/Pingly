@@ -30,22 +30,7 @@ final class RadioAudioService: ObservableObject {
         audioChunkSubject.eraseToAnyPublisher()
     }
     
-    init() {
-        setupAudioSession()
-    }
-    
-    private func setupAudioSession() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-                try session.setActive(true, options: .notifyOthersOnDeactivation)
-                AppLogger.audio.info("AVAudioSession configured asynchronously")
-            } catch {
-                AppLogger.audio.error("Failed to configure AVAudioSession: \(error.localizedDescription)")
-            }
-        }
-    }
+    init() {}
 
     
     func startRecordingPTT() {
@@ -108,8 +93,9 @@ final class RadioAudioService: ObservableObject {
     }
     
     private func bufferToData(buffer: AVAudioPCMBuffer) -> Data? {
-        let audioBuffer = buffer.audioBufferList.pointee.mBuffers
-        guard let mData = audioBuffer.mData else { return nil }
-        return Data(bytes: mData, count: Int(audioBuffer.mDataByteSize))
+        let channelCount = Int(buffer.format.channelCount)
+        let length = Int(buffer.frameLength) * channelCount * 2
+        guard let channelData = buffer.int16ChannelData, length > 0 else { return nil }
+        return Data(bytes: channelData[0], count: length)
     }
 }

@@ -261,13 +261,13 @@ enum MeshPacketHeader {
         // Message ID UUID (39..54, 16 raw bytes)
         data.append(uuidToData(message.id))
         // Payload length (55..58, UInt32 big-endian)
-        var payloadLen = UInt32(payloadData.count).bigEndian
-        data.append(Data(bytes: &payloadLen, count: 4))
+        let payloadLen = UInt32(payloadData.count).bigEndian
+        withUnsafeBytes(of: payloadLen) { data.append(contentsOf: $0) }
         // Flags byte (59)
         data.append(flags.rawValue)
         // Monotonic sequence counter (60..61, UInt16 big-endian)
-        var seqBE = sequenceNumber.bigEndian
-        data.append(Data(bytes: &seqBE, count: 2))
+        let seqBE = sequenceNumber.bigEndian
+        withUnsafeBytes(of: seqBE) { data.append(contentsOf: $0) }
         // Payload
         data.append(payloadData)
         
@@ -374,8 +374,7 @@ enum MeshPacketHeader {
     // MARK: Helpers
     
     private static func uuidToData(_ uuid: UUID) -> Data {
-        var u = uuid.uuid
-        return Data(bytes: &u, count: 16)
+        withUnsafeBytes(of: uuid.uuid) { Data($0) }
     }
     
     private static func dataToUUID(_ data: Data) -> UUID? {

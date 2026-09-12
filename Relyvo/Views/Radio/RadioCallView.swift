@@ -10,12 +10,14 @@ import SwiftUI
 /// watchOS Walkie-Talkie & FaceTime Audio inspired View with Channel-Wise Chat Bubbles
 struct RadioCallView: View {
     @StateObject var viewModel: RadioCallViewModel
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @StateObject private var featureAccessManager = FeatureAccessManager.shared
+    
     @State private var isPttPressedVisual = false
     @State private var showingAddChannelAlert = false
     @State private var newChannelInputText = ""
     @State private var breathingScale: CGFloat = 1.0
     @State private var breathingOpacity: Double = 0.6
-
     
     var body: some View {
         NavigationStack {
@@ -47,10 +49,15 @@ struct RadioCallView: View {
                         }
                         
                         Button(action: {
-                            newChannelInputText = ""
-                            showingAddChannelAlert = true
+                            featureAccessManager.requireAccess(to: .createChannel) {
+                                newChannelInputText = ""
+                                showingAddChannelAlert = true
+                            }
                         }) {
-                            Label("Create Custom Channel...", systemImage: "plus.circle")
+                            Label(
+                                subscriptionManager.isPro ? "Create Custom Channel..." : "Create Custom Channel... (Pro 🔒)",
+                                systemImage: subscriptionManager.isPro ? "plus.circle" : "lock.fill"
+                            )
                         }
 
                     } label: {
@@ -82,11 +89,13 @@ struct RadioCallView: View {
                     Spacer()
                     
                     Button(action: {
-                        newChannelInputText = ""
-                        showingAddChannelAlert = true
+                        featureAccessManager.requireAccess(to: .createChannel) {
+                            newChannelInputText = ""
+                            showingAddChannelAlert = true
+                        }
                     }) {
                         HStack(spacing: 4) {
-                            Image(systemName: "plus")
+                            Image(systemName: subscriptionManager.isPro ? "plus" : "lock.fill")
                             Text("New Channel")
                         }
                         .font(.system(size: 12, weight: .bold))
@@ -288,10 +297,17 @@ struct RadioCallView: View {
                         .shadow(color: AppTheme.hotMagenta.opacity(viewModel.isPTTPressed ? 0.7 : 0.3), radius: viewModel.isPTTPressed ? 16 : 8, x: 0, y: 4)
                     
                     VStack(spacing: 3) {
-                        Image(systemName: viewModel.isPTTPressed ? "waveform.and.mic" : "mic.fill")
-                            .font(.system(size: 30, weight: .bold))
-                        Text(viewModel.isPTTPressed ? "TRANSMITTING" : (viewModel.session.isReceivingAudio ? "LISTENING" : "HOLD TO TALK"))
-                            .font(.system(size: 11, weight: .black))
+                        if !subscriptionManager.isPro {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 28, weight: .bold))
+                            Text("UNLOCK PRO")
+                                .font(.system(size: 11, weight: .black))
+                        } else {
+                            Image(systemName: viewModel.isPTTPressed ? "waveform.and.mic" : "mic.fill")
+                                .font(.system(size: 30, weight: .bold))
+                            Text(viewModel.isPTTPressed ? "TRANSMITTING" : (viewModel.session.isReceivingAudio ? "LISTENING" : "HOLD TO TALK"))
+                                .font(.system(size: 11, weight: .black))
+                        }
                     }
                     .foregroundColor(.white)
                 }
@@ -301,6 +317,13 @@ struct RadioCallView: View {
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { _ in
+                            guard featureAccessManager.canAccess(.walkieTalkie) else {
+                                if !isPttPressedVisual {
+                                    isPttPressedVisual = true
+                                    featureAccessManager.requireAccess(to: .walkieTalkie)
+                                }
+                                return
+                            }
                             if !viewModel.isPTTPressed {
                                 isPttPressedVisual = true
                                 viewModel.startTransmittingVoice()
@@ -308,7 +331,9 @@ struct RadioCallView: View {
                         }
                         .onEnded { _ in
                             isPttPressedVisual = false
-                            viewModel.stopTransmittingVoice()
+                            if featureAccessManager.canAccess(.walkieTalkie) {
+                                viewModel.stopTransmittingVoice()
+                            }
                         }
                 )
 
@@ -400,7 +425,7 @@ struct RadioCallView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
             }
-            .navigationTitle("Walkie-Talkie")
+            .navigationTitle(subscriptionManager.isPro ? "Walkie-Talkie" : "Walkie-Talkie 🔒")
             .alert("Create Custom Channel", isPresented: $showingAddChannelAlert) {
                 TextField("Channel Name (e.g. BASECAMP)", text: $newChannelInputText)
                 Button("Create") {

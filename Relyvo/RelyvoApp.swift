@@ -10,6 +10,8 @@ import os
 
 @main
 struct RelyvoApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+    
     init() {
         AppLogger.multipeer.info("[AppLifecycle] Application launch")
         
@@ -24,6 +26,11 @@ struct RelyvoApp: App {
         AppLogger.multipeer.info("[AppLifecycle] Authentication state check started")
         _ = AppleSignInManager.shared
         AppLogger.multipeer.info("[AppLifecycle] Authentication state check completed")
+        
+        AppLogger.multipeer.info("[AppLifecycle] SubscriptionManager initialization started")
+        let initialUserID = IdentityManager.shared.accountID?.uuidString ?? UserDefaults.standard.string(forKey: "com.adityarai.pingly.accountID")
+        SubscriptionManager.shared.configure(appUserID: initialUserID)
+        AppLogger.multipeer.info("[AppLifecycle] SubscriptionManager initialization completed")
         
         AppLogger.multipeer.info("[Onboarding] First launch check")
         let hasLaunchedBefore = UserDefaults.standard.bool(forKey: "com.RaiEnterprise.Relyvo.hasLaunchedBefore")
@@ -57,6 +64,11 @@ struct RelyvoApp: App {
             ContentView()
                 .onAppear {
                     AppLogger.multipeer.info("[AppLifecycle] Main UI initialization completed")
+                }
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .active {
+                        SubscriptionManager.shared.refreshStateOnForeground()
+                    }
                 }
         }
     }

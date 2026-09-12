@@ -83,6 +83,12 @@ final class MessagesViewModel: ObservableObject {
 
     
     func sendMessageToConversation(_ text: String, in conversation: Conversation) {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Messaging blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
@@ -161,6 +167,12 @@ final class MessagesViewModel: ObservableObject {
     
     /// Obtains current offline GPS coordinates and sends location message over P2P mesh
     func sendLocationMessage(in conversation: Conversation) {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Location messaging blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
         LocationService.shared.getCurrentLocationSnapshot { [weak self] location in
             guard let self = self, let loc = location else {
                 LocationService.shared.requestLocationPermission()
@@ -239,6 +251,12 @@ final class MessagesViewModel: ObservableObject {
 
     
     func sendMessageDrop() {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Message drop blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
         let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         

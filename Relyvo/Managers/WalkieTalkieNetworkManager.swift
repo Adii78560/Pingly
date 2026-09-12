@@ -14,8 +14,7 @@ import os
 
 extension UUID {
     var uuidData: Data {
-        var uuid = self.uuid
-        return Data(bytes: &uuid, count: 16)
+        withUnsafeBytes(of: self.uuid) { Data($0) }
     }
     
     init?(uuidData data: Data) {
@@ -28,32 +27,27 @@ extension UUID {
 func createWavHeader(dataLength: Int, sampleRate: Int32, channels: Int16, bitsPerSample: Int16) -> Data {
     var header = Data()
     header.append("RIFF".data(using: .utf8)!)
-    let fileSize = Int32(dataLength + 36)
-    var fileSizeLE = fileSize.littleEndian
-    header.append(Data(bytes: &fileSizeLE, count: 4))
+    var fileSizeLE = Int32(dataLength + 36).littleEndian
+    withUnsafeBytes(of: fileSizeLE) { header.append(contentsOf: $0) }
     header.append("WAVE".data(using: .utf8)!)
     header.append("fmt ".data(using: .utf8)!)
-    let fmtSize: Int32 = 16
-    var fmtSizeLE = fmtSize.littleEndian
-    header.append(Data(bytes: &fmtSizeLE, count: 4))
-    let audioFormat: Int16 = 1
-    var audioFormatLE = audioFormat.littleEndian
-    header.append(Data(bytes: &audioFormatLE, count: 2))
+    var fmtSizeLE = Int32(16).littleEndian
+    withUnsafeBytes(of: fmtSizeLE) { header.append(contentsOf: $0) }
+    var audioFormatLE = Int16(1).littleEndian
+    withUnsafeBytes(of: audioFormatLE) { header.append(contentsOf: $0) }
     var numChannelsLE = channels.littleEndian
-    header.append(Data(bytes: &numChannelsLE, count: 2))
+    withUnsafeBytes(of: numChannelsLE) { header.append(contentsOf: $0) }
     var sRateLE = sampleRate.littleEndian
-    header.append(Data(bytes: &sRateLE, count: 4))
-    let byteRate = sampleRate * Int32(channels) * Int32(bitsPerSample / 8)
-    var byteRateLE = byteRate.littleEndian
-    header.append(Data(bytes: &byteRateLE, count: 4))
-    let blockAlign = channels * (bitsPerSample / 8)
-    var blockAlignLE = blockAlign.littleEndian
-    header.append(Data(bytes: &blockAlignLE, count: 2))
+    withUnsafeBytes(of: sRateLE) { header.append(contentsOf: $0) }
+    var byteRateLE = (sampleRate * Int32(channels) * Int32(bitsPerSample / 8)).littleEndian
+    withUnsafeBytes(of: byteRateLE) { header.append(contentsOf: $0) }
+    var blockAlignLE = (channels * (bitsPerSample / 8)).littleEndian
+    withUnsafeBytes(of: blockAlignLE) { header.append(contentsOf: $0) }
     var bPerSampleLE = bitsPerSample.littleEndian
-    header.append(Data(bytes: &bPerSampleLE, count: 2))
+    withUnsafeBytes(of: bPerSampleLE) { header.append(contentsOf: $0) }
     header.append("data".data(using: .utf8)!)
     var dLengthLE = Int32(dataLength).littleEndian
-    header.append(Data(bytes: &dLengthLE, count: 4))
+    withUnsafeBytes(of: dLengthLE) { header.append(contentsOf: $0) }
     return header
 }
 
@@ -195,15 +189,14 @@ struct PTTFrameHeader {
     
     func encode() -> Data {
         var data = Data(capacity: PTTFrameHeader.headerSize)
-        var typeByte = type.rawValue
-        var seqBE = sequenceNo.bigEndian
-        var timeBE = timestampMs.bigEndian
-        var senderBE = senderHash.bigEndian
-        
-        data.append(&typeByte, count: 1)
-        data.append(Data(bytes: &seqBE, count: 2))
-        data.append(Data(bytes: &timeBE, count: 4))
-        data.append(Data(bytes: &senderBE, count: 4))
+        let typeByte = type.rawValue
+        data.append(typeByte)
+        let seqBE = sequenceNo.bigEndian
+        withUnsafeBytes(of: seqBE) { data.append(contentsOf: $0) }
+        let timeBE = timestampMs.bigEndian
+        withUnsafeBytes(of: timeBE) { data.append(contentsOf: $0) }
+        let senderBE = senderHash.bigEndian
+        withUnsafeBytes(of: senderBE) { data.append(contentsOf: $0) }
         return data
     }
     

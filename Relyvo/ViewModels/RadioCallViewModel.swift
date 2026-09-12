@@ -132,6 +132,12 @@ final class RadioCallViewModel: ObservableObject {
 
     
     func createChannel(named name: String) {
+        guard FeatureAccessManager.shared.canAccess(.createChannel) else {
+            AppLogger.multipeer.warning("Custom channel creation blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .createChannel)
+            return
+        }
+        
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !trimmed.isEmpty else { return }
         // Bug fix: was "CH- " + trimmed (with trailing space), producing "CH- MYNAME".
@@ -377,6 +383,12 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     func startTransmittingVoice() {
+        guard FeatureAccessManager.shared.canAccess(.walkieTalkie) else {
+            AppLogger.audio.warning("Walkie-Talkie transmission blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .walkieTalkie)
+            return
+        }
+        
         let handle = localUserHandle
         session.activeSpeakerName = handle
         let acquired = networkManager.acquireFloor()
