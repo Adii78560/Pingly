@@ -23,35 +23,176 @@ final class SwiftDataService: ObservableObject {
     }
     
     @Published private(set) var totalUnsyncedCount: Int = 0
+    @Published private(set) var isUsingInMemoryFallback: Bool = false
     
-    private init() {
+    init(inMemory: Bool = false) {
+        AppLogger.multipeer.info("[Persistence] App launch detected (inMemory=\(inMemory))")
+        AppLogger.multipeer.info("[Persistence] Starting SwiftData initialization")
+        
         let schema = Schema([
             SDVoiceTranscript.self,
             SDChatMessage.self,
             SDPendingMessage.self,
             SDUserProfile.self,
             SDNotificationEvent.self,
-            SDLocationShareSession.self
+            SDLocationShareSession.self,
+            SDAudioSegment.self,
+            SDVoiceMessage.self
         ])
+        AppLogger.multipeer.info("[Persistence] Model schema loaded (8 entities registered)")
 
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
+        let storeURL = config.url
+        let fileManager = FileManager.default
+        
+        if !inMemory {
+            let parentDir = storeURL.deletingLastPathComponent()
+            if !fileManager.fileExists(atPath: parentDir.path) {
+                AppLogger.multipeer.info("[Persistence] Application Support directory missing. Creating directory: \(parentDir.path)")
+                do {
+                    try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true, attributes: nil)
+                    AppLogger.multipeer.info("[Persistence] Application Support directory creation succeeded")
+                } catch {
+                    AppLogger.multipeer.error("[Persistence][ERROR] Application Support directory creation failed: \(error.localizedDescription)")
+                    fatalError("[Persistence][CRITICAL] Failed to create Application Support directory: \(error.localizedDescription)")
+                }
+            } else {
+                AppLogger.multipeer.info("[Persistence] Application Support directory verified existing")
+            }
+        }
+        
+        let storeExists = fileManager.fileExists(atPath: storeURL.path)
+        var fileSizeString = "0 bytes"
+        if storeExists, let attributes = try? fileManager.attributesOfItem(atPath: storeURL.path),
+           let fileSize = attributes[.size] as? Int64 {
+            fileSizeString = "\(fileSize) bytes"
+        }
+        
+        AppLogger.multipeer.info("[Persistence] Persistent store location = \(storeURL.path)")
+        AppLogger.multipeer.info("[Persistence] Persistent store URL exists = \(storeExists)")
+        AppLogger.multipeer.info("[Persistence] Persistent store file size = \(fileSizeString)")
+        AppLogger.multipeer.info("[Persistence] Existing persistent store detected = \(storeExists)")
+        AppLogger.multipeer.info("[Persistence] ModelContainer creation started")
         
         do {
             self.container = try ModelContainer(for: schema, configurations: [config])
-            AppLogger.multipeer.info("SwiftData ModelContainer initialized successfully.")
+            AppLogger.multipeer.info("[Persistence] ModelContainer creation succeeded")
+            AppLogger.multipeer.info("[Persistence] ModelContext created")
+            AppLogger.multipeer.info("[Persistence] Container instance created")
+            AppLogger.multipeer.info("[Persistence] Container configuration = isStoredInMemoryOnly: false")
+            AppLogger.multipeer.info("[Persistence] Store type = persistent")
+            AppLogger.multipeer.info("[Persistence] Store URL = \(storeURL.path)")
+            AppLogger.multipeer.info("[Persistence] Existing store = \(storeExists)")
+            AppLogger.multipeer.info("[Persistence] SwiftData initialization completed")
+            
+            self.isUsingInMemoryFallback = false
             updateUnsyncedCount()
+            logAllEntityCounts()
+            
+            let chatCount = (try? self.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
+            let transcriptCount = (try? self.context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
+            let pendingCount = (try? self.context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
+            
+            RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_RESTORE_CHECK", details: "chatCount=\(chatCount) voiceTranscriptCount=\(transcriptCount) pendingMessageCount=\(pendingCount)")
+            RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_SNAPSHOT", details: "storeExists=\(storeExists) fileSize=\(fileSizeString)")
         } catch {
-            AppLogger.multipeer.error("SwiftData ModelContainer initialization failure: \(error.localizedDescription). Preserving existing disk store files without deletion.")
+            AppLogger.multipeer.error("[Persistence][ERROR] ModelContainer initialization failed")
+            AppLogger.multipeer.error("[Persistence][ERROR] Error = \(error.localizedDescription)")
+            AppLogger.multipeer.error("[Persistence][ERROR] Full error description = \(String(describing: error))")
+            
             // Non-destructive fallback: Initialize in-memory container to allow app runtime startup while preserving disk files safely on disk
             let fallbackConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
                 self.container = try ModelContainer(for: schema, configurations: [fallbackConfig])
-                AppLogger.multipeer.warning("SwiftData ModelContainer operating in non-destructive fallback mode. Disk store files preserved untouched.")
+                self.isUsingInMemoryFallback = true
+                AppLogger.multipeer.warning("[Persistence] Container instance created (FALLBACK)")
+                AppLogger.multipeer.warning("[Persistence] Store type = in-memory")
+                AppLogger.multipeer.warning("[Persistence] SwiftData ModelContainer operating in non-destructive fallback mode. Disk store files preserved untouched.")
                 updateUnsyncedCount()
+                logAllEntityCounts()
             } catch {
+                AppLogger.multipeer.error("[Persistence][ERROR] Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
                 fatalError("Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
             }
         }
+    }
+    
+    /// Diagnostics helper: Queries and logs counts for all persistent entities in SwiftData
+    func logAllEntityCounts() {
+        let chatCount = (try? context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
+        let transcriptCount = (try? context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
+        let pendingCount = (try? context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
+        let userCount = (try? context.fetch(FetchDescriptor<SDUserProfile>()))?.count ?? 0
+        let notificationCount = (try? context.fetch(FetchDescriptor<SDNotificationEvent>()))?.count ?? 0
+        let locationSessionCount = (try? context.fetch(FetchDescriptor<SDLocationShareSession>()))?.count ?? 0
+        
+        AppLogger.multipeer.info("[Persistence] Message count = \(chatCount)")
+        AppLogger.multipeer.info("[Persistence] Voice transcript count = \(transcriptCount)")
+        AppLogger.multipeer.info("[Persistence] Pending message count = \(pendingCount)")
+        AppLogger.multipeer.info("[Persistence] User count = \(userCount)")
+        AppLogger.multipeer.info("[Persistence] Notification event count = \(notificationCount)")
+        AppLogger.multipeer.info("[Persistence] Location share session count = \(locationSessionCount)")
+    }
+    
+    /// Phase 5 Diagnostic: Performs a non-destructive WRITE -> SAVE -> FETCH -> VERIFY -> DELETE cycle to test SwiftData health
+    @discardableResult
+    func performPersistenceReadWriteDiagnosticTest() -> (success: Bool, message: String) {
+        AppLogger.multipeer.info("[PersistenceTest] Test started")
+        let testID = UUID()
+        let testText = "[DIAGNOSTIC_TEST_\(testID.uuidString.prefix(6))]"
+        
+        let testMessage = SDChatMessage(
+            id: testID,
+            senderName: "DiagnosticSystem",
+            channel: "DIAGNOSTIC_CHANNEL",
+            text: testText,
+            timestamp: Date(),
+            isSynced: true,
+            isDelivered: true
+        )
+        
+        // 1. WRITE
+        context.insert(testMessage)
+        AppLogger.multipeer.info("[PersistenceTest] Test record created")
+        
+        // 2. SAVE
+        do {
+            try context.save()
+            AppLogger.multipeer.info("[PersistenceTest] Save succeeded")
+        } catch {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at SAVE stage: \(error.localizedDescription)")
+            return (false, "SAVE failed: \(error.localizedDescription)")
+        }
+        
+        // 3. FETCH
+        let descriptor = FetchDescriptor<SDChatMessage>(
+            predicate: #Predicate { $0.id == testID }
+        )
+        guard let fetched = (try? context.fetch(descriptor))?.first else {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at FETCH stage: Record not found")
+            return (false, "FETCH failed: Record not found")
+        }
+        AppLogger.multipeer.info("[PersistenceTest] Fetch succeeded")
+        
+        // 4. VERIFY
+        guard fetched.text == testText && fetched.senderName == "DiagnosticSystem" else {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at VERIFY stage: Data mismatch")
+            return (false, "VERIFY failed: Record content mismatch")
+        }
+        AppLogger.multipeer.info("[PersistenceTest] Record verification succeeded")
+        
+        // 5. DELETE & CLEANUP
+        context.delete(fetched)
+        do {
+            try context.save()
+            AppLogger.multipeer.info("[PersistenceTest] Cleanup succeeded")
+        } catch {
+            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at CLEANUP stage: \(error.localizedDescription)")
+            return (false, "CLEANUP failed: \(error.localizedDescription)")
+        }
+        
+        AppLogger.multipeer.info("[PersistenceTest] TEST PASSED")
+        return (true, "SwiftData Read/Write Test Passed Successfully")
     }
 
 
@@ -59,18 +200,23 @@ final class SwiftDataService: ObservableObject {
     // MARK: - Voice Transcripts Operations
     
     /// Persists a voice transcript to SwiftData local storage.
-    func saveVoiceTranscript(speakerName: String, text: String, channel: String, isDelivered: Bool = false) -> SDVoiceTranscript {
+    func saveVoiceTranscript(id: UUID = UUID(), speakerName: String, text: String, channel: String, isDelivered: Bool = false, sessionID: UUID? = nil) -> SDVoiceTranscript {
+        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
+        AppLogger.multipeer.info("\(tag)_START type=voiceTranscript")
         let transcript = SDVoiceTranscript(
+            id: id,
             speakerName: speakerName,
             text: text,
             channel: channel,
             timestamp: Date(),
             isSynced: false,
-            isDelivered: isDelivered
+            isDelivered: isDelivered,
+            sessionID: sessionID
         )
         context.insert(transcript)
         saveContext()
         updateUnsyncedCount()
+        AppLogger.multipeer.info("\(tag)_SUCCESS type=voiceTranscript")
         AppLogger.audio.info("Persisted Voice Transcript (Delivered: \(isDelivered)): [\(channel)] \(speakerName): \"\(text)\"")
         return transcript
     }
@@ -115,12 +261,169 @@ final class SwiftDataService: ObservableObject {
             AppLogger.multipeer.info("Marked \(results.count) transcripts on '\(channel)' as delivered.")
         }
     }
+    
+    // MARK: - Audio Segments Operations
+    
+    /// Persists walkie-talkie audio recording metadata to SwiftData local storage.
+    func saveAudioSegment(
+        id: UUID = UUID(),
+        sessionID: UUID,
+        senderID: String,
+        senderName: String,
+        channelID: String,
+        timestamp: Date = Date(),
+        duration: Double,
+        transcriptText: String? = nil,
+        localFileURL: String,
+        directionRaw: String
+    ) -> SDAudioSegment {
+        let segment = SDAudioSegment(
+            id: id,
+            sessionID: sessionID,
+            senderID: senderID,
+            senderName: senderName,
+            channelID: channelID,
+            timestamp: timestamp,
+            duration: duration,
+            transcriptText: transcriptText,
+            localFileURL: localFileURL,
+            directionRaw: directionRaw
+        )
+        context.insert(segment)
+        saveContext()
+        AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SAVE sessionID=\(sessionID) file=\(localFileURL)")
+        AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SUCCESS sessionID=\(sessionID)")
+        return segment
+    }
+    
+    /// Fetches all stored audio segments for a specific channel sorted by timestamp.
+    func fetchAudioSegments(for channel: String) -> [SDAudioSegment] {
+        let targetChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDAudioSegment>(
+            predicate: #Predicate { $0.channelID == targetChannel },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        do {
+            return try context.fetch(descriptor)
+        } catch {
+            AppLogger.audio.error("Failed to fetch audio segments for \(channel): \(error.localizedDescription)")
+            return []
+        }
+    }
 
     
+    // MARK: - Voice Message Operations (Replacing Text Transcripts)
+    
+    /// Persists a finalized walkie-talkie audio recording note to SwiftData under the channel.
+    @discardableResult
+    func saveVoiceMessage(
+        id: UUID = UUID(),
+        sessionID: UUID,
+        channelID: String,
+        senderID: String,
+        senderAlias: String,
+        timestamp: Date = Date(),
+        duration: Double,
+        audioFilePath: String,
+        directionRaw: String = "SENDER",
+        isDelivered: Bool = true
+    ) -> SDVoiceMessage {
+        let normalizedChannel = channelID.uppercased()
+        let vm = SDVoiceMessage(
+            id: id,
+            sessionID: sessionID,
+            channelID: normalizedChannel,
+            senderID: senderID,
+            senderAlias: senderAlias,
+            timestamp: timestamp,
+            duration: duration,
+            audioFilePath: audioFilePath,
+            isPlayed: false,
+            directionRaw: directionRaw,
+            isDelivered: isDelivered
+        )
+        context.insert(vm)
+        saveContext()
+        AppLogger.audio.info("[VOICE_MESSAGE_PERSIST] SAVE sessionID=\(sessionID.uuidString) channel=\(normalizedChannel) duration=\(duration)s file=\(audioFilePath)")
+        NotificationCenter.default.post(name: .didSaveVoiceMessage, object: nil)
+        return vm
+    }
+    
+    /// Fetches all stored voice messages for a specific channel sorted by timestamp.
+    func fetchVoiceMessages(for channel: String) -> [VoiceMessage] {
+        let normalizedChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.channelID == normalizedChannel },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        do {
+            let records = try context.fetch(descriptor)
+            return records.map {
+                VoiceMessage(
+                    id: $0.id,
+                    sessionID: $0.sessionID,
+                    channelID: $0.channelID,
+                    senderID: $0.senderID,
+                    senderAlias: $0.senderAlias,
+                    timestamp: $0.timestamp,
+                    duration: $0.duration,
+                    audioFilePath: $0.audioFilePath,
+                    isPlayed: $0.isPlayed,
+                    directionRaw: $0.directionRaw,
+                    isDelivered: $0.isDelivered
+                )
+            }
+        } catch {
+            AppLogger.audio.error("Failed to fetch voice messages for \(channel): \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    /// Marks a specific voice message as played/listened.
+    func markVoiceMessageAsPlayed(id: UUID) {
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.id == id }
+        )
+        if let record = try? context.fetch(descriptor).first {
+            record.isPlayed = true
+            saveContext()
+        }
+    }
+    
+    /// Marks all pending voice messages in a channel as delivered.
+    func markVoiceMessagesAsDelivered(for channel: String) {
+        let normalizedChannel = channel.uppercased()
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.channelID == normalizedChannel && !$0.isDelivered }
+        )
+        if let records = try? context.fetch(descriptor) {
+            for r in records {
+                r.isDelivered = true
+            }
+            saveContext()
+        }
+    }
+
+    /// Updates the audioFilePath of an SDVoiceMessage upon successful M4A compression.
+    func updateVoiceMessageFilePath(sessionID: UUID, newPath: String) {
+        let descriptor = FetchDescriptor<SDVoiceMessage>(
+            predicate: #Predicate { $0.sessionID == sessionID }
+        )
+        if let record = try? context.fetch(descriptor).first {
+            record.audioFilePath = newPath
+            saveContext()
+            NotificationCenter.default.post(name: .didSaveVoiceMessage, object: nil)
+        }
+    }
+
     // MARK: - Chat Messages Operations
     
     /// Persists a chat or location message to SwiftData local storage.
     func saveChatMessage(
+        id: UUID = UUID(),
+        originID: String? = nil,
+        senderID: String? = nil,
+        destinationID: String? = nil,
         senderName: String,
         channel: String,
         text: String,
@@ -131,7 +434,16 @@ final class SwiftDataService: ObservableObject {
         altitude: Double? = nil,
         accuracy: Double? = nil
     ) -> SDChatMessage {
+        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
+        AppLogger.multipeer.info("\(tag)_START type=\(messageType.rawValue)")
+        let resolvedSenderID = senderID ?? NodeIdentity.shared.nodeID
+        let resolvedOriginID = originID ?? resolvedSenderID
+        let resolvedDestinationID = destinationID ?? channel
         let message = SDChatMessage(
+            id: id,
+            originID: resolvedOriginID,
+            senderID: resolvedSenderID,
+            destinationID: resolvedDestinationID,
             senderName: senderName,
             channel: channel,
             text: text,
@@ -147,6 +459,7 @@ final class SwiftDataService: ObservableObject {
         context.insert(message)
         saveContext()
         updateUnsyncedCount()
+        AppLogger.multipeer.info("\(tag)_SUCCESS type=\(messageType.rawValue)")
         AppLogger.multipeer.info("Persisted Chat Message (Type: \(messageType.rawValue), Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
         return message
     }
@@ -154,6 +467,10 @@ final class SwiftDataService: ObservableObject {
     @discardableResult
     func saveMessage(_ msg: Message) -> SDChatMessage {
         return saveChatMessage(
+            id: msg.id,
+            originID: msg.originID,
+            senderID: msg.senderID,
+            destinationID: msg.destinationID,
             senderName: msg.senderName,
             channel: msg.destinationID,
             text: msg.text,
@@ -311,6 +628,34 @@ final class SwiftDataService: ObservableObject {
         return pending
     }
     
+    @discardableResult
+    func enqueuePendingMessage(
+        _ message: Message,
+        status: PendingMessageStatus = .pending,
+        queueRole: QueueRole = .origin
+    ) -> SDPendingMessage? {
+        let pending = enqueuePendingMessage(
+            messageID: message.id,
+            originID: message.originID,
+            destinationID: message.destinationID,
+            recipientName: message.destinationID,
+            senderName: message.senderName,
+            previousHopID: message.previousHopID,
+            text: message.text,
+            channel: message.channelID ?? "CH-1 EMERGENCY",
+            isSOS: message.isSOS,
+            priorityRaw: message.isSOS ? 1 : 0,
+            queueRole: queueRole,
+            hopsCount: message.hopsCount,
+            ttl: message.ttl
+        )
+        if status != .pending, let p = pending {
+            p.status = status
+            saveContext()
+        }
+        return pending
+    }
+    
     func enqueueRelayMessage(_ message: Message) -> SDPendingMessage? {
         return enqueuePendingMessage(
             messageID: message.id,
@@ -378,7 +723,7 @@ final class SwiftDataService: ObservableObject {
         }
     }
     
-    func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus) {
+    func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus, reason: String? = nil) {
         queueLock.lock()
         defer { queueLock.unlock() }
         
@@ -396,6 +741,13 @@ final class SwiftDataService: ObservableObject {
                 RelaynTransportDiagnosticsManager.shared.incrementQueueFailed()
             }
             saveContext()
+            
+            let tag = AppLogger.messageTag(messageID)
+            if let r = reason {
+                AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(status.rawValue) reason=\(r) retryCount=\(pending.retryCount)")
+            } else {
+                AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(status.rawValue)")
+            }
             
             AppLogger.multipeer.info("""
             [PINGLY_QUEUE_STATE]
@@ -445,6 +797,8 @@ final class SwiftDataService: ObservableObject {
         }
         
         saveContext()
+        
+        AppLogger.multipeer.info("\(AppLogger.messageTag(messageID)) STATE WAITING_FOR_ACK -> ACKNOWLEDGED")
         
         AppLogger.multipeer.info("""
         [PINGLY_QUEUE_STATE]

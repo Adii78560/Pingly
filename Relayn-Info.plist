@@ -8,8 +8,6 @@
 		<string>com.RaiEnterprise.Relayn.pttsync</string>
 		<string>com.RaiEnterprise.Pingly.refresh</string>
 		<string>com.RaiEnterprise.Pingly.pttsync</string>
-		<string>com.RaiEnterprise.RadioFy.refresh</string>
-		<string>com.RaiEnterprise.RadioFy.pttsync</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -39,8 +37,6 @@
 		<string>_relayn-mesh._udp</string>
 		<string>_pingly-mesh._tcp</string>
 		<string>_pingly-mesh._udp</string>
-		<string>_radiofy-ptt._tcp</string>
-		<string>_radiofy-ptt._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Relayn uses local peer-to-peer Wi-Fi network protocols to transfer message drops and broadcast real-time Push-To-Talk radio voice calls.</string>

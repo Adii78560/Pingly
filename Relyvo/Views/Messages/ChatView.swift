@@ -33,7 +33,7 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(conversationMessages) { message in
-                            let isMe = (message.senderName == NodeIdentity.shared.displayName)
+                            let isMe = (message.senderID == NodeIdentity.shared.nodeID || message.originID == NodeIdentity.shared.nodeID)
                             iMessageBubbleRow(message: message, isSentByMe: isMe)
                                 .id(message.id)
                         }
@@ -267,7 +267,7 @@ struct CustomCornerShape: Shape {
 #Preview {
     ChatView(
         viewModel: MessagesViewModel(multipeerService: MultipeerService.shared, locationService: LocationService.shared),
-        conversation: Conversation(id: "1", displayName: "Aditya", isOnline: true, lastMessage: "Hello", lastTimestamp: "10:00 AM", messages: [])
+        conversation: Conversation(id: "1", displayName: "Aditya", recipientNodeID: "10000000-0000-0000-0000-000000000000", isOnline: true, lastMessage: "Hello", lastTimestamp: "10:00 AM", messages: [])
     )
 }
 

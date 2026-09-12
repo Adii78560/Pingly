@@ -14,6 +14,7 @@ import os
 struct Conversation: Identifiable, Hashable {
     let id: String
     let displayName: String
+    let recipientNodeID: String
     var isOnline: Bool
     var lastMessage: String
     var lastTimestamp: String
@@ -54,31 +55,40 @@ final class MessagesViewModel: ObservableObject {
         NotificationCenter.default.publisher(for: .didAddPeerToMessages)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] note in
-                guard let self = self, let peerName = note.userInfo?["peerName"] as? String else { return }
+                guard let self = self,
+                      let peerName = note.userInfo?["peerName"] as? String,
+                      let nodeID = note.userInfo?["nodeID"] as? String else { return }
                 let channelName = (note.userInfo?["channel"] as? String) ?? "CH-1 EMERGENCY"
-                self.addPeerConversation(peerName: peerName, channelName: channelName)
+                self.addPeerConversation(peerName: peerName, nodeID: nodeID, channelName: channelName)
             }
             .store(in: &cancellables)
     }
     
-    func addPeerConversation(peerName: String, channelName: String = "CH-1 EMERGENCY") {
-        let convID = "\(peerName)_\(channelName)"
-        if !conversations.contains(where: { $0.id == convID || ($0.displayName == peerName && $0.lastMessage.contains(channelName)) }) {
+    func addPeerConversation(peerName: String, nodeID: String, channelName: String = "CH-1 EMERGENCY") {
+        let convID = nodeID
+        if !conversations.contains(where: { $0.id == convID }) {
             let newConv = Conversation(
                 id: convID,
                 displayName: peerName,
-                isOnline: multipeerService.connectedPeers.contains(where: { $0.displayName == peerName }),
+                recipientNodeID: nodeID,
+                isOnline: multipeerService.connectedPeers.contains(where: { $0.id == nodeID }),
                 lastMessage: "Off-grid conversation on \(channelName)",
                 lastTimestamp: Date().logTimeString,
                 messages: []
             )
             conversations.append(newConv)
-            AppLogger.multipeer.info("Added user '\(peerName)' on channel '\(channelName)' to Messages directory")
+            AppLogger.multipeer.info("Added user '\(peerName)' (NodeID: \(nodeID)) on channel '\(channelName)' to Messages directory")
         }
     }
 
     
     func sendMessageToConversation(_ text: String, in conversation: Conversation) {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Messaging blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
@@ -88,9 +98,10 @@ final class MessagesViewModel: ObservableObject {
         
         let newMessage = Message(
             originID: localNodeID,
-            destinationID: conversation.displayName,
+            destinationID: conversation.recipientNodeID,
             senderID: localNodeID,
             senderName: handle,
+            channelID: nil,
             text: trimmed,
             timestamp: Date(),
             latitude: location?.latitude,
@@ -106,6 +117,7 @@ final class MessagesViewModel: ObservableObject {
             let updated = Conversation(
                 id: conversations[index].id,
                 displayName: conversations[index].displayName,
+                recipientNodeID: conversations[index].recipientNodeID,
                 isOnline: conversations[index].isOnline,
                 lastMessage: trimmed,
                 lastTimestamp: Date().logTimeString,
@@ -118,17 +130,25 @@ final class MessagesViewModel: ObservableObject {
         }
         
         // Persist message to SwiftData local storage
-        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: conversation.displayName, text: trimmed)
+        _ = SwiftDataService.shared.saveChatMessage(
+            id: newMessage.id,
+            originID: localNodeID,
+            senderID: localNodeID,
+            destinationID: conversation.recipientNodeID,
+            senderName: handle,
+            channel: conversation.recipientNodeID,
+            text: trimmed
+        )
         
         // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
         _ = SwiftDataService.shared.enqueuePendingMessage(
             messageID: newMessage.id,
             originID: localNodeID,
-            destinationID: conversation.displayName,
+            destinationID: conversation.recipientNodeID,
             recipientName: conversation.displayName,
             senderName: handle,
             text: trimmed,
-            channel: conversation.displayName
+            channel: conversation.recipientNodeID
         )
 
         
@@ -140,7 +160,6 @@ final class MessagesViewModel: ObservableObject {
             AppLogger.multipeer.info("Peer '\(conversation.displayName)' is offline. Enqueued message \(newMessage.id) to store-and-forward queue.")
         }
 
-
         
         messageText = ""
         HapticManager.lightImpact()
@@ -148,6 +167,12 @@ final class MessagesViewModel: ObservableObject {
     
     /// Obtains current offline GPS coordinates and sends location message over P2P mesh
     func sendLocationMessage(in conversation: Conversation) {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Location messaging blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
         LocationService.shared.getCurrentLocationSnapshot { [weak self] location in
             guard let self = self, let loc = location else {
                 LocationService.shared.requestLocationPermission()
@@ -161,9 +186,10 @@ final class MessagesViewModel: ObservableObject {
             
             let newMessage = Message(
                 originID: localNodeID,
-                destinationID: conversation.displayName,
+                destinationID: conversation.recipientNodeID,
                 senderID: localNodeID,
                 senderName: handle,
+                channelID: nil,
                 text: locationText,
                 timestamp: Date(),
                 latitude: loc.coordinate.latitude,
@@ -184,8 +210,12 @@ final class MessagesViewModel: ObservableObject {
             }
             
             _ = SwiftDataService.shared.saveChatMessage(
+                id: newMessage.id,
+                originID: localNodeID,
+                senderID: localNodeID,
+                destinationID: conversation.recipientNodeID,
                 senderName: handle,
-                channel: conversation.displayName,
+                channel: conversation.recipientNodeID,
                 text: locationText,
                 messageType: .location,
                 latitude: loc.coordinate.latitude,
@@ -197,11 +227,11 @@ final class MessagesViewModel: ObservableObject {
             _ = SwiftDataService.shared.enqueuePendingMessage(
                 messageID: newMessage.id,
                 originID: localNodeID,
-                destinationID: conversation.displayName,
+                destinationID: conversation.recipientNodeID,
                 recipientName: conversation.displayName,
                 senderName: handle,
                 text: locationText,
-                channel: conversation.displayName
+                channel: conversation.recipientNodeID
             )
             
             if !self.multipeerService.connectedPeers.isEmpty {
@@ -221,15 +251,25 @@ final class MessagesViewModel: ObservableObject {
 
     
     func sendMessageDrop() {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Message drop blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
         let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
+        let localNodeID = NodeIdentity.shared.nodeID
         let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
         let location = locationService.currentLocation
         
         let newMessage = Message(
-            senderID: handle,
+            originID: localNodeID,
+            destinationID: "BROADCAST",
+            senderID: localNodeID,
             senderName: handle,
+            channelID: "CH-1 EMERGENCY",
             text: trimmed,
             timestamp: Date(),
             latitude: location?.latitude,
@@ -240,7 +280,12 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(newMessage)
-        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: "GENERAL MESH", text: trimmed)
+        _ = SwiftDataService.shared.saveChatMessage(
+            id: newMessage.id,
+            senderName: handle,
+            channel: "CH-1 EMERGENCY",
+            text: trimmed
+        )
         multipeerService.broadcast(message: newMessage)
         messageText = ""
         HapticManager.lightImpact()
@@ -250,13 +295,17 @@ final class MessagesViewModel: ObservableObject {
         self.activeEmergencyStatus = status
         self.isSOSAlertActive = true
         
+        let localNodeID = NodeIdentity.shared.nodeID
         let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
         let location = locationService.currentLocation
         
         let sosText = "🚨 EMERGENCY DISTRESS BEACON: Need immediate assistance! Status: \(status.rawValue)"
         let sosMessage = Message(
-            senderID: handle,
+            originID: localNodeID,
+            destinationID: "BROADCAST",
+            senderID: localNodeID,
             senderName: handle,
+            channelID: "CH-1 EMERGENCY",
             text: sosText,
             timestamp: Date(),
             latitude: location?.latitude,
@@ -267,16 +316,20 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(sosMessage)
-        _ = SwiftDataService.shared.saveChatMessage(senderName: handle, channel: "EMERGENCY BEACON", text: sosText)
+        _ = SwiftDataService.shared.saveChatMessage(
+            id: sosMessage.id,
+            senderName: handle,
+            channel: "CH-1 EMERGENCY",
+            text: sosText
+        )
         multipeerService.broadcast(message: sosMessage)
         HapticManager.warningFeedback()
         AppLogger.emergency.critical("Triggered Emergency SOS Beacon with status: \(status.rawValue)")
     }
     
     private func handleIncomingMessage(_ message: Message) {
-        let cleanSender = cleanBaseName(message.senderName)
-        let localUserHandle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-        guard cleanSender != cleanBaseName(localUserHandle) else { return } // Avoid self-echo
+        let localNodeID = NodeIdentity.shared.nodeID
+        guard message.originID != localNodeID else { return } // Avoid self-echo
         
         var relayedMessage = message
         relayedMessage.hopsCount += 1
@@ -285,8 +338,15 @@ final class MessagesViewModel: ObservableObject {
             messages.append(relayedMessage)
         }
         
-        // Find existing conversation or AUTOMATICALLY create conversation card for incoming sender
-        if let index = conversations.firstIndex(where: { cleanBaseName($0.displayName) == cleanSender || $0.id.contains(cleanSender) }) {
+        let senderNodeID = message.originID
+        let isChannelMessage = message.channelID != nil && !message.channelID!.isEmpty && message.channelID!.hasPrefix("CH-")
+        
+        if isChannelMessage {
+            return
+        }
+        
+        // Find existing conversation or AUTOMATICALLY create conversation card for incoming sender NodeID
+        if let index = conversations.firstIndex(where: { $0.recipientNodeID == senderNodeID }) {
             if !conversations[index].messages.contains(where: { $0.id == message.id }) {
                 conversations[index].messages.append(relayedMessage)
             }
@@ -295,20 +355,25 @@ final class MessagesViewModel: ObservableObject {
             conversations[index].isOnline = true
         } else {
             let newConv = Conversation(
-                id: "\(cleanSender)_AUTO",
+                id: senderNodeID,
                 displayName: message.senderName,
+                recipientNodeID: senderNodeID,
                 isOnline: true,
                 lastMessage: message.text,
                 lastTimestamp: message.timestamp.logTimeString,
                 messages: [relayedMessage]
             )
             conversations.append(newConv)
-            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName)")
+            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName) (NodeID: \(senderNodeID))")
         }
         
         _ = SwiftDataService.shared.saveChatMessage(
+            id: message.id,
+            originID: message.originID,
+            senderID: message.senderID,
+            destinationID: message.destinationID,
             senderName: message.senderName,
-            channel: message.senderName,
+            channel: senderNodeID,
             text: message.text,
             isDelivered: true
         )
@@ -324,29 +389,40 @@ final class MessagesViewModel: ObservableObject {
         if let saved = try? SwiftDataService.shared.context.fetch(descriptor) {
             var grouped: [String: [Message]] = [:]
             for item in saved {
+                if item.channel.hasPrefix("CH-") || item.channel == "GENERAL MESH" || item.channel == "EMERGENCY BEACON" {
+                    continue
+                }
+                
                 let msg = Message(
                     id: item.id,
-                    senderID: item.senderName,
+                    originID: item.originID.isEmpty ? item.channel : item.originID,
+                    destinationID: item.destinationID.isEmpty ? item.channel : item.destinationID,
+                    senderID: item.senderID.isEmpty ? item.channel : item.senderID,
                     senderName: item.senderName,
                     text: item.text,
                     timestamp: item.timestamp,
                     hopsCount: 0
                 )
-                let base = cleanBaseName(item.senderName)
-                grouped[base, default: []].append(msg)
+                grouped[item.channel, default: []].append(msg)
             }
             
-            for (senderBase, msgList) in grouped {
+            for (nodeID, msgList) in grouped {
+                if UUID(uuidString: nodeID) == nil {
+                    continue
+                }
                 if let last = msgList.last {
-                    if let idx = conversations.firstIndex(where: { cleanBaseName($0.displayName) == senderBase }) {
+                    let peerName = msgList.first(where: { $0.senderID != NodeIdentity.shared.nodeID && $0.senderName != NodeIdentity.shared.displayName })?.senderName ?? last.senderName
+                    
+                    if let idx = conversations.firstIndex(where: { $0.id == nodeID }) {
                         conversations[idx].messages = msgList
                         conversations[idx].lastMessage = last.text
                         conversations[idx].lastTimestamp = last.timestamp.logTimeString
                     } else {
                         let conv = Conversation(
-                            id: "\(senderBase)_SAVED",
-                            displayName: last.senderName,
-                            isOnline: multipeerService.connectedPeers.contains(where: { cleanBaseName($0.displayName) == senderBase }),
+                            id: nodeID,
+                            displayName: peerName,
+                            recipientNodeID: nodeID,
+                            isOnline: multipeerService.connectedPeers.contains(where: { $0.id == nodeID }),
                             lastMessage: last.text,
                             lastTimestamp: last.timestamp.logTimeString,
                             messages: msgList

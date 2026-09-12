@@ -1,15 +1,6 @@
 //
 //  MessagesView.swift
-//  Relayn
-//
-//  Created by Senior iOS Developer on 09/08/26.
-//
-
-import SwiftUI
-
-//
-//  MessagesView.swift
-//  Relayn
+//  Relyvo
 //
 //  Created by Senior iOS Developer on 09/08/26.
 //
@@ -19,6 +10,9 @@ import SwiftUI
 /// Native Apple iMessage Conversation Directory View
 struct MessagesView: View {
     @StateObject var viewModel: MessagesViewModel
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @StateObject private var featureAccessManager = FeatureAccessManager.shared
+    
     @State private var searchText = ""
     @State private var showSOSDialog = false
     
@@ -34,21 +28,36 @@ struct MessagesView: View {
     
     var body: some View {
         NavigationStack {
-            Group {
-                if filteredConversations.isEmpty {
-                    emptyStateView
-                } else {
-                    List {
-                        ForEach(filteredConversations) { conversation in
-                            NavigationLink(destination: ChatView(viewModel: viewModel, conversation: conversation)) {
-                                iMessageRow(conversation: conversation)
+            ZStack {
+                Group {
+                    if filteredConversations.isEmpty {
+                        emptyStateView
+                    } else {
+                        List {
+                            ForEach(filteredConversations) { conversation in
+                                if subscriptionManager.isPro {
+                                    NavigationLink(destination: ChatView(viewModel: viewModel, conversation: conversation)) {
+                                        iMessageRow(conversation: conversation)
+                                    }
+                                } else {
+                                    Button(action: {
+                                        featureAccessManager.presentPaywall(for: .messaging)
+                                    }) {
+                                        iMessageRow(conversation: conversation)
+                                    }
+                                }
                             }
                         }
+                        .listStyle(.plain)
                     }
-                    .listStyle(.plain)
+                }
+                
+                if !subscriptionManager.isPro {
+                    ProFeatureLockOverlay(feature: .messaging)
+                        .transition(.opacity)
                 }
             }
-            .navigationTitle("Messages")
+            .navigationTitle(subscriptionManager.isPro ? "Messages" : "Messages 🔒")
             .searchable(text: $searchText, prompt: "Search")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

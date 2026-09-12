@@ -10,12 +10,14 @@ import SwiftUI
 /// watchOS Walkie-Talkie & FaceTime Audio inspired View with Channel-Wise Chat Bubbles
 struct RadioCallView: View {
     @StateObject var viewModel: RadioCallViewModel
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @StateObject private var featureAccessManager = FeatureAccessManager.shared
+    
     @State private var isPttPressedVisual = false
     @State private var showingAddChannelAlert = false
     @State private var newChannelInputText = ""
     @State private var breathingScale: CGFloat = 1.0
     @State private var breathingOpacity: Double = 0.6
-
     
     var body: some View {
         NavigationStack {
@@ -47,10 +49,15 @@ struct RadioCallView: View {
                         }
                         
                         Button(action: {
-                            newChannelInputText = ""
-                            showingAddChannelAlert = true
+                            featureAccessManager.requireAccess(to: .createChannel) {
+                                newChannelInputText = ""
+                                showingAddChannelAlert = true
+                            }
                         }) {
-                            Label("Create Custom Channel...", systemImage: "plus.circle")
+                            Label(
+                                subscriptionManager.isPro ? "Create Custom Channel..." : "Create Custom Channel... (Pro 🔒)",
+                                systemImage: subscriptionManager.isPro ? "plus.circle" : "lock.fill"
+                            )
                         }
 
                     } label: {
@@ -60,6 +67,15 @@ struct RadioCallView: View {
                                 .frame(width: 8, height: 8)
                             Text(viewModel.selectedChannel)
                                 .font(.system(size: 14, weight: .semibold))
+                            if !viewModel.activeChannelMembers.isEmpty {
+                                Text("\(viewModel.activeChannelMembers.count)")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.85))
+                                    .clipShape(Capsule())
+                            }
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 11, weight: .bold))
                         }
@@ -73,11 +89,13 @@ struct RadioCallView: View {
                     Spacer()
                     
                     Button(action: {
-                        newChannelInputText = ""
-                        showingAddChannelAlert = true
+                        featureAccessManager.requireAccess(to: .createChannel) {
+                            newChannelInputText = ""
+                            showingAddChannelAlert = true
+                        }
                     }) {
                         HStack(spacing: 4) {
-                            Image(systemName: "plus")
+                            Image(systemName: subscriptionManager.isPro ? "plus" : "lock.fill")
                             Text("New Channel")
                         }
                         .font(.system(size: 12, weight: .bold))
@@ -90,6 +108,131 @@ struct RadioCallView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
+                
+                // High-Visibility Emergency SOS Beacon Banner
+                if let sos = viewModel.activeSOSAlert {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 16, weight: .black))
+                                .foregroundColor(.yellow)
+                            
+                            Text("CRITICAL EMERGENCY SOS")
+                                .font(.system(size: 13, weight: .black))
+                                .foregroundColor(.white)
+                            
+                            Spacer()
+                            
+                            Button {
+                                viewModel.dismissSOSAlert()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                        }
+                        
+                        HStack(spacing: 8) {
+                            Text("From: \(sos.senderAlias)")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text("• \(sos.timestamp.relativeTimeAgo)")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        
+                        if let loc = sos.distanceAndBearing(from: viewModel.currentLocation) {
+                            Text("📍 \(loc.distanceString) • \(loc.bearingString) • \(sos.formattedCoordinates)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.9))
+                        } else {
+                            Text("📍 \(sos.formattedCoordinates)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.9))
+                        }
+                        
+                        HStack {
+                            Button {
+                                viewModel.tuneToEmergencyChannel()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "antenna.radiowaves.left.and.right")
+                                    Text("TUNE TO CH-1 EMERGENCY")
+                                }
+                                .font(.system(size: 12, weight: .black))
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.white)
+                                .cornerRadius(12)
+                            }
+                            
+                            Spacer()
+                        }
+                        .padding(.top, 2)
+                    }
+                    .padding(14)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.red, Color.red.opacity(0.88)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .cornerRadius(16)
+                    .shadow(color: Color.red.opacity(0.5), radius: 10, x: 0, y: 4)
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Live Transmitting Banner
+                if viewModel.isPTTPressed {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(AppTheme.hotMagenta)
+                            .frame(width: 8, height: 8)
+                            .scaleEffect(breathingScale)
+                        Text("🎙️ Transmitting live on \(viewModel.selectedChannel)...")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(AppTheme.hotMagenta)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "waveform.and.mic")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(AppTheme.hotMagenta)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.hotMagenta.opacity(0.12))
+                    .cornerRadius(12)
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Live Active Speaker Banner
+                if viewModel.session.isReceivingAudio, let speaker = viewModel.liveActiveSpeaker {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                            .scaleEffect(breathingScale)
+                        Text("🔴 \(speaker) speaking live on \(viewModel.selectedChannel)...")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.red)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "waveform.and.mic")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.red)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.red.opacity(0.12))
+                    .cornerRadius(12)
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 
                 // Central watchOS Walkie-Talkie Sunset PTT Dial with Dynamic AirDrop Peer Orbit Ring & Breathing Radar Pulse
                 ZStack {
@@ -154,20 +297,33 @@ struct RadioCallView: View {
                         .shadow(color: AppTheme.hotMagenta.opacity(viewModel.isPTTPressed ? 0.7 : 0.3), radius: viewModel.isPTTPressed ? 16 : 8, x: 0, y: 4)
                     
                     VStack(spacing: 3) {
-                        Image(systemName: viewModel.isPTTPressed ? "waveform.and.mic" : "mic.fill")
-                            .font(.system(size: 30, weight: .bold))
-                        Text(viewModel.isPTTPressed ? "TALKING" : "TALK")
-                            .font(.system(size: 12, weight: .black))
+                        if !subscriptionManager.isPro {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 28, weight: .bold))
+                            Text("UNLOCK PRO")
+                                .font(.system(size: 11, weight: .black))
+                        } else {
+                            Image(systemName: viewModel.isPTTPressed ? "waveform.and.mic" : "mic.fill")
+                                .font(.system(size: 30, weight: .bold))
+                            Text(viewModel.isPTTPressed ? "TRANSMITTING" : (viewModel.session.isReceivingAudio ? "LISTENING" : "HOLD TO TALK"))
+                                .font(.system(size: 11, weight: .black))
+                        }
                     }
                     .foregroundColor(.white)
                 }
                 .frame(height: 240)
-
                 .scaleEffect(isPttPressedVisual || viewModel.isPTTPressed ? 0.94 : 1.0)
                 .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isPttPressedVisual || viewModel.isPTTPressed)
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { _ in
+                            guard featureAccessManager.canAccess(.walkieTalkie) else {
+                                if !isPttPressedVisual {
+                                    isPttPressedVisual = true
+                                    featureAccessManager.requireAccess(to: .walkieTalkie)
+                                }
+                                return
+                            }
                             if !viewModel.isPTTPressed {
                                 isPttPressedVisual = true
                                 viewModel.startTransmittingVoice()
@@ -175,7 +331,9 @@ struct RadioCallView: View {
                         }
                         .onEnded { _ in
                             isPttPressedVisual = false
-                            viewModel.stopTransmittingVoice()
+                            if featureAccessManager.canAccess(.walkieTalkie) {
+                                viewModel.stopTransmittingVoice()
+                            }
                         }
                 )
 
@@ -207,115 +365,53 @@ struct RadioCallView: View {
                 }
                 .frame(height: 28)
                 
-                // Channel-Wise Voice Transcripts Chat Bubble Stream (Expanded Layout without End Call button)
+                // Channel Voice Notes History Stream (Replacing Text Transcripts)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                        Image(systemName: "waveform.badge.mic")
                             .foregroundColor(AppTheme.tintColor)
                             .font(.system(size: 13, weight: .bold))
                         
-                        Text("TRANSCRIPTS • \(viewModel.selectedChannel)")
+                        Text("VOICE NOTES • \(viewModel.selectedChannel)")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                         
                         Spacer()
                         
-                        Text("\(viewModel.filteredTranscripts.count) messages")
+                        Text("\(viewModel.voiceMessages.count) notes")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.secondary)
                     }
                     
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
-                            LazyVStack(spacing: 10) {
-
-                                if viewModel.filteredTranscripts.isEmpty {
+                            LazyVStack(spacing: 8) {
+                                if viewModel.voiceMessages.isEmpty {
                                     VStack(spacing: 6) {
-                                        Image(systemName: "waveform.badge.mic")
-                                            .font(.system(size: 24))
+                                        Image(systemName: "waveform.circle")
+                                            .font(.system(size: 28))
                                             .foregroundColor(.secondary.opacity(0.6))
-                                        Text("No voice transcripts on \(viewModel.selectedChannel) yet.")
+                                        Text("No voice notes on \(viewModel.selectedChannel) yet.")
                                             .font(.system(size: 12, weight: .medium))
                                             .foregroundColor(.secondary)
-                                        Text("Press & hold TALK to broadcast voice.")
+                                        Text("Press & hold TALK to broadcast live audio.")
                                             .font(.system(size: 11, weight: .regular))
                                             .foregroundColor(.secondary.opacity(0.8))
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 24)
                                 } else {
-                                    ForEach(viewModel.filteredTranscripts) { item in
-                                        let isMe = (item.speakerName == viewModel.localUserHandle || item.speakerName == "LOCAL_SELF")
-                                        
-                                        HStack(alignment: .bottom, spacing: 8) {
-                                            if isMe { Spacer(minLength: 40) }
-                                            
-                                            if !isMe {
-                                                Circle()
-                                                    .fill(Color.blue.opacity(0.2))
-                                                    .frame(width: 26, height: 26)
-                                                    .overlay(
-                                                        Text(item.speakerName.initials)
-                                                            .font(.system(size: 10, weight: .bold))
-                                                            .foregroundColor(.blue)
-                                                    )
-                                            }
-                                            
-                                            VStack(alignment: isMe ? .trailing : .leading, spacing: 3) {
-                                                Text(item.speakerName)
-                                                    .font(.system(size: 10, weight: .bold))
-                                                    .foregroundColor(isMe ? .orange : .secondary)
-                                                
-                                                Text(item.text)
-                                                    .font(.system(size: 13, weight: .regular))
-                                                    .foregroundColor(isMe ? .white : .primary)
-                                                    .padding(.horizontal, 12)
-                                                    .padding(.vertical, 8)
-                                                    .background(
-                                                        isMe ?
-                                                        (item.isDelivered ?
-                                                         AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.orange, Color.orange.opacity(0.85)]), startPoint: .topLeading, endPoint: .bottomTrailing)) :
-                                                         AnyShapeStyle(LinearGradient(gradient: Gradient(colors: [Color.gray, Color.gray.opacity(0.75)]), startPoint: .topLeading, endPoint: .bottomTrailing))) :
-                                                        AnyShapeStyle(Color(UIColor.tertiarySystemGroupedBackground))
-                                                    )
-                                                    .cornerRadius(14)
-                                                
-                                                HStack(spacing: 4) {
-                                                    Text(item.timestamp.logTimeString)
-                                                        .font(.system(size: 9, weight: .medium))
-                                                        .foregroundColor(.secondary)
-                                                    
-                                                    if isMe {
-                                                        Image(systemName: item.isDelivered ? "checkmark.circle.fill" : "clock.fill")
-                                                            .font(.system(size: 10, weight: .bold))
-                                                            .foregroundColor(item.isDelivered ? .green : .gray)
-                                                    }
-                                                }
-
-                                            }
-                                            
-                                            if isMe {
-                                                Circle()
-                                                    .fill(Color.orange.opacity(0.2))
-                                                    .frame(width: 26, height: 26)
-                                                    .overlay(
-                                                        Text(item.speakerName.initials)
-                                                            .font(.system(size: 10, weight: .bold))
-                                                            .foregroundColor(.orange)
-                                                    )
-                                            }
-                                            
-                                            if !isMe { Spacer(minLength: 40) }
-                                        }
-                                        .id(item.id)
+                                    ForEach(viewModel.voiceMessages) { item in
+                                        VoiceMessageBubbleView(message: item)
+                                            .id(item.id)
                                     }
                                 }
                             }
                             .padding(.vertical, 4)
                         }
-                        .onChange(of: viewModel.filteredTranscripts.count) { _ in
-                            if let last = viewModel.filteredTranscripts.last {
+                        .onChange(of: viewModel.voiceMessages.count) {
+                            if let last = viewModel.voiceMessages.last {
                                 withAnimation {
                                     proxy.scrollTo(last.id, anchor: .bottom)
                                 }
@@ -329,7 +425,7 @@ struct RadioCallView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
             }
-            .navigationTitle("Walkie-Talkie")
+            .navigationTitle(subscriptionManager.isPro ? "Walkie-Talkie" : "Walkie-Talkie 🔒")
             .alert("Create Custom Channel", isPresented: $showingAddChannelAlert) {
                 TextField("Channel Name (e.g. BASECAMP)", text: $newChannelInputText)
                 Button("Create") {

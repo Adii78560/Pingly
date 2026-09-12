@@ -18,6 +18,7 @@ final class SDVoiceTranscript {
     var timestamp: Date
     var isSynced: Bool
     var isDelivered: Bool = false
+    var sessionID: UUID?
     
     init(
         id: UUID = UUID(),
@@ -26,7 +27,8 @@ final class SDVoiceTranscript {
         channel: String = "CH-1 EMERGENCY",
         timestamp: Date = Date(),
         isSynced: Bool = false,
-        isDelivered: Bool = false
+        isDelivered: Bool = false,
+        sessionID: UUID? = nil
     ) {
         self.id = id
         self.speakerName = speakerName
@@ -35,6 +37,7 @@ final class SDVoiceTranscript {
         self.timestamp = timestamp
         self.isSynced = isSynced
         self.isDelivered = isDelivered
+        self.sessionID = sessionID
     }
 }
 
@@ -42,6 +45,9 @@ final class SDVoiceTranscript {
 @Model
 final class SDChatMessage {
     @Attribute(.unique) var id: UUID
+    var originID: String = ""
+    var senderID: String = ""
+    var destinationID: String = ""
     var senderName: String
     var channel: String
     var text: String
@@ -61,6 +67,9 @@ final class SDChatMessage {
     
     init(
         id: UUID = UUID(),
+        originID: String? = nil,
+        senderID: String = NodeIdentity.shared.nodeID,
+        destinationID: String? = nil,
         senderName: String,
         channel: String = "CH-1 EMERGENCY",
         text: String,
@@ -74,6 +83,9 @@ final class SDChatMessage {
         accuracy: Double? = nil
     ) {
         self.id = id
+        self.senderID = senderID
+        self.originID = originID ?? senderID
+        self.destinationID = destinationID ?? channel
         self.senderName = senderName
         self.channel = channel
         self.text = text
@@ -106,6 +118,7 @@ enum PendingMessageStatus: String, Codable {
     case cancelled = "CANCELLED"
     
     // Legacy Raw Value Aliases for Backward Compatibility
+    static var pending: PendingMessageStatus { .queued }
     static var sending: PendingMessageStatus { .transmitting }
     static var waitingForACK: PendingMessageStatus { .sent }
     static var acknowledged: PendingMessageStatus { .delivered }
