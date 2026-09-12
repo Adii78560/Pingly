@@ -23,6 +23,9 @@ struct RadarView: View {
     @State private var isBreathing = false
     @State private var showEditNameAlert = false
     @State private var newBroadcastNameText = ""
+    @State private var showTacticalMap = false
+    @State private var showBreadcrumbs = false
+    @State private var activeNavTarget: NavigationTarget?
     
     var body: some View {
         NavigationStack {
@@ -52,6 +55,22 @@ struct RadarView: View {
             }
             .navigationTitle("Radar")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    HStack(spacing: 12) {
+                        Button(action: { showTacticalMap = true }) {
+                            Image(systemName: "map.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(AppTheme.tintColor)
+                        }
+                        
+                        Button(action: { showBreadcrumbs = true }) {
+                            Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         newBroadcastNameText = viewModel.broadcastName
@@ -75,6 +94,27 @@ struct RadarView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This name will be visible to nearby off-grid Relyvo devices.")
+            }
+            .fullScreenCover(isPresented: $showTacticalMap) {
+                NavigationStack {
+                    TacticalMapView(onSelectTarget: { target in
+                        self.showTacticalMap = false
+                        self.activeNavTarget = target
+                    })
+                    .navigationTitle("Tactical Map")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Close") { showTacticalMap = false }
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showBreadcrumbs) {
+                BreadcrumbTrailView()
+            }
+            .fullScreenCover(item: $activeNavTarget) { target in
+                OfflineNavigationView(target: target)
             }
             .onAppear {
                 newBroadcastNameText = viewModel.broadcastName

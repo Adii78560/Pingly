@@ -19,6 +19,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var currentCoordinate: CLLocationCoordinate2D?
     @Published private(set) var currentAltitude: Double?
     @Published private(set) var currentAccuracy: Double?
+    @Published private(set) var currentSpeed: Double?
+    @Published private(set) var currentCourse: Double?
     @Published private(set) var currentHeading: Double?
     @Published private(set) var rawHeading: Double?
     @Published private(set) var continuousHeading: Double = 0.0
@@ -39,8 +41,17 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 5 // Update every 5 meters for relative location screen
+        locationManager.distanceFilter = 5 // Update every 5 meters for relative location & navigation
         locationManager.headingFilter = 2 // Update every 2 degrees for smooth compass rotation
+        locationManager.pausesLocationUpdatesAutomatically = false
+        
+        // Configure background location updates if bundle declares location background mode
+        let backgroundModes = Bundle.main.infoDictionary?["UIBackgroundModes"] as? [String] ?? []
+        if backgroundModes.contains("location") {
+            locationManager.allowsBackgroundLocationUpdates = true
+            locationManager.showsBackgroundLocationIndicator = true
+        }
+        
         self.authorizationStatus = locationManager.authorizationStatus
     }
     
@@ -303,7 +314,15 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             self.currentCoordinate = location.coordinate
             self.currentAltitude = location.altitude
             self.currentAccuracy = location.horizontalAccuracy
+            self.currentSpeed = location.speed >= 0 ? location.speed : nil
+            self.currentCourse = location.course >= 0 ? location.course : nil
             self.lastLocationTimestamp = location.timestamp
+            
+            LocationShareManager.shared.checkUrgentMovementTrigger(
+                newCoord: location.coordinate,
+                newHeading: self.currentHeading,
+                speed: self.currentSpeed
+            )
             
             if let completion = self.oneShotCompletion {
                 completion(location)

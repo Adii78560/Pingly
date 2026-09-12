@@ -386,8 +386,131 @@ final class SDLocationShareSession {
     }
 }
 
+/// SwiftData persistent model for user GPS breadcrumb tracking sessions
+@Model
+final class SDBreadcrumbTrack {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var startedAt: Date
+    var endedAt: Date?
+    var isActive: Bool
+    var totalDistanceMeters: Double
+    var pointsCount: Int
+    var startLatitude: Double?
+    var startLongitude: Double?
+    var startAltitude: Double?
+    
+    init(
+        id: UUID = UUID(),
+        name: String = "Track \(Date().formatted(date: .abbreviated, time: .shortened))",
+        startedAt: Date = Date(),
+        endedAt: Date? = nil,
+        isActive: Bool = true,
+        totalDistanceMeters: Double = 0.0,
+        pointsCount: Int = 0,
+        startLatitude: Double? = nil,
+        startLongitude: Double? = nil,
+        startAltitude: Double? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.isActive = isActive
+        self.totalDistanceMeters = totalDistanceMeters
+        self.pointsCount = pointsCount
+        self.startLatitude = startLatitude
+        self.startLongitude = startLongitude
+        self.startAltitude = startAltitude
+    }
+}
 
+/// SwiftData persistent model for individual GPS breadcrumb points along a track
+@Model
+final class SDBreadcrumbPoint {
+    @Attribute(.unique) var id: UUID
+    var trackID: UUID
+    var latitude: Double
+    var longitude: Double
+    var altitude: Double?
+    var accuracy: Double
+    var speed: Double?
+    var course: Double?
+    var heading: Double?
+    var timestamp: Date
+    var sequenceIndex: Int
+    
+    init(
+        id: UUID = UUID(),
+        trackID: UUID,
+        latitude: Double,
+        longitude: Double,
+        altitude: Double? = nil,
+        accuracy: Double = 5.0,
+        speed: Double? = nil,
+        course: Double? = nil,
+        heading: Double? = nil,
+        timestamp: Date = Date(),
+        sequenceIndex: Int = 0
+    ) {
+        self.id = id
+        self.trackID = trackID
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
+        self.accuracy = accuracy
+        self.speed = speed
+        self.course = course
+        self.heading = heading
+        self.timestamp = timestamp
+        self.sequenceIndex = sequenceIndex
+    }
+}
 
-
-
-
+/// SwiftData persistent model tracking downloaded or bundled offline vector/topological map regions
+@Model
+final class SDOfflineMapRegion {
+    @Attribute(.unique) var id: String
+    var name: String
+    var stateOrRegion: String
+    var minLatitude: Double
+    var minLongitude: Double
+    var maxLatitude: Double
+    var maxLongitude: Double
+    var minZoom: Int
+    var maxZoom: Int
+    var fileSizeBytes: Int64
+    var isDownloaded: Bool
+    var downloadedAt: Date?
+    var localFilePath: String?
+    
+    init(
+        id: String,
+        name: String,
+        stateOrRegion: String,
+        minLatitude: Double,
+        minLongitude: Double,
+        maxLatitude: Double,
+        maxLongitude: Double,
+        minZoom: Int = 0,
+        maxZoom: Int = 16,
+        fileSizeBytes: Int64 = 0,
+        isDownloaded: Bool = false,
+        downloadedAt: Date? = nil,
+        localFilePath: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.stateOrRegion = stateOrRegion
+        self.minLatitude = minLatitude
+        self.minLongitude = minLongitude
+        self.maxLatitude = maxLatitude
+        self.maxLongitude = maxLongitude
+        self.minZoom = minZoom
+        self.maxZoom = maxZoom
+        self.fileSizeBytes = fileSizeBytes
+        self.isDownloaded = isDownloaded
+        self.downloadedAt = downloadedAt
+        self.localFilePath = localFilePath
+    }
+}

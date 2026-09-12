@@ -56,6 +56,9 @@ struct RelyvoApp: App {
         // Run self-testing verification suite on launch
         DispatchQueue.global(qos: .background).async {
             _ = RelaynHardeningTests.shared.runAllVerificationTests()
+            Task { @MainActor in
+                _ = NavigationEngineTests.shared.runAllNavigationTests()
+            }
         }
     }
     

@@ -398,6 +398,21 @@ final class LocationShareManager: ObservableObject {
             )
             reloadActiveSessions()
             
+            // Dispatch live update to Offline Navigation Engine
+            let navTarget = NavigationTarget(
+                id: packet.senderID,
+                displayName: packet.senderName,
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                altitude: nil,
+                accuracy: acc,
+                timestamp: packet.timestamp,
+                speed: packet.speed,
+                course: packet.course,
+                sequenceNumber: packet.sequenceNumber ?? 0,
+                targetType: .peer
+            )
+            OfflineNavigationService.shared.updateTargetCoordinate(navTarget)
+            
         case "LOCATION_SHARING_STOPPED":
             SwiftDataService.shared.updateLocationShareSession(
                 remotePeerID: packet.senderID,
@@ -488,25 +503,90 @@ final class LocationShareManager: ObservableObject {
         reloadActiveSessions()
     }
     
-    private func startPeriodicBroadcastTimer() {
+    // MARK: - Adaptive Location Broadcasting Engine
+    
+    private var lastBroadcastCoordinate: CLLocationCoordinate2D?
+    private var lastBroadcastHeading: Double?
+    private var currentBroadcastInterval: TimeInterval = 10.0
+    
+    /// Determines optimal broadcast interval based on movement speed and SOS state
+    func calculateAdaptiveInterval(speedMetersPerSec: Double?, isSOSActive: Bool = false) -> TimeInterval {
+        if isSOSActive {
+            return 2.0 // High priority emergency updates
+        }
+        guard let speed = speedMetersPerSec, speed >= 0 else {
+            return 10.0 // Default walking baseline
+        }
+        
+        let speedKmh = speed * 3.6
+        if speedKmh < 1.0 {
+            return 30.0 // Stationary: conserve battery
+        } else if speedKmh < 3.0 {
+            return 15.0 // Slow walking
+        } else if speedKmh < 7.0 {
+            return 8.0  // Normal walking
+        } else if speedKmh < 20.0 {
+            return 5.0  // Running / cycling
+        } else {
+            return 3.0  // Fast vehicle movement
+        }
+    }
+    
+    private func startPeriodicBroadcastTimer(interval: TimeInterval = 10.0) {
         broadcastTimer?.invalidate()
-        broadcastTimer = Timer.scheduledTimer(withTimeInterval: 6.0, repeats: true) { [weak self] _ in
+        currentBroadcastInterval = interval
+        broadcastTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             self?.broadcastLocationToActiveSessions()
+        }
+    }
+    
+    /// Trigger immediate broadcast if user turns significantly (>30°) or jumps distance (>15m)
+    func checkUrgentMovementTrigger(newCoord: CLLocationCoordinate2D, newHeading: Double?, speed: Double?) {
+        if let lastCoord = lastBroadcastCoordinate {
+            let dist = OfflineNavigationService.shared.calculateDistance(from: lastCoord, to: newCoord)
+            if dist >= 15.0 {
+                AppLogger.location.info("[AdaptiveBroadcast] Movement threshold exceeded (\(dist)m >= 15m), triggering instant broadcast")
+                broadcastLocationToActiveSessions()
+                return
+            }
+        }
+        
+        if let lastHead = lastBroadcastHeading, let currentHead = newHeading, let spd = speed, spd > 0.5 {
+            let angleDiff = abs(CircularAngleHelper.shortestAngularDifference(from: lastHead, to: currentHead))
+            if angleDiff >= 30.0 {
+                AppLogger.location.info("[AdaptiveBroadcast] Heading shift threshold exceeded (\(angleDiff)° >= 30°), triggering instant broadcast")
+                broadcastLocationToActiveSessions()
+                return
+            }
         }
     }
     
     private func broadcastLocationToActiveSessions() {
         let sessions = SwiftDataService.shared.fetchAllLocationShareSessions()
         let activeSharing = sessions.filter { $0.isSharingLocal && $0.isActive }
-        guard !activeSharing.isEmpty else { return }
+        guard !activeSharing.isEmpty else {
+            // Idle reschedule
+            startPeriodicBroadcastTimer(interval: 30.0)
+            return
+        }
         
         LocationService.shared.getCurrentLocationSnapshot { [weak self] location in
-            guard let self = self, let location = location else { return }
+            guard let self = self else { return }
+            guard let location = location else {
+                self.startPeriodicBroadcastTimer(interval: 10.0)
+                return
+            }
+            
             let lat = location.coordinate.latitude
             let lon = location.coordinate.longitude
             let acc = location.horizontalAccuracy
             let speed = location.speed >= 0 ? location.speed : nil
             let course = location.course >= 0 ? location.course : nil
+            
+            self.lastBroadcastCoordinate = location.coordinate
+            if let heading = LocationService.shared.currentHeading {
+                self.lastBroadcastHeading = heading
+            }
             
             self.lock.lock()
             self.localSequenceNumber += 1
@@ -546,6 +626,14 @@ final class LocationShareManager: ObservableObject {
                 )
             }
             self.reloadActiveSessions()
+            
+            // Adapt next timer firing based on current velocity and emergency state
+            let isSOSActive = MultipeerService.shared.currentStatus != .normal
+            let nextInterval = self.calculateAdaptiveInterval(
+                speedMetersPerSec: speed,
+                isSOSActive: isSOSActive
+            )
+            self.startPeriodicBroadcastTimer(interval: nextInterval)
         }
     }
     

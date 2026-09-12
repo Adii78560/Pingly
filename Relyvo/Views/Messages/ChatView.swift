@@ -142,7 +142,8 @@ struct ChatView: View {
                         longitude: lon,
                         accuracy: message.accuracy,
                         timestamp: message.timestamp,
-                        isCurrentUser: isSentByMe
+                        isCurrentUser: isSentByMe,
+                        isSOS: message.isSOS
                     )
                 } else {
                     VStack(alignment: isSentByMe ? .trailing : .leading, spacing: 2) {

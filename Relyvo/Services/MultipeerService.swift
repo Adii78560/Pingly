@@ -115,7 +115,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     private let seenCache = MeshSeenCache()
     
     private var currentHandle: String = Constants.App.defaultUserHandle
-    private var currentStatus: EmergencyStatus = .normal
+    public private(set) var currentStatus: EmergencyStatus = .normal
     private var connectStartTimestamp: Date? = nil
     private var outboundSequenceNumber: UInt16 = 0
     

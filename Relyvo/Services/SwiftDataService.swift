@@ -37,9 +37,12 @@ final class SwiftDataService: ObservableObject {
             SDNotificationEvent.self,
             SDLocationShareSession.self,
             SDAudioSegment.self,
-            SDVoiceMessage.self
+            SDVoiceMessage.self,
+            SDBreadcrumbTrack.self,
+            SDBreadcrumbPoint.self,
+            SDOfflineMapRegion.self
         ])
-        AppLogger.multipeer.info("[Persistence] Model schema loaded (8 entities registered)")
+        AppLogger.multipeer.info("[Persistence] Model schema loaded (11 entities registered)")
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         let storeURL = config.url
