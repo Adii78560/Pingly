@@ -54,8 +54,8 @@ struct RelyvoApp: App {
         AppLogger.multipeer.info("[AppLifecycle] Main UI initialization started")
         
         // Run self-testing verification suite on launch
-        DispatchQueue.global(qos: .background).async {
-            _ = RelaynHardeningTests.shared.runAllVerificationTests()
+        Task {
+            _ = await RelaynHardeningTests.shared.runAllVerificationTests()
             Task { @MainActor in
                 _ = NavigationEngineTests.shared.runAllNavigationTests()
             }

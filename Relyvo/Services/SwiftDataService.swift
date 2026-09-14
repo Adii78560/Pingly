@@ -25,6 +25,8 @@ final class SwiftDataService: ObservableObject {
     @Published private(set) var totalUnsyncedCount: Int = 0
     @Published private(set) var isUsingInMemoryFallback: Bool = false
     
+    public private(set) var persistenceActor: PersistenceActor!
+    
     init(inMemory: Bool = false) {
         AppLogger.multipeer.info("[Persistence] App launch detected (inMemory=\(inMemory))")
         AppLogger.multipeer.info("[Persistence] Starting SwiftData initialization")
@@ -79,6 +81,7 @@ final class SwiftDataService: ObservableObject {
         
         do {
             self.container = try ModelContainer(for: schema, configurations: [config])
+            self.persistenceActor = PersistenceActor(modelContainer: self.container)
             AppLogger.multipeer.info("[Persistence] ModelContainer creation succeeded")
             AppLogger.multipeer.info("[Persistence] ModelContext created")
             AppLogger.multipeer.info("[Persistence] Container instance created")
@@ -107,6 +110,7 @@ final class SwiftDataService: ObservableObject {
             let fallbackConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
                 self.container = try ModelContainer(for: schema, configurations: [fallbackConfig])
+                self.persistenceActor = PersistenceActor(modelContainer: self.container)
                 self.isUsingInMemoryFallback = true
                 AppLogger.multipeer.warning("[Persistence] Container instance created (FALLBACK)")
                 AppLogger.multipeer.warning("[Persistence] Store type = in-memory")
@@ -138,91 +142,14 @@ final class SwiftDataService: ObservableObject {
     }
     
     /// Phase 5 Diagnostic: Performs a non-destructive WRITE -> SAVE -> FETCH -> VERIFY -> DELETE cycle to test SwiftData health
-    @discardableResult
-    func performPersistenceReadWriteDiagnosticTest() -> (success: Bool, message: String) {
-        AppLogger.multipeer.info("[PersistenceTest] Test started")
-        let testID = UUID()
-        let testText = "[DIAGNOSTIC_TEST_\(testID.uuidString.prefix(6))]"
-        
-        let testMessage = SDChatMessage(
-            id: testID,
-            senderName: "DiagnosticSystem",
-            channel: "DIAGNOSTIC_CHANNEL",
-            text: testText,
-            timestamp: Date(),
-            isSynced: true,
-            isDelivered: true
-        )
-        
-        // 1. WRITE
-        context.insert(testMessage)
-        AppLogger.multipeer.info("[PersistenceTest] Test record created")
-        
-        // 2. SAVE
-        do {
-            try context.save()
-            AppLogger.multipeer.info("[PersistenceTest] Save succeeded")
-        } catch {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at SAVE stage: \(error.localizedDescription)")
-            return (false, "SAVE failed: \(error.localizedDescription)")
-        }
-        
-        // 3. FETCH
-        let descriptor = FetchDescriptor<SDChatMessage>(
-            predicate: #Predicate { $0.id == testID }
-        )
-        guard let fetched = (try? context.fetch(descriptor))?.first else {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at FETCH stage: Record not found")
-            return (false, "FETCH failed: Record not found")
-        }
-        AppLogger.multipeer.info("[PersistenceTest] Fetch succeeded")
-        
-        // 4. VERIFY
-        guard fetched.text == testText && fetched.senderName == "DiagnosticSystem" else {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at VERIFY stage: Data mismatch")
-            return (false, "VERIFY failed: Record content mismatch")
-        }
-        AppLogger.multipeer.info("[PersistenceTest] Record verification succeeded")
-        
-        // 5. DELETE & CLEANUP
-        context.delete(fetched)
-        do {
-            try context.save()
-            AppLogger.multipeer.info("[PersistenceTest] Cleanup succeeded")
-        } catch {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at CLEANUP stage: \(error.localizedDescription)")
-            return (false, "CLEANUP failed: \(error.localizedDescription)")
-        }
-        
-        AppLogger.multipeer.info("[PersistenceTest] TEST PASSED")
-        return (true, "SwiftData Read/Write Test Passed Successfully")
-    }
+    
 
 
     
     // MARK: - Voice Transcripts Operations
     
     /// Persists a voice transcript to SwiftData local storage.
-    func saveVoiceTranscript(id: UUID = UUID(), speakerName: String, text: String, channel: String, isDelivered: Bool = false, sessionID: UUID? = nil) -> SDVoiceTranscript {
-        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
-        AppLogger.multipeer.info("\(tag)_START type=voiceTranscript")
-        let transcript = SDVoiceTranscript(
-            id: id,
-            speakerName: speakerName,
-            text: text,
-            channel: channel,
-            timestamp: Date(),
-            isSynced: false,
-            isDelivered: isDelivered,
-            sessionID: sessionID
-        )
-        context.insert(transcript)
-        saveContext()
-        updateUnsyncedCount()
-        AppLogger.multipeer.info("\(tag)_SUCCESS type=voiceTranscript")
-        AppLogger.audio.info("Persisted Voice Transcript (Delivered: \(isDelivered)): [\(channel)] \(speakerName): \"\(text)\"")
-        return transcript
-    }
+    
     
     /// Fetches all stored voice transcripts for a specific channel sorted by timestamp.
     func fetchTranscripts(for channel: String) -> [VoiceTranscript] {
@@ -251,53 +178,12 @@ final class SwiftDataService: ObservableObject {
     }
     
     /// Marks pending transcripts for a channel as delivered when peers join.
-    func markTranscriptsAsDelivered(for channel: String) {
-        let targetChannel = channel.uppercased()
-        let descriptor = FetchDescriptor<SDVoiceTranscript>(
-            predicate: #Predicate { $0.channel == targetChannel && !$0.isDelivered }
-        )
-        if let results = try? context.fetch(descriptor) {
-            for item in results {
-                item.isDelivered = true
-            }
-            saveContext()
-            AppLogger.multipeer.info("Marked \(results.count) transcripts on '\(channel)' as delivered.")
-        }
-    }
+    
     
     // MARK: - Audio Segments Operations
     
     /// Persists walkie-talkie audio recording metadata to SwiftData local storage.
-    func saveAudioSegment(
-        id: UUID = UUID(),
-        sessionID: UUID,
-        senderID: String,
-        senderName: String,
-        channelID: String,
-        timestamp: Date = Date(),
-        duration: Double,
-        transcriptText: String? = nil,
-        localFileURL: String,
-        directionRaw: String
-    ) -> SDAudioSegment {
-        let segment = SDAudioSegment(
-            id: id,
-            sessionID: sessionID,
-            senderID: senderID,
-            senderName: senderName,
-            channelID: channelID,
-            timestamp: timestamp,
-            duration: duration,
-            transcriptText: transcriptText,
-            localFileURL: localFileURL,
-            directionRaw: directionRaw
-        )
-        context.insert(segment)
-        saveContext()
-        AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SAVE sessionID=\(sessionID) file=\(localFileURL)")
-        AppLogger.audio.info("[PINGLY_AUDIO_PERSIST] SUCCESS sessionID=\(sessionID)")
-        return segment
-    }
+    
     
     /// Fetches all stored audio segments for a specific channel sorted by timestamp.
     func fetchAudioSegments(for channel: String) -> [SDAudioSegment] {
@@ -318,39 +204,7 @@ final class SwiftDataService: ObservableObject {
     // MARK: - Voice Message Operations (Replacing Text Transcripts)
     
     /// Persists a finalized walkie-talkie audio recording note to SwiftData under the channel.
-    @discardableResult
-    func saveVoiceMessage(
-        id: UUID = UUID(),
-        sessionID: UUID,
-        channelID: String,
-        senderID: String,
-        senderAlias: String,
-        timestamp: Date = Date(),
-        duration: Double,
-        audioFilePath: String,
-        directionRaw: String = "SENDER",
-        isDelivered: Bool = true
-    ) -> SDVoiceMessage {
-        let normalizedChannel = channelID.uppercased()
-        let vm = SDVoiceMessage(
-            id: id,
-            sessionID: sessionID,
-            channelID: normalizedChannel,
-            senderID: senderID,
-            senderAlias: senderAlias,
-            timestamp: timestamp,
-            duration: duration,
-            audioFilePath: audioFilePath,
-            isPlayed: false,
-            directionRaw: directionRaw,
-            isDelivered: isDelivered
-        )
-        context.insert(vm)
-        saveContext()
-        AppLogger.audio.info("[VOICE_MESSAGE_PERSIST] SAVE sessionID=\(sessionID.uuidString) channel=\(normalizedChannel) duration=\(duration)s file=\(audioFilePath)")
-        NotificationCenter.default.post(name: .didSaveVoiceMessage, object: nil)
-        return vm
-    }
+    
     
     /// Fetches all stored voice messages for a specific channel sorted by timestamp.
     func fetchVoiceMessages(for channel: String) -> [VoiceMessage] {
@@ -383,129 +237,22 @@ final class SwiftDataService: ObservableObject {
     }
     
     /// Marks a specific voice message as played/listened.
-    func markVoiceMessageAsPlayed(id: UUID) {
-        let descriptor = FetchDescriptor<SDVoiceMessage>(
-            predicate: #Predicate { $0.id == id }
-        )
-        if let record = try? context.fetch(descriptor).first {
-            record.isPlayed = true
-            saveContext()
-        }
-    }
+    
     
     /// Marks all pending voice messages in a channel as delivered.
-    func markVoiceMessagesAsDelivered(for channel: String) {
-        let normalizedChannel = channel.uppercased()
-        let descriptor = FetchDescriptor<SDVoiceMessage>(
-            predicate: #Predicate { $0.channelID == normalizedChannel && !$0.isDelivered }
-        )
-        if let records = try? context.fetch(descriptor) {
-            for r in records {
-                r.isDelivered = true
-            }
-            saveContext()
-        }
-    }
+    
 
     /// Updates the audioFilePath of an SDVoiceMessage upon successful M4A compression.
-    func updateVoiceMessageFilePath(sessionID: UUID, newPath: String) {
-        let descriptor = FetchDescriptor<SDVoiceMessage>(
-            predicate: #Predicate { $0.sessionID == sessionID }
-        )
-        if let record = try? context.fetch(descriptor).first {
-            record.audioFilePath = newPath
-            saveContext()
-            NotificationCenter.default.post(name: .didSaveVoiceMessage, object: nil)
-        }
-    }
+    
 
     // MARK: - Chat Messages Operations
     
     /// Persists a chat or location message to SwiftData local storage.
-    func saveChatMessage(
-        id: UUID = UUID(),
-        originID: String? = nil,
-        senderID: String? = nil,
-        destinationID: String? = nil,
-        senderName: String,
-        channel: String,
-        text: String,
-        isDelivered: Bool = false,
-        messageType: P2PMessageType = .chat,
-        latitude: Double? = nil,
-        longitude: Double? = nil,
-        altitude: Double? = nil,
-        accuracy: Double? = nil
-    ) -> SDChatMessage {
-        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
-        AppLogger.multipeer.info("\(tag)_START type=\(messageType.rawValue)")
-        let resolvedSenderID = senderID ?? NodeIdentity.shared.nodeID
-        let resolvedOriginID = originID ?? resolvedSenderID
-        let resolvedDestinationID = destinationID ?? channel
-        let message = SDChatMessage(
-            id: id,
-            originID: resolvedOriginID,
-            senderID: resolvedSenderID,
-            destinationID: resolvedDestinationID,
-            senderName: senderName,
-            channel: channel,
-            text: text,
-            timestamp: Date(),
-            isSynced: false,
-            isDelivered: isDelivered,
-            messageType: messageType,
-            latitude: latitude,
-            longitude: longitude,
-            altitude: altitude,
-            accuracy: accuracy
-        )
-        context.insert(message)
-        saveContext()
-        updateUnsyncedCount()
-        AppLogger.multipeer.info("\(tag)_SUCCESS type=\(messageType.rawValue)")
-        AppLogger.multipeer.info("Persisted Chat Message (Type: \(messageType.rawValue), Delivered: \(isDelivered)): [\(channel)] \(senderName): \"\(text)\"")
-        return message
-    }
     
-    @discardableResult
-    func saveMessage(_ msg: Message) -> SDChatMessage {
-        return saveChatMessage(
-            id: msg.id,
-            originID: msg.originID,
-            senderID: msg.senderID,
-            destinationID: msg.destinationID,
-            senderName: msg.senderName,
-            channel: msg.destinationID,
-            text: msg.text,
-            isDelivered: true,
-            messageType: msg.type,
-            latitude: msg.latitude,
-            longitude: msg.longitude,
-            altitude: msg.altitude,
-            accuracy: msg.accuracy
-        )
-    }
     
-    @discardableResult
-    func savePendingMessage(
-        messageID: UUID,
-        originID: String,
-        destinationID: String,
-        recipientName: String,
-        senderName: String,
-        text: String,
-        channel: String
-    ) -> SDPendingMessage? {
-        return enqueuePendingMessage(
-            messageID: messageID,
-            originID: originID,
-            destinationID: destinationID,
-            recipientName: recipientName,
-            senderName: senderName,
-            text: text,
-            channel: channel
-        )
-    }
+    
+    
+    
 
 
     
@@ -562,140 +309,14 @@ final class SwiftDataService: ObservableObject {
     
     private let queueLock = NSLock()
     
-    func enqueuePendingMessage(
-        messageID: UUID = UUID(),
-        originID: String? = nil,
-        destinationID: String = "BROADCAST",
-        recipientName: String,
-        senderName: String,
-        previousHopID: String? = nil,
-        text: String,
-        channel: String = "CH-1 EMERGENCY",
-        isSOS: Bool = false,
-        priorityRaw: Int = 0,
-        queueRole: QueueRole = .origin,
-        hopsCount: Int = 0,
-        ttl: Int = 5
-    ) -> SDPendingMessage? {
-
-        // Enforce 64 KB payload limit for text/transcript envelopes
-        guard text.utf8.count <= Constants.Mesh.maxPayloadBytes else {
-            AppLogger.multipeer.error("Oversized payload rejected (\(text.utf8.count) bytes > \(Constants.Mesh.maxPayloadBytes) bytes limit).")
-            return nil
-        }
-        
-        queueLock.lock()
-        defer { queueLock.unlock() }
-        
-        let existingDescriptor = FetchDescriptor<SDPendingMessage>(
-            predicate: #Predicate { $0.messageID == messageID }
-        )
-        if let existing = try? context.fetch(existingDescriptor).first {
-            return existing
-        }
-        
-        let pending = SDPendingMessage(
-            messageID: messageID,
-            originID: originID ?? senderName,
-            destinationID: destinationID,
-            recipientName: recipientName,
-            senderName: senderName,
-            previousHopID: previousHopID,
-            text: text,
-            channel: channel,
-            timestamp: Date(),
-            isSOS: isSOS,
-            priorityRaw: isSOS ? 2 : priorityRaw,
-            status: .queued,
-            queueRole: queueRole,
-            hopsCount: hopsCount,
-            ttl: ttl
-        )
-        context.insert(pending)
-        saveContext()
-        
-        AppLogger.multipeer.info("""
-        [PINGLY_QUEUE_STATE]
-        messageID=\(messageID.uuidString)
-        messageType=\(queueRole.rawValue)
-        destination=\(destinationID)
-        channel=\(channel)
-        oldStatus=NONE
-        newStatus=QUEUED
-        attempt=0
-        retryCount=0
-        timestamp=\(pending.timestamp)
-        """)
-        
-        AppLogger.multipeer.info("Enqueued pending \(queueRole.rawValue) message \(messageID) for recipient '\(recipientName)' (Dest: \(destinationID)): \"\(text.prefix(30))...\"")
-        return pending
-    }
     
-    @discardableResult
-    func enqueuePendingMessage(
-        _ message: Message,
-        status: PendingMessageStatus = .pending,
-        queueRole: QueueRole = .origin
-    ) -> SDPendingMessage? {
-        let pending = enqueuePendingMessage(
-            messageID: message.id,
-            originID: message.originID,
-            destinationID: message.destinationID,
-            recipientName: message.destinationID,
-            senderName: message.senderName,
-            previousHopID: message.previousHopID,
-            text: message.text,
-            channel: message.channelID ?? "CH-1 EMERGENCY",
-            isSOS: message.isSOS,
-            priorityRaw: message.isSOS ? 1 : 0,
-            queueRole: queueRole,
-            hopsCount: message.hopsCount,
-            ttl: message.ttl
-        )
-        if status != .pending, let p = pending {
-            p.status = status
-            saveContext()
-        }
-        return pending
-    }
     
-    func enqueueRelayMessage(_ message: Message) -> SDPendingMessage? {
-        return enqueuePendingMessage(
-            messageID: message.id,
-            originID: message.originID,
-            destinationID: message.destinationID,
-            recipientName: message.destinationID,
-            senderName: message.senderName,
-            previousHopID: message.previousHopID ?? message.senderID,
-            text: message.text,
-            channel: message.destinationID,
-            isSOS: message.isSOS,
-            priorityRaw: message.isSOS ? 2 : 0,
-            queueRole: .relay,
-            hopsCount: message.hopsCount,
-            ttl: message.ttl
-        )
-    }
+    
+    
+    
 
     
-    func resetFailedPendingMessages() {
-        queueLock.lock()
-        defer { queueLock.unlock() }
-        
-        let targetStatus = PendingMessageStatus.failed.rawValue
-        let descriptor = FetchDescriptor<SDPendingMessage>(
-            predicate: #Predicate { $0.statusRaw == targetStatus }
-        )
-        if let failedItems = try? context.fetch(descriptor), !failedItems.isEmpty {
-            for item in failedItems {
-                item.status = .queued
-                item.retryCount = 0
-                item.lastAttemptTimestamp = nil
-            }
-            saveContext()
-            AppLogger.multipeer.info("Reset \(failedItems.count) failed pending messages to QUEUED status for retry on peer reconnect.")
-        }
-    }
+    
     
     func fetchPendingMessages() -> [SDPendingMessage] {
         queueLock.lock()
@@ -726,99 +347,9 @@ final class SwiftDataService: ObservableObject {
         }
     }
     
-    func updatePendingMessageStatus(messageID: UUID, status: PendingMessageStatus, reason: String? = nil) {
-        queueLock.lock()
-        defer { queueLock.unlock() }
-        
-        let descriptor = FetchDescriptor<SDPendingMessage>(
-            predicate: #Predicate { $0.messageID == messageID }
-        )
-        if let pending = (try? context.fetch(descriptor))?.first {
-            let oldStatus = pending.status.rawValue
-            pending.status = status
-            pending.lastAttemptTimestamp = Date()
-            if status == .failed || status == .sending {
-                pending.retryCount += 1
-            }
-            if status == .failed {
-                RelaynTransportDiagnosticsManager.shared.incrementQueueFailed()
-            }
-            saveContext()
-            
-            let tag = AppLogger.messageTag(messageID)
-            if let r = reason {
-                AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(status.rawValue) reason=\(r) retryCount=\(pending.retryCount)")
-            } else {
-                AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(status.rawValue)")
-            }
-            
-            AppLogger.multipeer.info("""
-            [PINGLY_QUEUE_STATE]
-            messageID=\(messageID.uuidString)
-            messageType=\(pending.queueRole.rawValue)
-            destination=\(pending.destinationID)
-            channel=\(pending.channel)
-            oldStatus=\(oldStatus)
-            newStatus=\(status.rawValue)
-            attempt=\(pending.retryCount)
-            retryCount=\(pending.retryCount)
-            timestamp=\(Date())
-            """)
-            
-            AppLogger.multipeer.info("Updated pending message \(messageID) status to '\(status.rawValue)' (Attempt \(pending.retryCount))")
-        }
-    }
     
-    func markPendingMessageAsACKed(messageID: UUID) {
-        queueLock.lock()
-        defer { queueLock.unlock() }
-        
-        // Mark SDChatMessage as delivered (GREEN)
-        let chatDescriptor = FetchDescriptor<SDChatMessage>(
-            predicate: #Predicate { $0.id == messageID }
-        )
-        if let chat = (try? context.fetch(chatDescriptor))?.first {
-            chat.isDelivered = true
-        }
-        
-        // Mark SDVoiceTranscript as delivered (GREEN)
-        let voiceDescriptor = FetchDescriptor<SDVoiceTranscript>(
-            predicate: #Predicate { $0.id == messageID }
-        )
-        if let voice = (try? context.fetch(voiceDescriptor))?.first {
-            voice.isDelivered = true
-        }
-        
-        // Delete from pending store-and-forward queue
-        let pendingDescriptor = FetchDescriptor<SDPendingMessage>(
-            predicate: #Predicate { $0.messageID == messageID }
-        )
-        if let pendingList = try? context.fetch(pendingDescriptor) {
-            for pending in pendingList {
-                context.delete(pending)
-            }
-        }
-        
-        saveContext()
-        
-        AppLogger.multipeer.info("\(AppLogger.messageTag(messageID)) STATE WAITING_FOR_ACK -> ACKNOWLEDGED")
-        
-        AppLogger.multipeer.info("""
-        [PINGLY_QUEUE_STATE]
-        messageID=\(messageID.uuidString)
-        messageType=PENDING
-        destination=LOCAL
-        channel=N/A
-        oldStatus=WAITING_FOR_ACK
-        newStatus=DELIVERED
-        attempt=0
-        retryCount=0
-        timestamp=\(Date())
-        """)
-        
-        RelaynTransportDiagnosticsManager.shared.incrementQueueDelivered()
-        AppLogger.multipeer.info("ACK Received: Marked message \(messageID) as delivered (GREEN) and purged from pending queue.")
-    }
+    
+    
 
     
     func isMessageAlreadyProcessed(messageID: UUID) -> Bool {
@@ -914,12 +445,18 @@ final class SwiftDataService: ObservableObject {
             try context.delete(model: SDUserProfile.self)
             try context.delete(model: SDChatMessage.self)
             try context.delete(model: SDPendingMessage.self)
+            try context.delete(model: SDVoiceMessage.self)
             try context.delete(model: SDVoiceTranscript.self)
+            try context.delete(model: SDAudioSegment.self)
+            try context.delete(model: SDLocationShareSession.self)
+            try context.delete(model: SDBreadcrumbTrack.self)
+            try context.delete(model: SDBreadcrumbPoint.self)
+            try context.delete(model: SDNotificationEvent.self)
             saveContext()
             DispatchQueue.main.async {
                 self.totalUnsyncedCount = 0
             }
-            AppLogger.multipeer.info("Atomically purged all user profiles, chat messages, transcripts, and pending records from SwiftData store.")
+            AppLogger.multipeer.info("Atomically purged all user profiles, messages, locations, tracks, and notifications from SwiftData store.")
         } catch {
             AppLogger.multipeer.error("Failed to purge SwiftData store during account deletion: \(error.localizedDescription)")
         }
@@ -1020,68 +557,7 @@ final class SwiftDataService: ObservableObject {
         return (try? context.fetch(descriptor))?.first
     }
     
-    @discardableResult
-    func updateLocationShareSession(
-        remotePeerID: String,
-        remoteDisplayName: String,
-        isSharingLocal: Bool? = nil,
-        isSharingRemote: Bool? = nil,
-        lastLocalLat: Double? = nil,
-        lastLocalLon: Double? = nil,
-        lastLocalAcc: Double? = nil,
-        lastRemoteLat: Double? = nil,
-        lastRemoteLon: Double? = nil,
-        lastRemoteAcc: Double? = nil,
-        lastRemoteSpeed: Double? = nil,
-        lastRemoteCourse: Double? = nil,
-        lastRemoteSeq: Int? = nil,
-        stateRaw: String? = nil
-    ) -> SDLocationShareSession {
-        queueLock.lock()
-        defer { queueLock.unlock() }
-        
-        let localNodeID = NodeIdentity.shared.nodeID
-        let descriptor = FetchDescriptor<SDLocationShareSession>(
-            predicate: #Predicate { $0.remotePeerID == remotePeerID }
-        )
-        let session: SDLocationShareSession
-        if let existing = (try? context.fetch(descriptor))?.first {
-            session = existing
-        } else {
-            session = SDLocationShareSession(
-                localPeerID: localNodeID,
-                remotePeerID: remotePeerID,
-                remoteDisplayName: remoteDisplayName
-            )
-            context.insert(session)
-        }
-        
-        session.remoteDisplayName = remoteDisplayName
-        if let val = isSharingLocal { session.isSharingLocal = val }
-        if let val = isSharingRemote { session.isSharingRemote = val }
-        if let lat = lastLocalLat, let lon = lastLocalLon {
-            session.lastLocalLatitude = lat
-            session.lastLocalLongitude = lon
-            session.lastLocalAccuracy = lastLocalAcc
-            session.lastLocalTimestamp = Date()
-        }
-        if let lat = lastRemoteLat, let lon = lastRemoteLon {
-            session.lastRemoteLatitude = lat
-            session.lastRemoteLongitude = lon
-            session.lastRemoteAccuracy = lastRemoteAcc
-            session.lastRemoteSpeed = lastRemoteSpeed
-            session.lastRemoteCourse = lastRemoteCourse
-            session.lastRemoteTimestamp = Date()
-            session.sequenceNumber += 1
-        }
-        if let seq = lastRemoteSeq {
-            session.lastRemoteSequenceNumber = seq
-        }
-        if let state = stateRaw { session.stateRaw = state }
-        saveContext()
-        AppLogger.location.info("[LocationSession] Updated session for '\(remoteDisplayName)' (\(remotePeerID)): LocalSharing=\(session.isSharingLocal), RemoteSharing=\(session.isSharingRemote), State=\(session.stateRaw)")
-        return session
-    }
+    
     
     func fetchAllLocationShareSessions() -> [SDLocationShareSession] {
         queueLock.lock()

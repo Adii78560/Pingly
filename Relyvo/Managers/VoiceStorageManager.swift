@@ -154,8 +154,8 @@ final class VoiceStorageManager: ObservableObject {
                 """)
                 
                 // Update SwiftData record on main thread
-                DispatchQueue.main.async {
-                    SwiftDataService.shared.updateVoiceMessageFilePath(sessionID: sessionID, newPath: m4aURL.path)
+                Task { @MainActor in
+                    await SwiftDataService.shared.persistenceActor.updateVoiceMessageFilePath(sessionID: sessionID, newPath: m4aURL.path)
                     // Run background retention pruner after new compression
                     self.pruneStorageAsync()
                 }

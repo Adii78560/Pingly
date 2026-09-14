@@ -192,17 +192,20 @@ final class SpeechTranscriberManager: ObservableObject {
             
             let sessionIDToSave = self.currentSessionID
             
-            // Persist VoiceTranscript to SwiftData with initial delivery status indicator (Gray offline)
-            let sdTranscript = SwiftDataService.shared.saveVoiceTranscript(
-                speakerName: finalSpeaker,
-                text: textToSave,
-                channel: channel,
-                isDelivered: false,
-                sessionID: sessionIDToSave
-            )
+            let transcriptID = UUID()
+            Task {
+                await SwiftDataService.shared.persistenceActor.saveVoiceTranscript(
+                    id: transcriptID,
+                    speakerName: finalSpeaker,
+                    text: textToSave,
+                    channel: channel,
+                    isDelivered: false,
+                    sessionID: sessionIDToSave
+                )
+            }
             
             let transcript = VoiceTranscript(
-                id: sdTranscript.id,
+                id: transcriptID,
                 speakerName: finalSpeaker,
                 text: textToSave,
                 channel: channel,
@@ -214,19 +217,27 @@ final class SpeechTranscriberManager: ObservableObject {
             let localNodeID = NodeIdentity.shared.nodeID
             
             // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
-            _ = SwiftDataService.shared.enqueuePendingMessage(
-                messageID: sdTranscript.id,
-                originID: localNodeID,
-                destinationID: "BROADCAST",
-                recipientName: "Broadcast",
-                senderName: finalSpeaker,
-                text: "[\(channel)] \(textToSave)",
-                channel: channel
-            )
+            Task {
+                await SwiftDataService.shared.persistenceActor.enqueuePendingMessage(
+                    messageID: transcriptID,
+                    originID: localNodeID,
+                    destinationID: "BROADCAST",
+                    recipientName: "Broadcast",
+                    senderName: finalSpeaker,
+                    text: "[\(channel)] \(textToSave)",
+                    channel: channel,
+                    isSOS: false,
+                    priorityRaw: 0,
+                    statusRaw: "QUEUED",
+                    queueRoleRaw: "ORIGIN",
+                    hopsCount: 0,
+                    ttl: Constants.Emergency.broadcastTTL
+                )
+            }
             
             // Broadcast VoiceTranscript payload over P2P mesh network if connected
             let netMessage = Message(
-                id: sdTranscript.id,
+                id: transcriptID,
                 originID: localNodeID,
                 destinationID: "BROADCAST",
                 senderID: localNodeID,
@@ -246,7 +257,7 @@ final class SpeechTranscriberManager: ObservableObject {
             let encodedBytes = (try? JSONEncoder().encode(netMessage))?.count ?? 0
             AppLogger.audio.info("""
             [PINGLY_VOICE_TX]
-            transcriptID=\(sdTranscript.id.uuidString)
+            transcriptID=\(transcriptID.uuidString)
             channel=\(channel)
             sender=\(finalSpeaker)
             destination=\(channel)
@@ -256,10 +267,12 @@ final class SpeechTranscriberManager: ObservableObject {
             
             if isConnected {
                 MultipeerService.shared.broadcast(message: netMessage)
-                SwiftDataService.shared.updatePendingMessageStatus(messageID: sdTranscript.id, status: .waitingForACK)
-                AppLogger.audio.info("Saved & broadcasted VoiceTranscript \(sdTranscript.id) on \(channel) (waiting for ACK).")
+                Task {
+                    await SwiftDataService.shared.persistenceActor.updatePendingMessageStatus(messageID: transcriptID, statusRaw: "WAITING_FOR_ACK")
+                }
+                AppLogger.audio.info("Saved & broadcasted VoiceTranscript \(transcriptID) on \(channel) (waiting for ACK).")
             } else {
-                AppLogger.audio.info("Saved offline VoiceTranscript \(sdTranscript.id) on \(channel) to pending store-and-forward queue.")
+                AppLogger.audio.info("Saved offline VoiceTranscript \(transcriptID) on \(channel) to pending store-and-forward queue.")
             }
             
             NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
@@ -276,7 +289,16 @@ final class SpeechTranscriberManager: ObservableObject {
         DispatchQueue.main.async {
             let transcript = VoiceTranscript(speakerName: speakerName, text: text, channel: channel)
             self.transcriptHistory.append(transcript)
-            _ = SwiftDataService.shared.saveVoiceTranscript(speakerName: speakerName, text: text, channel: channel)
+            Task {
+                await SwiftDataService.shared.persistenceActor.saveVoiceTranscript(
+                    id: UUID(),
+                    speakerName: speakerName,
+                    text: text,
+                    channel: channel,
+                    isDelivered: false,
+                    sessionID: nil
+                )
+            }
         }
     }
 

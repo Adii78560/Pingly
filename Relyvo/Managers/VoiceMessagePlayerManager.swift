@@ -76,7 +76,9 @@ final class VoiceMessagePlayerManager: NSObject, ObservableObject, AVAudioPlayer
                     self.playbackProgress = 0.0
                     self.currentTime = 0.0
                     
-                    SwiftDataService.shared.markVoiceMessageAsPlayed(id: message.id)
+                    Task {
+                        await SwiftDataService.shared.persistenceActor.markVoiceMessageAsPlayed(id: message.id)
+                    }
                     self.startProgressTimer()
                     AppLogger.audio.info("[VOICE_PLAYER] Playing voice note cleanly: \(fileURL.lastPathComponent)")
                 }

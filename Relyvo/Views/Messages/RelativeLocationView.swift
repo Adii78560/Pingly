@@ -238,7 +238,7 @@ struct RelativeLocationView: View {
     
     // MARK: - Computed State Helpers
     
-    private var session: SDLocationShareSession? {
+    private var session: LocationSessionState? {
         return locationShareManager.getSession(for: remotePeerID)
     }
     

@@ -129,8 +129,8 @@ struct MeshDiagnosticsView: View {
                 Button(action: {
                     isRunningDiagnosticTest = true
                     HapticsManager.shared.mediumImpact()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        let result = swiftDataService.performPersistenceReadWriteDiagnosticTest()
+                    Task {
+                        let result = await swiftDataService.persistenceActor.performPersistenceReadWriteDiagnosticTest()
                         diagnosticTestStatus = result.message
                         isRunningDiagnosticTest = false
                         if result.success {
@@ -248,7 +248,7 @@ struct MeshDiagnosticsView: View {
                 Button(action: {
                     isRunningLoopbackTest = true
                     Task { @MainActor in
-                        let res = LoopbackTestHarness.shared.runAllLoopbackTests()
+                        let res = await LoopbackTestHarness.shared.runAllLoopbackTests()
                         loopbackTestSummary = "Loopback Suite Result: \(res.passedCount) Passed, \(res.failedCount) Failed\n\n" + res.reportSummary
                         isRunningLoopbackTest = false
                     }

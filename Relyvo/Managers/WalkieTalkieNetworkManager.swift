@@ -332,8 +332,8 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 AppLogger.audio.info("[PINGLY_PTT_SESSION] END sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
                 
                 // Save Voice Message in SwiftData
-                DispatchQueue.main.async {
-                    _ = SwiftDataService.shared.saveVoiceMessage(
+                Task {
+                    await SwiftDataService.shared.persistenceActor.saveVoiceMessage(
                         sessionID: sessionID,
                         channelID: channel,
                         senderID: NodeIdentity.shared.nodeID,
@@ -550,8 +550,8 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             AppLogger.audio.info("[PINGLY_PTT_RECEIVE] END sessionID=\(sessionID.uuidString) duration=\(duration) file=\(fileURL.path)")
             
             // Save Voice Message in SwiftData
-            DispatchQueue.main.async {
-                _ = SwiftDataService.shared.saveVoiceMessage(
+            Task {
+                await SwiftDataService.shared.persistenceActor.saveVoiceMessage(
                     sessionID: sessionID,
                     channelID: channel,
                     senderID: senderID,

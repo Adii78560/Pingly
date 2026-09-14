@@ -130,31 +130,44 @@ final class MessagesViewModel: ObservableObject {
         }
         
         // Persist message to SwiftData local storage
-        _ = SwiftDataService.shared.saveChatMessage(
-            id: newMessage.id,
-            originID: localNodeID,
-            senderID: localNodeID,
-            destinationID: conversation.recipientNodeID,
-            senderName: handle,
-            channel: conversation.recipientNodeID,
-            text: trimmed
-        )
+        Task {
+            await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                id: newMessage.id,
+                originID: localNodeID,
+                senderID: localNodeID,
+                destinationID: conversation.recipientNodeID,
+                senderName: handle,
+                channel: conversation.recipientNodeID,
+                text: trimmed,
+                messageTypeRaw: "CHAT"
+            )
+        }
         
         // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
-        _ = SwiftDataService.shared.enqueuePendingMessage(
-            messageID: newMessage.id,
-            originID: localNodeID,
-            destinationID: conversation.recipientNodeID,
-            recipientName: conversation.displayName,
-            senderName: handle,
-            text: trimmed,
-            channel: conversation.recipientNodeID
-        )
+        Task {
+            await SwiftDataService.shared.persistenceActor.enqueuePendingMessage(
+                messageID: newMessage.id,
+                originID: localNodeID,
+                destinationID: conversation.recipientNodeID,
+                recipientName: conversation.displayName,
+                senderName: handle,
+                text: trimmed,
+                channel: conversation.recipientNodeID,
+                isSOS: false,
+                priorityRaw: 0,
+                statusRaw: "QUEUED",
+                queueRoleRaw: "ORIGIN",
+                hopsCount: 0,
+                ttl: Constants.Emergency.broadcastTTL
+            )
+        }
 
         
         if !multipeerService.connectedPeers.isEmpty {
             multipeerService.broadcast(message: newMessage)
-            SwiftDataService.shared.updatePendingMessageStatus(messageID: newMessage.id, status: .waitingForACK)
+            Task {
+                await SwiftDataService.shared.persistenceActor.updatePendingMessageStatus(messageID: newMessage.id, statusRaw: "WAITING_FOR_ACK")
+            }
             AppLogger.multipeer.info("Broadcasted P2P message \(newMessage.id) for '\(conversation.displayName)' (waiting for ACK).")
         } else {
             AppLogger.multipeer.info("Peer '\(conversation.displayName)' is offline. Enqueued message \(newMessage.id) to store-and-forward queue.")
@@ -209,30 +222,40 @@ final class MessagesViewModel: ObservableObject {
                 }
             }
             
-            _ = SwiftDataService.shared.saveChatMessage(
-                id: newMessage.id,
-                originID: localNodeID,
-                senderID: localNodeID,
-                destinationID: conversation.recipientNodeID,
-                senderName: handle,
-                channel: conversation.recipientNodeID,
-                text: locationText,
-                messageType: .location,
-                latitude: loc.coordinate.latitude,
-                longitude: loc.coordinate.longitude,
-                altitude: loc.altitude,
-                accuracy: loc.horizontalAccuracy
-            )
+            Task {
+                await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                    id: newMessage.id,
+                    originID: localNodeID,
+                    senderID: localNodeID,
+                    destinationID: conversation.recipientNodeID,
+                    senderName: handle,
+                    channel: conversation.recipientNodeID,
+                    text: locationText,
+                    messageTypeRaw: "LOCATION",
+                    latitude: loc.coordinate.latitude,
+                    longitude: loc.coordinate.longitude,
+                    altitude: loc.altitude,
+                    accuracy: loc.horizontalAccuracy
+                )
+            }
             
-            _ = SwiftDataService.shared.enqueuePendingMessage(
-                messageID: newMessage.id,
-                originID: localNodeID,
-                destinationID: conversation.recipientNodeID,
-                recipientName: conversation.displayName,
-                senderName: handle,
-                text: locationText,
-                channel: conversation.recipientNodeID
-            )
+            Task {
+                await SwiftDataService.shared.persistenceActor.enqueuePendingMessage(
+                    messageID: newMessage.id,
+                    originID: localNodeID,
+                    destinationID: conversation.recipientNodeID,
+                    recipientName: conversation.displayName,
+                    senderName: handle,
+                    text: locationText,
+                    channel: conversation.recipientNodeID,
+                    isSOS: false,
+                    priorityRaw: 0,
+                    statusRaw: "QUEUED",
+                    queueRoleRaw: "ORIGIN",
+                    hopsCount: 0,
+                    ttl: Constants.Emergency.broadcastTTL
+                )
+            }
             
             if !self.multipeerService.connectedPeers.isEmpty {
                 self.multipeerService.broadcast(message: newMessage)
@@ -280,12 +303,16 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(newMessage)
-        _ = SwiftDataService.shared.saveChatMessage(
-            id: newMessage.id,
-            senderName: handle,
-            channel: "CH-1 EMERGENCY",
-            text: trimmed
-        )
+        Task {
+            await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                id: newMessage.id,
+                senderID: localNodeID,
+                senderName: handle,
+                channel: "CH-1 EMERGENCY",
+                text: trimmed,
+                messageTypeRaw: "CHAT"
+            )
+        }
         multipeerService.broadcast(message: newMessage)
         messageText = ""
         HapticManager.lightImpact()
@@ -316,12 +343,16 @@ final class MessagesViewModel: ObservableObject {
         )
         
         messages.append(sosMessage)
-        _ = SwiftDataService.shared.saveChatMessage(
-            id: sosMessage.id,
-            senderName: handle,
-            channel: "CH-1 EMERGENCY",
-            text: sosText
-        )
+        Task {
+            await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                id: sosMessage.id,
+                senderID: localNodeID,
+                senderName: handle,
+                channel: "CH-1 EMERGENCY",
+                text: sosText,
+                messageTypeRaw: "CHAT"
+            )
+        }
         multipeerService.broadcast(message: sosMessage)
         HapticManager.warningFeedback()
         AppLogger.emergency.critical("Triggered Emergency SOS Beacon with status: \(status.rawValue)")
@@ -367,16 +398,19 @@ final class MessagesViewModel: ObservableObject {
             AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName) (NodeID: \(senderNodeID))")
         }
         
-        _ = SwiftDataService.shared.saveChatMessage(
-            id: message.id,
-            originID: message.originID,
-            senderID: message.senderID,
-            destinationID: message.destinationID,
-            senderName: message.senderName,
-            channel: senderNodeID,
-            text: message.text,
-            isDelivered: true
-        )
+        Task {
+            await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                id: message.id,
+                originID: message.originID,
+                senderID: message.senderID,
+                destinationID: message.destinationID,
+                senderName: message.senderName,
+                channel: senderNodeID,
+                text: message.text,
+                isDelivered: true,
+                messageTypeRaw: "CHAT"
+            )
+        }
         
         if relayedMessage.hopsCount <= Constants.Emergency.broadcastTTL {
             multipeerService.broadcast(message: relayedMessage)

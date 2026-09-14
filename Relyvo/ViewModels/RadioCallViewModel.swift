@@ -357,8 +357,12 @@ final class RadioCallViewModel: ObservableObject {
                     self.isConnected = true
                     
                     // Mark pending offline transcripts as delivered (GREEN) when peers join channel
-                    SwiftDataService.shared.markTranscriptsAsDelivered(for: self.selectedChannel)
-                    NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                    Task {
+                        await SwiftDataService.shared.persistenceActor.markTranscriptsAsDelivered(for: self.selectedChannel)
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
+                        }
+                    }
                 } else {
                     self.connectedPeerName = "Searching for Peers..."
                     self.connectedPeerRSSI = 0
