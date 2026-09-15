@@ -66,6 +66,8 @@ struct Message: Identifiable, Codable, Hashable {
     var protocolVersion: Int
     var authTag: String?
     var sessionID: UUID?
+    let conversationID: UUID
+    var relayHistory: [UUID]
     
     init(
         id: UUID = UUID(),
@@ -90,7 +92,9 @@ struct Message: Identifiable, Codable, Hashable {
         type: P2PMessageType = .chat,
         protocolVersion: Int = Constants.Mesh.currentProtocolVersion,
         authTag: String? = nil,
-        sessionID: UUID? = nil
+        sessionID: UUID? = nil,
+        conversationID: UUID? = nil,
+        relayHistory: [UUID] = []
     ) {
         let finalOrigin = originID ?? senderID
         self.id = id
@@ -123,6 +127,18 @@ struct Message: Identifiable, Codable, Hashable {
             text: text
         )
         self.sessionID = sessionID
+        
+        if let explicitConvID = conversationID {
+            self.conversationID = explicitConvID
+        } else if let channel = channelID {
+            self.conversationID = DirectConversationID.make(channelName: channel)
+        } else if destinationID == "BROADCAST" {
+            // General mesh broadcast
+            self.conversationID = DirectConversationID.make(channelName: "BROADCAST")
+        } else {
+            self.conversationID = DirectConversationID.make(nodeA: finalOrigin, nodeB: destinationID)
+        }
+        self.relayHistory = relayHistory
     }
 
 

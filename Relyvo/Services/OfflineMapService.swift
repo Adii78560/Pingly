@@ -26,6 +26,7 @@ struct OfflineMapRegionMetadata: Identifiable, Sendable {
     let fileSizeBytes: Int64
     let formattedSize: String
     let isBundled: Bool
+    let version: String
 }
 
 /// Standalone Offline Tactical Map Engine providing 100% off-grid vector rendering,
@@ -74,7 +75,8 @@ final class OfflineMapService: ObservableObject {
                 maxZoom: 16,
                 fileSizeBytes: 148_000_000,
                 formattedSize: "148 MB",
-                isBundled: true
+                isBundled: true,
+                version: "1.0"
             ),
             OfflineMapRegionMetadata(
                 id: "region_delhi_ncr",
@@ -88,7 +90,8 @@ final class OfflineMapService: ObservableObject {
                 maxZoom: 17,
                 fileSizeBytes: 112_000_000,
                 formattedSize: "112 MB",
-                isBundled: true
+                isBundled: true,
+                version: "1.0"
             ),
             OfflineMapRegionMetadata(
                 id: "region_himachal",
@@ -102,7 +105,8 @@ final class OfflineMapService: ObservableObject {
                 maxZoom: 15,
                 fileSizeBytes: 210_000_000,
                 formattedSize: "210 MB",
-                isBundled: false
+                isBundled: false,
+                version: "1.0"
             ),
             OfflineMapRegionMetadata(
                 id: "region_california",
@@ -116,7 +120,8 @@ final class OfflineMapService: ObservableObject {
                 maxZoom: 16,
                 fileSizeBytes: 295_000_000,
                 formattedSize: "295 MB",
-                isBundled: false
+                isBundled: false,
+                version: "1.0"
             ),
             OfflineMapRegionMetadata(
                 id: "region_global_base",
@@ -130,7 +135,8 @@ final class OfflineMapService: ObservableObject {
                 maxZoom: 8,
                 fileSizeBytes: 42_000_000,
                 formattedSize: "42 MB",
-                isBundled: true
+                isBundled: true,
+                version: "1.0"
             )
         ]
         
@@ -154,6 +160,7 @@ final class OfflineMapService: ObservableObject {
                 let sd = SDOfflineMapRegion(
                     id: r.id,
                     name: r.name,
+                    version: r.version,
                     stateOrRegion: r.stateOrRegion,
                     minLatitude: r.minLat,
                     minLongitude: r.minLon,
@@ -178,6 +185,49 @@ final class OfflineMapService: ObservableObject {
         self.activeRegion = regions.first(where: { downloaded.contains($0.id) }) ?? regions.last
         
         AppLogger.location.info("[OfflineMap] Initialized \(regions.count) offline regions, \(downloaded.count) active locally")
+    }
+    
+    /// Synchronizes the SwiftData state with the actual `.pmtiles` files present in the `OfflineMaps` directory.
+    /// This allows map data to be discovered natively after a package is installed.
+    public func syncWithFileSystem() {
+        let context = SwiftDataService.shared.context
+        let existingDescriptor = FetchDescriptor<SDOfflineMapRegion>()
+        let existing = (try? context.fetch(existingDescriptor)) ?? []
+        
+        var downloaded = Set<String>()
+        
+        if let files = try? fileManager.contentsOfDirectory(atPath: documentsDirectory.path) {
+            let pmtiles = files.filter { $0.hasSuffix(".pmtiles") }
+            for file in pmtiles {
+                let id = (file as NSString).deletingPathExtension
+                downloaded.insert(id)
+            }
+        }
+        
+        for sd in existing {
+            if downloaded.contains(sd.id) {
+                if !sd.isDownloaded {
+                    sd.isDownloaded = true
+                    sd.localFilePath = documentsDirectory.appendingPathComponent("\(sd.id).pmtiles").path
+                    sd.downloadedAt = Date()
+                }
+            } else {
+                if sd.isDownloaded {
+                    sd.isDownloaded = false
+                    sd.localFilePath = nil
+                    sd.downloadedAt = nil
+                }
+            }
+        }
+        
+        try? context.save()
+        self.downloadedRegionIDs = downloaded
+        
+        if let currentActive = self.activeRegion, !downloaded.contains(currentActive.id) {
+            self.activeRegion = self.availableRegions.first(where: { downloaded.contains($0.id) }) ?? self.availableRegions.last
+        }
+        
+        AppLogger.location.info("[OfflineMap] Synced with filesystem. \(downloaded.count) active locally.")
     }
     
     // MARK: - Region Actions

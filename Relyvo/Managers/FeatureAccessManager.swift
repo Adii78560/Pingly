@@ -109,6 +109,7 @@ public final class FeatureAccessManager: ObservableObject {
     
     // MARK: - Initialization
     
+    @MainActor
     public init(subscriptionManager: SubscriptionManager = .shared) {
         self.subscriptionManager = subscriptionManager
         

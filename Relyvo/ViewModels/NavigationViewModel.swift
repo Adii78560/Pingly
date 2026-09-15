@@ -73,19 +73,7 @@ final class NavigationViewModel: ObservableObject {
     private var routingTask: Task<Void, Never>?
     
     init(initialTarget: NavigationTarget? = nil) {
-        // Initialize routing engine
-        // Assuming monaco for prototype, in real app it would come from OfflineMapService
-        // Use the exact path that is present in the workspace
-        let dbPath = "/Users/adityarai/Desktop/Pingly/RoutingPipeline/monaco.rgraph.sqlite"
-        if FileManager.default.fileExists(atPath: dbPath) {
-            let db = RoutingDatabase(fileURL: URL(fileURLWithPath: dbPath))
-            self.routingDatabase = db
-            let rService = OfflineRoutingService(database: db)
-            self.routingService = rService
-            self.routeProgressService = RouteProgressService(database: db, routingService: rService)
-        } else {
-            AppLogger.location.error("[NavigationViewModel] DB not found at \(dbPath)")
-        }
+        // Routing services will be initialized dynamically in attemptRoadRouting() when needed
         
         self.voiceGuidanceService = VoiceGuidanceService()
         
@@ -207,7 +195,7 @@ final class NavigationViewModel: ObservableObject {
     // MARK: - Routing Logic
     
     private func attemptRoadRouting(to target: NavigationTarget) {
-        guard let rService = routingService, let progressService = routeProgressService, let origin = locationService.currentCoordinate else {
+        guard let origin = locationService.currentCoordinate else {
             activateDirectNavigation(target: target)
             return
         }
@@ -216,6 +204,23 @@ final class NavigationViewModel: ObservableObject {
         routingTask?.cancel()
         routingTask = Task {
             do {
+                // 1. Resolve Region
+                let region = try await OfflineRegionManager.shared.resolveRegionForRoute(from: origin, to: target.coordinate)
+                
+                if Task.isCancelled { return }
+                
+                // 2. Setup Services Dynamically
+                let db = RoutingDatabase(fileURL: region.databaseURL)
+                let rService = OfflineRoutingService(database: db)
+                let progressService = RouteProgressService(database: db, routingService: rService)
+                
+                await MainActor.run {
+                    self.routingDatabase = db
+                    self.routingService = rService
+                    self.routeProgressService = progressService
+                }
+                
+                // 3. Calculate Route
                 let route = try await rService.calculateRoute(from: origin, to: target.coordinate)
                 
                 if Task.isCancelled { return }
@@ -234,6 +239,8 @@ final class NavigationViewModel: ObservableObject {
                     self.locationService.startSharingLocation()
                     
                     AppLogger.location.info("[NavigationViewModel] Road routing activated for \(target.displayName)")
+                    
+                    // Setup new subscription to progress service
                 }
             } catch {
                 if Task.isCancelled { return }
@@ -246,6 +253,7 @@ final class NavigationViewModel: ObservableObject {
             }
         }
     }
+
     
     private func activateDirectNavigation(target: NavigationTarget) {
         self.navigationMode = .directTarget

@@ -195,7 +195,7 @@ final class RelaynHardeningTests {
         )
         
         let encodedBinary = MeshPacketHeader.encode(testMsg)
-        assert(encodedBinary.count == MeshPacketHeader.headerSize + testMsg.text.utf8.count, "MeshPacketHeader encodes with exact 62-byte header + payload size")
+        assert(encodedBinary.count == MeshPacketHeader.fixedHeaderSizeV3 + testMsg.text.utf8.count, "MeshPacketHeader encodes with exact header + payload size")
         assert(MeshPacketHeader.isBinaryMeshPacket(encodedBinary), "MeshPacketHeader.isBinaryMeshPacket identifies 0x5245 magic bytes")
         
         do {

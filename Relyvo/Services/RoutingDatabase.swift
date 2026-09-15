@@ -50,6 +50,40 @@ final class RoutingDatabase: Sendable {
         }
     }
     
+    func validate() throws {
+        try withDB { db in
+            // 1. Integrity check
+            var statement: OpaquePointer?
+            if sqlite3_prepare_v2(db, "PRAGMA integrity_check;", -1, &statement, nil) == SQLITE_OK {
+                if sqlite3_step(statement) == SQLITE_ROW {
+                    if let text = sqlite3_column_text(statement, 0) {
+                        let result = String(cString: text).lowercased()
+                        if result != "ok" {
+                            sqlite3_finalize(statement)
+                            throw RoutingError.databaseError("Integrity check failed: \(result)")
+                        }
+                    }
+                }
+            } else {
+                throw RoutingError.databaseError("Failed to prepare integrity check")
+            }
+            sqlite3_finalize(statement)
+            
+            // 2. Schema check - ensure required tables exist
+            let requiredTables = ["metadata", "region", "nodes", "edges", "edge_geometry", "turn_restrictions", "restricted_turns", "rtree_nodes"]
+            for table in requiredTables {
+                let query = "SELECT name FROM sqlite_master WHERE type='table' AND name='\(table)';"
+                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+                    if sqlite3_step(statement) != SQLITE_ROW {
+                        sqlite3_finalize(statement)
+                        throw RoutingError.databaseError("Missing required table: \(table)")
+                    }
+                }
+                sqlite3_finalize(statement)
+            }
+        }
+    }
+    
     func metadata() throws -> RoutingMetadata {
         return try withDB { db in
             var schemaVersion = "", graphVersion = "", regionId = "", regionName = "", profile = ""

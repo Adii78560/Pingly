@@ -65,7 +65,8 @@ final class MessagesViewModel: ObservableObject {
     }
     
     func addPeerConversation(peerName: String, nodeID: String, channelName: String = "CH-1 EMERGENCY") {
-        let convID = nodeID
+        let localNodeID = NodeIdentity.shared.nodeID
+        let convID = DirectConversationID.make(nodeA: localNodeID, nodeB: nodeID).uuidString
         if !conversations.contains(where: { $0.id == convID }) {
             let newConv = Conversation(
                 id: convID,
@@ -139,7 +140,8 @@ final class MessagesViewModel: ObservableObject {
                 senderName: handle,
                 channel: conversation.recipientNodeID,
                 text: trimmed,
-                messageTypeRaw: "CHAT"
+                messageTypeRaw: "CHAT",
+                conversationID: newMessage.conversationID
             )
         }
         
@@ -376,8 +378,10 @@ final class MessagesViewModel: ObservableObject {
             return
         }
         
-        // Find existing conversation or AUTOMATICALLY create conversation card for incoming sender NodeID
-        if let index = conversations.firstIndex(where: { $0.recipientNodeID == senderNodeID }) {
+        let convID = message.conversationID.uuidString
+        
+        // Find existing conversation or AUTOMATICALLY create conversation card
+        if let index = conversations.firstIndex(where: { $0.id == convID }) {
             if !conversations[index].messages.contains(where: { $0.id == message.id }) {
                 conversations[index].messages.append(relayedMessage)
             }
@@ -386,7 +390,7 @@ final class MessagesViewModel: ObservableObject {
             conversations[index].isOnline = true
         } else {
             let newConv = Conversation(
-                id: senderNodeID,
+                id: convID,
                 displayName: message.senderName,
                 recipientNodeID: senderNodeID,
                 isOnline: true,
@@ -395,7 +399,7 @@ final class MessagesViewModel: ObservableObject {
                 messages: [relayedMessage]
             )
             conversations.append(newConv)
-            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName) (NodeID: \(senderNodeID))")
+            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName) (ConvID: \(convID))")
         }
         
         Task {
@@ -435,28 +439,29 @@ final class MessagesViewModel: ObservableObject {
                     senderName: item.senderName,
                     text: item.text,
                     timestamp: item.timestamp,
-                    hopsCount: 0
+                    hopsCount: 0,
+                    conversationID: item.conversationID,
+                    relayHistory: item.relayHistory.compactMap { UUID(uuidString: $0) }
                 )
-                grouped[item.channel, default: []].append(msg)
+                grouped[item.conversationID.uuidString, default: []].append(msg)
             }
             
-            for (nodeID, msgList) in grouped {
-                if UUID(uuidString: nodeID) == nil {
-                    continue
-                }
+            for (convID, msgList) in grouped {
                 if let last = msgList.last {
                     let peerName = msgList.first(where: { $0.senderID != NodeIdentity.shared.nodeID && $0.senderName != NodeIdentity.shared.displayName })?.senderName ?? last.senderName
                     
-                    if let idx = conversations.firstIndex(where: { $0.id == nodeID }) {
+                    let recipientNodeID = msgList.first(where: { $0.senderID != NodeIdentity.shared.nodeID })?.senderID ?? last.destinationID
+                    
+                    if let idx = conversations.firstIndex(where: { $0.id == convID }) {
                         conversations[idx].messages = msgList
                         conversations[idx].lastMessage = last.text
                         conversations[idx].lastTimestamp = last.timestamp.logTimeString
                     } else {
                         let conv = Conversation(
-                            id: nodeID,
+                            id: convID,
                             displayName: peerName,
-                            recipientNodeID: nodeID,
-                            isOnline: multipeerService.connectedPeers.contains(where: { $0.id == nodeID }),
+                            recipientNodeID: recipientNodeID,
+                            isOnline: multipeerService.connectedPeers.contains(where: { $0.id == recipientNodeID }),
                             lastMessage: last.text,
                             lastTimestamp: last.timestamp.logTimeString,
                             messages: msgList

@@ -20,7 +20,8 @@ public final actor PersistenceActor {
         latitude: Double? = nil,
         longitude: Double? = nil,
         altitude: Double? = nil,
-        accuracy: Double? = nil
+        accuracy: Double? = nil,
+        conversationID: UUID? = nil
     ) {
         let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
         AppLogger.multipeer.info("\(tag)_START type=\(messageTypeRaw)")
@@ -46,7 +47,8 @@ public final actor PersistenceActor {
                 latitude: latitude,
                 longitude: longitude,
                 altitude: altitude,
-                accuracy: accuracy
+                accuracy: accuracy,
+                conversationID: conversationID
             )
             message.messageTypeRaw = messageTypeRaw
             modelContext.insert(message)
@@ -70,7 +72,9 @@ public final actor PersistenceActor {
         statusRaw: String,
         queueRoleRaw: String,
         hopsCount: Int,
-        ttl: Int
+        ttl: Int,
+        conversationID: UUID? = nil,
+        relayHistory: [String] = []
     ) {
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let existing = try? modelContext.fetch(descriptor).first {
@@ -86,6 +90,7 @@ public final actor PersistenceActor {
             previousHopID: previousHopID,
             text: text,
             channel: channel,
+            conversationID: conversationID,
             timestamp: Date(),
             isSOS: isSOS,
             priorityRaw: priorityRaw,
@@ -93,6 +98,7 @@ public final actor PersistenceActor {
             hopsCount: hopsCount,
             ttl: ttl
         )
+        pending.relayHistory = relayHistory
         pending.statusRaw = statusRaw
         pending.queueRoleRaw = queueRoleRaw
         

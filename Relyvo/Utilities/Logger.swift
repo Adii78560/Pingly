@@ -21,7 +21,7 @@ enum AppLogger {
     static let notifications = Logger(subsystem: "com.relayn.mesh.notifications", category: "MeshNotifications")
     
     /// Safe 6-character device fingerprint tag for structured device logs: `[Device=4B44FA]`
-    static var deviceTag: String {
+    @MainActor static var deviceTag: String {
         let fullID = KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString
         let shortID = String(fullID.prefix(6)).uppercased()
         return "[Device=\(shortID)]"

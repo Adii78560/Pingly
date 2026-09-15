@@ -59,6 +59,8 @@ final class SDChatMessage {
     var longitude: Double?
     var altitude: Double?
     var accuracy: Double?
+    var conversationID: UUID = UUID()
+    var relayHistory: [String] = []
     
     var type: P2PMessageType {
         get { P2PMessageType(rawValue: messageTypeRaw) ?? .chat }
@@ -80,7 +82,9 @@ final class SDChatMessage {
         latitude: Double? = nil,
         longitude: Double? = nil,
         altitude: Double? = nil,
-        accuracy: Double? = nil
+        accuracy: Double? = nil,
+        conversationID: UUID? = nil,
+        relayHistory: [String] = []
     ) {
         self.id = id
         self.senderID = senderID
@@ -97,6 +101,19 @@ final class SDChatMessage {
         self.longitude = longitude
         self.altitude = altitude
         self.accuracy = accuracy
+        self.relayHistory = relayHistory
+        
+        let finalOrigin = originID ?? senderID
+        let finalDest = destinationID ?? channel
+        if let explicitConv = conversationID {
+            self.conversationID = explicitConv
+        } else if finalDest == "BROADCAST" || channel == "BROADCAST" {
+            self.conversationID = DirectConversationID.make(channelName: "BROADCAST")
+        } else if channel.hasPrefix("CH-") {
+            self.conversationID = DirectConversationID.make(channelName: channel)
+        } else {
+            self.conversationID = DirectConversationID.make(nodeA: finalOrigin, nodeB: finalDest)
+        }
     }
 }
 
@@ -140,8 +157,10 @@ final class SDPendingMessage {
     var recipientName: String
     var senderName: String
     var previousHopID: String?
+    var relayHistory: [String] = []
     var text: String
     var channel: String
+    var conversationID: UUID = UUID()
     var timestamp: Date
     var expiresAt: Date = Date().addingTimeInterval(TimeInterval(Constants.Mesh.queueExpirationDays * 86400))
     var isSOS: Bool = false
@@ -188,8 +207,10 @@ final class SDPendingMessage {
         recipientName: String,
         senderName: String,
         previousHopID: String? = nil,
+        relayHistory: [String] = [],
         text: String,
         channel: String = "CH-1 EMERGENCY",
+        conversationID: UUID? = nil,
         timestamp: Date = Date(),
         expiresAt: Date? = nil,
         isSOS: Bool = false,
@@ -216,8 +237,21 @@ final class SDPendingMessage {
         self.recipientName = recipientName
         self.senderName = senderName
         self.previousHopID = previousHopID
+        self.relayHistory = relayHistory
         self.text = text
         self.channel = channel
+        
+        let finalOrigin = originID ?? senderName
+        if let explicitConv = conversationID {
+            self.conversationID = explicitConv
+        } else if destinationID == "BROADCAST" || channel == "BROADCAST" {
+            self.conversationID = DirectConversationID.make(channelName: "BROADCAST")
+        } else if channel.hasPrefix("CH-") {
+            self.conversationID = DirectConversationID.make(channelName: channel)
+        } else {
+            self.conversationID = DirectConversationID.make(nodeA: finalOrigin, nodeB: destinationID)
+        }
+        
         self.timestamp = timestamp
         self.expiresAt = expiresAt ?? timestamp.addingTimeInterval(TimeInterval(Constants.Mesh.queueExpirationDays * 86400))
         self.isSOS = isSOS
@@ -472,6 +506,7 @@ final class SDBreadcrumbPoint {
 final class SDOfflineMapRegion {
     @Attribute(.unique) var id: String
     var name: String
+    var version: String
     var stateOrRegion: String
     var minLatitude: Double
     var minLongitude: Double
@@ -487,6 +522,7 @@ final class SDOfflineMapRegion {
     init(
         id: String,
         name: String,
+        version: String = "1.0",
         stateOrRegion: String,
         minLatitude: Double,
         minLongitude: Double,
@@ -501,6 +537,7 @@ final class SDOfflineMapRegion {
     ) {
         self.id = id
         self.name = name
+        self.version = version
         self.stateOrRegion = stateOrRegion
         self.minLatitude = minLatitude
         self.minLongitude = minLongitude

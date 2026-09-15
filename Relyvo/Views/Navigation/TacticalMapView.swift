@@ -389,11 +389,33 @@ struct TacticalMapView: View {
     private func drawActiveRoute(context: GraphicsContext, size: CGSize, route: Route, progress: RouteProgress?) {
         guard route.geometry.count > 1 else { return }
         
-        let currentIndex = progress?.currentSegmentIndex ?? 0
-        
         var traveledPath = Path()
         var remainingPath = Path()
         
+        guard let progress = progress, progress.currentSegmentIndex >= 0, progress.currentSegmentIndex < route.geometry.count else {
+            // Draw entire route as remaining
+            for i in 0..<route.geometry.count {
+                let p = OfflineMapService.shared.project(
+                    coordinate: route.geometry[i],
+                    center: viewModel.centerCoordinate,
+                    zoom: viewModel.zoomLevel,
+                    viewSize: size
+                )
+                if i == 0 { remainingPath.move(to: p) }
+                else { remainingPath.addLine(to: p) }
+            }
+            context.stroke(remainingPath, with: .color(Color.cyan), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+            return
+        }
+
+        let currentIndex = progress.currentSegmentIndex
+        let splitPoint = OfflineMapService.shared.project(
+            coordinate: progress.currentPosition,
+            center: viewModel.centerCoordinate,
+            zoom: viewModel.zoomLevel,
+            viewSize: size
+        )
+
         for i in 0..<route.geometry.count {
             let projected = OfflineMapService.shared.project(
                 coordinate: route.geometry[i],
@@ -402,18 +424,20 @@ struct TacticalMapView: View {
                 viewSize: size
             )
             
-            if i == 0 {
-                traveledPath.move(to: projected)
-                remainingPath.move(to: projected)
-            } else {
-                if i <= currentIndex {
-                    traveledPath.addLine(to: projected)
-                    if i == currentIndex {
-                        remainingPath.move(to: projected)
-                    }
+            if i <= currentIndex {
+                if i == 0 {
+                    traveledPath.move(to: projected)
                 } else {
-                    remainingPath.addLine(to: projected)
+                    traveledPath.addLine(to: projected)
                 }
+                
+                // At the end of the traveled segment, insert the split point
+                if i == currentIndex {
+                    traveledPath.addLine(to: splitPoint)
+                    remainingPath.move(to: splitPoint)
+                }
+            } else {
+                remainingPath.addLine(to: projected)
             }
         }
         

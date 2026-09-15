@@ -569,6 +569,19 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
             
+            NavigationLink(destination: OfflineRegionsView()) {
+                HStack(spacing: 12) {
+                    SettingsIconBadge(systemName: "map.fill", backgroundColor: .blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Offline Navigation & Maps")
+                            .font(.body)
+                        Text("Manage downloaded regions")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
             Button(action: {
                 cloudSyncService.syncPendingDataToCloud()
             }) {

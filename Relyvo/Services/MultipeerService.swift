@@ -42,20 +42,20 @@ actor QueueProcessingCoalescer {
 /// Eviction: Entries older than `seenCacheTTLSeconds` are lazily evicted on every
 /// `contains()` call. LRU overflow eviction drops the oldest entry when size > seenCacheMaxSize.
 final class MeshSeenCache {
-    private var store: [UUID: Date] = [:]     // messageID → firstSeenAt
+    private var store: [String: Date] = [:]     // deduplication key → firstSeenAt
     private let lock = NSLock()
     
-    /// Returns true if this message ID has been seen before (within the TTL window).
+    /// Returns true if this message identity has been seen before (within the TTL window).
     /// Also evicts expired entries and enforces max-size on every call.
-    func contains(_ messageID: UUID) -> Bool {
+    func contains(_ key: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         evictExpiredLocked()
-        return store[messageID] != nil
+        return store[key] != nil
     }
     
-    /// Marks a message ID as seen. Evicts oldest entry if over capacity.
-    func insert(_ messageID: UUID) {
+    /// Marks a message identity as seen. Evicts oldest entry if over capacity.
+    func insert(_ key: String) {
         lock.lock()
         defer { lock.unlock() }
         evictExpiredLocked()
@@ -64,7 +64,7 @@ final class MeshSeenCache {
            let oldest = store.min(by: { $0.value < $1.value }) {
             store.removeValue(forKey: oldest.key)
         }
-        store[messageID] = Date()
+        store[key] = Date()
     }
     
     // Called with lock held
@@ -121,14 +121,17 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     
     override init() {
         let storedHandle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-        let stableNodeSuffix = String(NodeIdentity.shared.nodeID.replacingOccurrences(of: "-", with: "").prefix(4))
-        let peerDisplayName = "\(storedHandle)_\(stableNodeSuffix)"
+        
+        // Use NodeIdentity.shared.nodeID as canonical peer displayName.
+        // It is a 36-character UUID string which safely fits into the 63-byte MCPeerID limit.
+        // This ensures the device maintains exactly one logical mesh identity even if the handle changes.
         self.currentHandle = storedHandle
-        self.myPeerID = MCPeerID(displayName: peerDisplayName)
+        self.myPeerID = MCPeerID(displayName: NodeIdentity.shared.nodeID)
+        
         super.init()
         setupSession()
         
-        let deviceFingerprint = String(KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString.prefix(6))
+        let deviceFingerprint = String(NodeIdentity.shared.nodeID.prefix(6))
         RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "APP_LAUNCH", details: "launch_completed")
         RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "IDENTITY_READY", details: "deviceFingerprint=\(deviceFingerprint)")
     }
@@ -352,7 +355,9 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
                 statusRaw: "PENDING",
                 queueRoleRaw: "ORIGIN",
                 hopsCount: message.hopsCount,
-                ttl: 5
+                ttl: 5,
+                conversationID: message.conversationID,
+                relayHistory: message.relayHistory.map { $0.uuidString }
             ) }
             AppLogger.multipeer.warning("""
             [OFFLINE_QUEUE_STORED]
@@ -364,7 +369,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             return
         }
         
-        let priority: MeshPacketPriority = message.isSOS ? .high : .low
+        let priority: MeshPacketPriority = message.isSOS ? .critical : .normal
         MeshOutboundQueue.shared.enqueue(
             data: binaryData,
             priority: priority,
@@ -383,7 +388,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         frameID=\(message.id.uuidString)
         peer=\(peerNames)
         bytes=\(binaryData.count)
-        priority=\(priority == .high ? "HIGH" : "LOW")
+        priority=\(priority.rawValue)
         """)
         
         AppLogger.multipeer.info("Enqueued emergency binary message ID: \(message.id) to \(targetPeers.count) peers")
@@ -428,7 +433,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     }
     
     func sendAudioStream(data: Data) {
-        sendRawPTTPacket(data)
+        sendRawPTTPacket(data, type: .chunk)
     }
     
     /// Relay-only variant of broadcast that excludes the originating peer to prevent echo-back loops.
@@ -443,7 +448,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         }
         
         let binaryData = MeshPacketHeader.encode(message)
-        let priority: MeshPacketPriority = message.isSOS ? .high : .low
+        let priority: MeshPacketPriority = message.isSOS ? .critical : .normal
         MeshOutboundQueue.shared.enqueue(
             data: binaryData,
             priority: priority,
@@ -457,14 +462,14 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         AppLogger.multipeer.info("[MESH_RELAY] Queued binary relay \(message.id.uuidString.prefix(6)) hop=\(message.hopsCount)/\(message.ttl) to [\(targetNames)] (excluded sender: \(senderPeerID.displayName))")
     }
     
-    func sendRawPTTPacket(_ packet: Data) {
+    func sendRawPTTPacket(_ packet: Data, type: PTTFrameType) {
         guard let session = session, !session.connectedPeers.isEmpty else { return }
         let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
         
         AppLogger.multipeer.info("""
         [PINGLY_SERIALIZATION]
         encoder=PTTFrameHeader
-        type=PTT_RAW
+        type=PTT_RAW_\(type.rawValue)
         bytes=\(packet.count)
         
         [PINGLY_TX_BEGIN]
@@ -472,9 +477,9 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         peer=\(peerNames)
         peerID=\(peerNames)
         transport=MCSession
-        reliability=unreliable
-        frameID=PTT_RAW
-        frameType=PTT_RAW
+        reliability=\(type == .chunk ? "unreliable" : "reliable")
+        frameID=PTT_RAW_\(type.rawValue)
+        frameType=PTT_RAW_\(type.rawValue)
         messageType=PTT_RAW
         senderID=\(self.myPeerID.displayName)
         destinationID=BROADCAST
@@ -484,14 +489,17 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         encodedBytes=\(packet.count)
         """)
         
-        // High priority voice chunk queued to prevent socket buffer congestion
+        let priority: MeshPacketPriority = (type == .start || type == .end) ? .critical : .realtime
+        let isReliable = (type == .start || type == .end)
+        
+        // Priority packet queued to prevent socket buffer congestion
         MeshOutboundQueue.shared.enqueue(
             data: packet,
-            priority: .high,
-            isReliable: false,
+            priority: priority,
+            isReliable: isReliable,
             toPeers: session.connectedPeers,
             session: session,
-            tag: "PTT_RAW"
+            tag: "PTT_RAW_\(type.rawValue)"
         )
     }
     
@@ -527,7 +535,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             
             MeshOutboundQueue.shared.enqueue(
                 data: data,
-                priority: .low,
+                priority: .bulk,
                 isReliable: true,
                 toPeers: session.connectedPeers,
                 session: session,
@@ -872,8 +880,18 @@ extension MultipeerService: MCSessionDelegate {
         
         // Offload decoding, verification & routing off the main thread for performance
         Task {
-            // 1. Check for PTT audio binary framing (header starts with PTTFrameHeader or 0x5054 magic bytes)
-            if PTTFrameHeader.decode(from: data) != nil || (data.count >= 2 && data[0] == 0x50 && data[1] == 0x54) {
+            // 1. Check for PTT audio binary framing
+            if let header = PTTFrameHeader.decode(from: data) {
+                // Deduplicate using VoiceSeenCache
+                if VoiceSeenCache.shared.contains(senderNodeID: header.senderNodeID, sessionID: header.sessionID, sequenceNo: header.sequenceNo) {
+                    AppLogger.multipeer.info("PTT Frame Dropped: Duplicate session=\(header.sessionID.uuidString.prefix(6)) seq=\(header.sequenceNo)")
+                    RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+                    return
+                }
+                
+                // Mark as seen
+                VoiceSeenCache.shared.insert(senderNodeID: header.senderNodeID, sessionID: header.sessionID, sequenceNo: header.sequenceNo)
+                
                 AppLogger.multipeer.info("\(AppLogger.frameTag()) FRAME_RECEIVED_UNKNOWN_ID peer=\(shortPeer) type=PTT_RAW bytes=\(data.count)")
                 RelaynTransportDiagnosticsManager.shared.recordIncomingMessage(id: nil, peer: peerID.displayName, result: "PTT Raw Frame", decodeRes: "Success")
                 
@@ -889,15 +907,16 @@ extension MultipeerService: MCSessionDelegate {
                 frameID=PTT_RAW
                 frameType=PTT_RAW
                 messageType=PTT_RAW
-                senderID=\(peerID.displayName)
+                senderID=\(header.senderNodeID.uuidString)
                 destinationID=BROADCAST
                 channelID=AUDIO_STREAM
-                hopCount=0
+                hopCount=\(header.hopCount)
                 payloadSize=\(data.count)
                 """)
                 
                 RelaynTransportDiagnosticsManager.shared.incrementDecodeSuccess()
                 
+                // Deliver Locally
                 NotificationCenter.default.post(
                     name: .didReceiveRawPTTPacket,
                     object: self,
@@ -906,6 +925,45 @@ extension MultipeerService: MCSessionDelegate {
                 DispatchQueue.main.async {
                     self.receivedAudioDataSubject.send(data)
                 }
+                
+                // PTT Forwarding Logic
+                if header.hopCount < header.ttl {
+                    let newHopCount = header.hopCount + 1
+                    let newHeader = PTTFrameHeader(
+                        type: header.type,
+                        hopCount: newHopCount,
+                        ttl: header.ttl,
+                        sequenceNo: header.sequenceNo,
+                        timestampMs: header.timestampMs,
+                        senderNodeID: header.senderNodeID,
+                        sessionID: header.sessionID
+                    )
+                    
+                    var forwardedPacket = newHeader.encode()
+                    // Append payload
+                    forwardedPacket.append(data.subdata(in: PTTFrameHeader.headerSize..<data.count))
+                    
+                    // Exclude sender
+                    let targetPeers = session.connectedPeers.filter { $0 != peerID }
+                    if !targetPeers.isEmpty {
+                        let priority: MeshPacketPriority = (header.type == .start || header.type == .end) ? .critical : .realtime
+                        let isReliable = (header.type == .start || header.type == .end)
+                        
+                        MeshOutboundQueue.shared.enqueue(
+                            data: forwardedPacket,
+                            priority: priority,
+                            isReliable: isReliable,
+                            toPeers: targetPeers,
+                            session: session,
+                            tag: "PTT_RAW_FWD"
+                        )
+                        AppLogger.multipeer.info("PTT Frame Forwarded: session=\(header.sessionID.uuidString.prefix(6)) seq=\(header.sequenceNo) hop=\(newHopCount)/\(header.ttl)")
+                        RelaynTransportDiagnosticsManager.shared.incrementRelayForwarded()
+                    }
+                } else {
+                    AppLogger.multipeer.info("PTT Frame TTL Exhausted: session=\(header.sessionID.uuidString.prefix(6)) seq=\(header.sequenceNo) hop=\(header.hopCount)")
+                }
+                
                 return
             }
             
@@ -1251,9 +1309,9 @@ extension MultipeerService: MCSessionDelegate {
                 // ── In-Memory Deduplication Gate ─────────────────────────────────────────
                 // Check the seenCache FIRST — before any SwiftData access, before local
                 // delivery, and before relay forwarding. This is the storm breaker:
-                // a packet that arrives via two different mesh paths is processed exactly
-                // once. The second copy is dropped here in O(1) with no disk I/O.
-                if seenCache.contains(message.id) {
+                // exactly-once forwarding regardless of mesh topology.
+                let canonicalIdentity = "\(message.originID)_\(message.id.uuidString)"
+                if seenCache.contains(canonicalIdentity) {
                     AppLogger.multipeer.info("""
                     [MESH_DEDUP_DROP]
                     messageID=\(message.id.uuidString)
@@ -1266,7 +1324,7 @@ extension MultipeerService: MCSessionDelegate {
                 }
                 // Mark as seen immediately so concurrent arrivals from other peers
                 // (multi-path topology) are also dropped.
-                seenCache.insert(message.id)
+                seenCache.insert(canonicalIdentity)
                 // ─────────────────────────────────────────────────────────────────────────
                 
                 let alreadyProcessed = SwiftDataService.shared.isMessageAlreadyProcessed(messageID: message.id)
@@ -1423,12 +1481,23 @@ extension MultipeerService: MCSessionDelegate {
                 // shouldForward: relay this packet to downstream peers.
                 // seenCache already guarantees this branch runs at most once per messageID,
                 // so we only need to check originID (don't relay our own originating messages).
+                let localUUID = UUID(uuidString: localNodeID) ?? UUID()
+                if message.relayHistory.contains(localUUID) {
+                    AppLogger.multipeer.info("""
+                    [PINGLY_ROUTE_DECISION]
+                    action=DROP
+                    reason=LOOP_PREVENTION_RELAY_HISTORY_MATCH
+                    """)
+                    return
+                }
+                
                 if shouldForward && message.originID != localNodeID {
                     RelaynTransportDiagnosticsManager.shared.incrementRelayReceived()
                     
                     var relayMsg = message
                     relayMsg.previousHopID = localNodeID
                     relayMsg.hopsCount += 1
+                    relayMsg.relayHistory.append(localUUID)
                     
                     // ── TTL / Hop-Limit Enforcement ───────────────────────────────────────
                     // Strict less-than against Constants.Mesh.maxMeshHops:
@@ -1490,8 +1559,10 @@ extension MultipeerService: MCSessionDelegate {
                             priorityRaw: message.isSOS ? 2 : 0,
                             statusRaw: "PENDING",
                             queueRoleRaw: "RELAY",
-                            hopsCount: message.hopsCount,
-                            ttl: message.ttl
+                            hopsCount: relayMsg.hopsCount,
+                            ttl: message.ttl,
+                            conversationID: message.conversationID,
+                            relayHistory: relayMsg.relayHistory.map { $0.uuidString }
                         )
                     }
                     AppLogger.multipeer.info("Intermediate Relay: Enqueued message \(message.id) from '\(message.originID)' for destination '\(message.destinationID)'")

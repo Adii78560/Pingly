@@ -257,14 +257,13 @@ actor RouteProgressService {
         var currentBearing = calculateBearing(from: route.geometry[segmentIndex], to: route.geometry[segmentIndex+1])
         var currentStreetName: String? = nil
         if segmentIndex < route.edgeIDs.count {
-            if let edge = try? routingDatabase.edge(id: route.edgeIDs[segmentIndex]) {
+            if let edge = try? await routingDatabase.edge(id: route.edgeIDs[segmentIndex]) {
                 currentStreetName = edge.name
             }
         }
         
         // Look ahead for meaningful change
         var lookaheadIdx = segmentIndex + 1
-        var accumulatedDist = 0.0
         
         while lookaheadIdx < route.geometry.count - 1 {
             let nextBearing = calculateBearing(from: route.geometry[lookaheadIdx], to: route.geometry[lookaheadIdx+1])
@@ -272,7 +271,7 @@ actor RouteProgressService {
             
             var nextStreetName: String? = nil
             if lookaheadIdx < route.edgeIDs.count {
-                if let edge = try? routingDatabase.edge(id: route.edgeIDs[lookaheadIdx]) {
+                if let edge = try? await routingDatabase.edge(id: route.edgeIDs[lookaheadIdx]) {
                     nextStreetName = edge.name
                 }
             }
