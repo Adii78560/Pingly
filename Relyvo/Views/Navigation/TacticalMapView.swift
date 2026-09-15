@@ -11,6 +11,7 @@ import MultipeerConnectivity
 
 /// Full-screen 100% Offline Tactical Vector Map Renderer
 struct TacticalMapView: View {
+    @EnvironmentObject var navViewModel: NavigationViewModel
     @StateObject private var viewModel = TacticalMapViewModel()
     @ObservedObject private var breadcrumbs = BreadcrumbTrackingService.shared
     @State private var dragOffset: CGSize = .zero
@@ -37,7 +38,11 @@ struct TacticalMapView: View {
                         drawBreadcrumbTrail(context: context, size: size)
                     }
                     
-                    if viewModel.showTargetLayer, let target = viewModel.activeTarget, let userCoord = viewModel.userCoordinate {
+                    if let route = viewModel.activeRoute {
+                        drawActiveRoute(context: context, size: size, route: route, progress: viewModel.routeProgress)
+                    }
+                    
+                    if viewModel.showTargetLayer, let target = viewModel.activeTarget, let userCoord = viewModel.userCoordinate, navViewModel.navigationMode == .directTarget {
                         drawLineOfSight(context: context, size: size, from: userCoord, to: target)
                     }
                 }
@@ -53,6 +58,12 @@ struct TacticalMapView: View {
                             dragOffset = .zero
                         }
                 )
+                .onChange(of: navViewModel.activeRoute?.totalDistanceMeters) { _ in
+                    viewModel.syncRouteState(route: navViewModel.activeRoute, progress: navViewModel.routeProgress)
+                }
+                .onChange(of: navViewModel.routeProgress?.currentSegmentIndex) { _ in
+                    viewModel.syncRouteState(route: navViewModel.activeRoute, progress: navViewModel.routeProgress)
+                }
                 
                 // Interactive Node Overlay Layer
                 ZStack {
@@ -113,8 +124,9 @@ struct TacticalMapView: View {
                         }
                     }
                     
-                    // 3. Active Target Marker
-                    if viewModel.showTargetLayer, let target = viewModel.activeTarget {
+                    // 3. Active Target Marker (for both modes)
+                    let targetToDraw = navViewModel.navigationMode == .roadRoute ? navViewModel.target : viewModel.activeTarget
+                    if viewModel.showTargetLayer, let target = targetToDraw {
                         let pos = OfflineMapService.shared.project(
                             coordinate: target.coordinate,
                             center: viewModel.centerCoordinate,
@@ -233,7 +245,7 @@ struct TacticalMapView: View {
                             }
                             
                             // Center on Target
-                            if viewModel.activeTarget != nil {
+                            if navViewModel.target != nil || viewModel.activeTarget != nil {
                                 Button(action: { viewModel.centerOnTarget() }) {
                                     Image(systemName: "target")
                                         .font(.system(size: 16, weight: .bold))
@@ -372,6 +384,44 @@ struct TacticalMapView: View {
         
         let strokeColor = target.targetType == .sos ? Color.red.opacity(0.8) : Color.orange.opacity(0.8)
         context.stroke(line, with: .color(strokeColor), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+    }
+    
+    private func drawActiveRoute(context: GraphicsContext, size: CGSize, route: Route, progress: RouteProgress?) {
+        guard route.geometry.count > 1 else { return }
+        
+        let currentIndex = progress?.currentSegmentIndex ?? 0
+        
+        var traveledPath = Path()
+        var remainingPath = Path()
+        
+        for i in 0..<route.geometry.count {
+            let projected = OfflineMapService.shared.project(
+                coordinate: route.geometry[i],
+                center: viewModel.centerCoordinate,
+                zoom: viewModel.zoomLevel,
+                viewSize: size
+            )
+            
+            if i == 0 {
+                traveledPath.move(to: projected)
+                remainingPath.move(to: projected)
+            } else {
+                if i <= currentIndex {
+                    traveledPath.addLine(to: projected)
+                    if i == currentIndex {
+                        remainingPath.move(to: projected)
+                    }
+                } else {
+                    remainingPath.addLine(to: projected)
+                }
+            }
+        }
+        
+        // Draw the traveled portion (dimmed)
+        context.stroke(traveledPath, with: .color(Color.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+        
+        // Draw the remaining portion (brightly highlighted)
+        context.stroke(remainingPath, with: .color(Color.cyan), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
     }
     
     private func isVisible(point: CGPoint, in size: CGSize) -> Bool {

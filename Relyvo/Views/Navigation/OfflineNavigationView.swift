@@ -29,9 +29,14 @@ struct OfflineNavigationView: View {
                 
                 // MARK: - Primary Display Modes
                 if viewModel.displayMode == .compass {
-                    compassRadarModeView
+                    if viewModel.navigationMode == .roadRoute {
+                        roadNavigationModeView
+                    } else {
+                        compassRadarModeView
+                    }
                 } else {
                     TacticalMapView()
+                        .environmentObject(viewModel)
                 }
                 
                 // MARK: - Bottom Tactical Action Bar
@@ -59,7 +64,11 @@ struct OfflineNavigationView: View {
                             .foregroundColor(.white)
                     }
                     
-                    if let target = viewModel.target {
+                    if viewModel.isRoutingCalculationActive {
+                        Text("Calculating route...")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.orange)
+                    } else if let target = viewModel.target {
                         HStack(spacing: 6) {
                             // Staleness Status Pill
                             HStack(spacing: 4) {
@@ -129,7 +138,7 @@ struct OfflineNavigationView: View {
         .background(Color(red: 0.07, green: 0.09, blue: 0.12))
     }
     
-    // MARK: - Mode B: Compass Vector Radar View
+    // MARK: - Mode A: Compass Vector Radar View
     
     private var compassRadarModeView: some View {
         VStack(spacing: 20) {
@@ -283,25 +292,123 @@ struct OfflineNavigationView: View {
         }
     }
     
+    // MARK: - Mode B: Road Route HUD
+    
+    private var roadNavigationModeView: some View {
+        VStack {
+            Spacer()
+            
+            if viewModel.isRerouting {
+                Text("Recalculating Route...")
+                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .foregroundColor(.orange)
+                    .padding()
+                    .background(Color.black.opacity(0.5))
+                    .cornerRadius(12)
+            } else if let progress = viewModel.routeProgress {
+                if progress.isArrived {
+                    VStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundColor(.green)
+                        
+                        Text("ARRIVED")
+                            .font(.system(size: 36, weight: .black, design: .rounded))
+                            .foregroundColor(.green)
+                    }
+                    .padding()
+                    .background(Color.black.opacity(0.5))
+                    .cornerRadius(16)
+                } else if let maneuver = progress.nextManeuver {
+                    VStack(spacing: 16) {
+                        // Maneuver Icon and Distance
+                        HStack(alignment: .center, spacing: 20) {
+                            Image(systemName: getManeuverIcon(maneuver.type))
+                                .font(.system(size: 64, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(formatDistance(maneuver.distanceFromCurrentPosition))
+                                    .font(.system(size: 48, weight: .black, design: .rounded))
+                                    .foregroundColor(.white)
+                                
+                                Text(maneuver.instructionText.uppercased())
+                                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                                    .foregroundColor(.orange)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                        }
+                        
+                        Divider().background(Color.white.opacity(0.2))
+                        
+                        // Remaining Route Stats
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("REMAINING")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.gray)
+                                Text(formatDistance(progress.remainingDistanceMeters))
+                                    .font(.system(size: 20, weight: .black, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Text("ETA")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.gray)
+                                Text(formatTime(seconds: progress.estimatedRemainingTimeSeconds))
+                                    .font(.system(size: 20, weight: .black, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .padding(24)
+                    .background(Color.black.opacity(0.4))
+                    .cornerRadius(20)
+                    .padding(.horizontal, 16)
+                }
+            } else {
+                Text("Waiting for GPS location...")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+        }
+    }
+    
     // MARK: - Bottom Action Bar
     
     private var bottomActionBar: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                // Return to Start Trigger
+                // Return to Start Trigger (Only in directTarget mode typically, but available)
                 Button(action: {
                     viewModel.returnToStart()
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.uturn.backward.circle.fill")
                             .font(.system(size: 14))
-                        Text("RETURN TO START")
+                        Text("RETURN")
                             .font(.system(size: 11, weight: .black, design: .monospaced))
                     }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.1)))
+                }
+                
+                // Toggle Voice Guidance
+                Button(action: {
+                    viewModel.toggleVoice()
+                }) {
+                    Image(systemName: viewModel.voiceGuidanceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(viewModel.voiceGuidanceEnabled ? .orange : .gray)
+                        .frame(width: 44, height: 44)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.1)))
                 }
                 
                 // Toggle Directional Haptics
@@ -350,13 +457,24 @@ struct OfflineNavigationView: View {
                     }
                 }
                 
-                Section("Calculation Metrics") {
-                    if let vector = viewModel.vector {
-                        LabeledContent("Exact Distance", value: String(format: "%.2f meters", vector.distanceMeters))
-                        LabeledContent("Initial True Bearing", value: String(format: "%.1f°", vector.initialBearingDegrees))
-                        LabeledContent("Relative Bearing", value: String(format: "%.1f°", vector.relativeBearingDegrees))
-                        LabeledContent("User True Heading", value: String(format: "%.1f°", vector.userHeadingDegrees))
-                        LabeledContent("Data Freshness", value: viewModel.target?.staleness.badgeTitle ?? "UNKNOWN")
+                if viewModel.navigationMode == .directTarget {
+                    Section("Calculation Metrics") {
+                        if let vector = viewModel.vector {
+                            LabeledContent("Exact Distance", value: String(format: "%.2f meters", vector.distanceMeters))
+                            LabeledContent("Initial True Bearing", value: String(format: "%.1f°", vector.initialBearingDegrees))
+                            LabeledContent("Relative Bearing", value: String(format: "%.1f°", vector.relativeBearingDegrees))
+                            LabeledContent("User True Heading", value: String(format: "%.1f°", vector.userHeadingDegrees))
+                            LabeledContent("Data Freshness", value: viewModel.target?.staleness.badgeTitle ?? "UNKNOWN")
+                        }
+                    }
+                } else if viewModel.navigationMode == .roadRoute {
+                    Section("Routing Metrics") {
+                        if let progress = viewModel.routeProgress {
+                            LabeledContent("Remaining Dist", value: String(format: "%.2f m", progress.remainingDistanceMeters))
+                            LabeledContent("Traveled Dist", value: String(format: "%.2f m", progress.distanceAlongRouteMeters))
+                            LabeledContent("Off Route Dist", value: String(format: "%.2f m", progress.distanceToRouteMeters))
+                            LabeledContent("State", value: viewModel.routeState.rawValue)
+                        }
                     }
                 }
             }
@@ -370,12 +488,49 @@ struct OfflineNavigationView: View {
         }
     }
     
+    // MARK: - Helpers
+    
     private func stalenessColor(_ staleness: TargetStaleness) -> Color {
         switch staleness {
         case .live: return .green
         case .recent: return .yellow
         case .stale: return .orange
         case .expired: return .red
+        }
+    }
+    
+    private func formatDistance(_ meters: Double) -> String {
+        if meters < 1000 {
+            return String(format: "%.0f m", meters)
+        } else {
+            return String(format: "%.1f km", meters / 1000.0)
+        }
+    }
+    
+    private func formatTime(seconds: Double) -> String {
+        if seconds < 60 {
+            return "< 1 min"
+        }
+        let mins = Int(seconds) / 60
+        if mins < 60 {
+            return "\(mins) min"
+        }
+        let hrs = mins / 60
+        let remMins = mins % 60
+        return "\(hrs)h \(remMins)m"
+    }
+    
+    private func getManeuverIcon(_ type: ManeuverType) -> String {
+        switch type {
+        case .start, .`continue`: return "arrow.up"
+        case .slightRight: return "arrow.up.right"
+        case .right: return "arrow.turn.up.right"
+        case .sharpRight: return "arrow.right.circle.fill"
+        case .slightLeft: return "arrow.up.left"
+        case .left: return "arrow.turn.up.left"
+        case .sharpLeft: return "arrow.left.circle.fill"
+        case .uTurn: return "arrow.uturn.down"
+        case .arrive: return "checkmark.circle"
         }
     }
 }

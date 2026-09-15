@@ -101,6 +101,7 @@ struct RadarView: View {
                         self.showTacticalMap = false
                         self.activeNavTarget = target
                     })
+                    .environmentObject(NavigationViewModel())
                     .navigationTitle("Tactical Map")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {

@@ -37,6 +37,10 @@ final class TacticalMapViewModel: ObservableObject {
     @Published var meshPeers: [PeerDevice] = []
     @Published var selectedPeer: PeerDevice?
     
+    // MARK: - Active Route Tracking
+    @Published var activeRoute: Route?
+    @Published var routeProgress: RouteProgress?
+    
     private let locationService = LocationService.shared
     private let multipeerService = MultipeerService.shared
     private let navService = OfflineNavigationService.shared
@@ -77,7 +81,7 @@ final class TacticalMapViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Observe Active Target
+        // Observe Active Target (For Direct Navigation Mode Fallback)
         navService.$activeTarget
             .receive(on: DispatchQueue.main)
             .assign(to: \.activeTarget, on: self)
@@ -90,6 +94,14 @@ final class TacticalMapViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
+    // MARK: - Routing Camera Sync
+    
+    /// Syncs route state from NavigationViewModel
+    func syncRouteState(route: Route?, progress: RouteProgress?) {
+        self.activeRoute = route
+        self.routeProgress = progress
+    }
+    
     // MARK: - Camera Controls
     
     func centerOnUser() {
@@ -100,7 +112,7 @@ final class TacticalMapViewModel: ObservableObject {
     }
     
     func centerOnTarget() {
-        if let targetCoord = activeTarget?.coordinate {
+        if let targetCoord = activeTarget?.coordinate ?? activeRoute?.destination {
             self.centerCoordinate = targetCoord
             self.isFollowingUser = false
         }
