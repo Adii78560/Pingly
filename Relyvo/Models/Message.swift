@@ -21,6 +21,12 @@ enum P2PMessageType: String, Codable {
     case locationSharingStopped = "LOCATION_SHARING_STOPPED"
     case relativePosition = "RELATIVE_POSITION"
     case locationExpired = "LOCATION_EXPIRED"
+    case sessionReady = "SESSION_READY"
+    
+    // Friend Protocol
+    case friendRequest = "FRIEND_REQUEST"
+    case friendAccept = "FRIEND_ACCEPT"
+    case friendDecline = "FRIEND_DECLINE"
 }
 
 /// Discriminator for 1-hop link ACK vs end-to-end destination delivery ACK
@@ -68,6 +74,7 @@ struct Message: Identifiable, Codable, Hashable {
     var sessionID: UUID?
     let conversationID: UUID
     var relayHistory: [UUID]
+    var isRead: Bool
     
     init(
         id: UUID = UUID(),
@@ -94,7 +101,8 @@ struct Message: Identifiable, Codable, Hashable {
         authTag: String? = nil,
         sessionID: UUID? = nil,
         conversationID: UUID? = nil,
-        relayHistory: [UUID] = []
+        relayHistory: [UUID] = [],
+        isRead: Bool = false
     ) {
         let finalOrigin = originID ?? senderID
         self.id = id
@@ -139,6 +147,7 @@ struct Message: Identifiable, Codable, Hashable {
             self.conversationID = DirectConversationID.make(nodeA: finalOrigin, nodeB: destinationID)
         }
         self.relayHistory = relayHistory
+        self.isRead = isRead
     }
 
 

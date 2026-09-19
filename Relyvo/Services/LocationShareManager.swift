@@ -773,7 +773,8 @@ final class LocationShareManager: ObservableObject {
                     statusRaw: "QUEUED",
                     queueRoleRaw: "ORIGIN",
                     hopsCount: 0,
-                    ttl: Constants.Emergency.broadcastTTL
+                    ttl: Constants.Mesh.maxMeshHops,
+                    messageTypeRaw: P2PMessageType.location.rawValue
                 )
             }
             AppLogger.location.info("[LocationShare] Queued control event '\(packet.type)' for offline peer \(destinationID)")

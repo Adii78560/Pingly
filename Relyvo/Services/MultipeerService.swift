@@ -81,12 +81,28 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     private let queueCoalescer = QueueProcessingCoalescer()
 
     
-    // MARK: - Published Properties
+
+    enum PeerConnectionState: String {
+        case idle = "IDLE"
+        case discovered = "DISCOVERED"
+        case invitationSent = "INVITATION_SENT"
+        case invitationReceived = "INVITATION_RECEIVED"
+        case connecting = "CONNECTING"
+        case connected = "CONNECTED"
+        case sessionReady = "SESSION_READY"
+        case disconnected = "DISCONNECTED"
+        case failed = "FAILED"
+    }
+    private var peerConnectionStates: [MCPeerID: PeerConnectionState] = [:]
     @Published private(set) var connectedPeers: [PeerDevice] = []
+    @Published private(set) var discoveredPeers: [PeerDevice] = []
     
     // MARK: - Publishers
     var connectedPeersPublisher: AnyPublisher<[PeerDevice], Never> {
         $connectedPeers.eraseToAnyPublisher()
+    }
+    var discoveredPeersPublisher: AnyPublisher<[PeerDevice], Never> {
+        $discoveredPeers.eraseToAnyPublisher()
     }
     
     let receivedMessageSubject = PassthroughSubject<Message, Never>()
@@ -224,6 +240,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         browser?.stopBrowsingForPeers()
         advertiser = nil
         browser = nil
+        discoveredPeers.removeAll()
         AppLogger.multipeer.info("""
         [DIAG_PEER_ADV_STOP]
         serviceType=\(Constants.Multipeer.serviceType)
@@ -237,13 +254,14 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     func teardownAndResetSession() {
         let resetWork = { [weak self] in
             guard let self = self else { return }
-            AppLogger.multipeer.warning("Tearing down and resetting MCSession...")
+            AppLogger.multipeer.warning("[MESH_SESSION_REPLACED] Tearing down and resetting MCSession...")
             if let existingSession = self.session {
                 existingSession.disconnect()
                 existingSession.delegate = nil
             }
             self.session = nil
             self.connectedPeers.removeAll()
+            self.discoveredPeers.removeAll()
             self.peerIDToNodeIDMap.removeAll()
             self.peerIDToHandleMap.removeAll()
             MeshOutboundQueue.shared.flushAll()
@@ -269,6 +287,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     func connectToPeer(peerID: MCPeerID) {
         guard let session = session, let browser = browser else { return }
         let contextData = NodeIdentity.shared.nodeID.data(using: .utf8)
+        AppLogger.multipeer.info("[MESH_INVITATION_SENT] peer=\(peerID.displayName)")
         browser.invitePeer(peerID, to: session, withContext: contextData, timeout: Constants.Multipeer.connectionTimeoutSeconds)
         RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_SENT", peer: peerID.displayName, details: "invited_peer")
         AppLogger.multipeer.info("Inviting peer: \(peerID.displayName)")
@@ -294,7 +313,10 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         
         AppLogger.multipeer.info("\(frameTag) BINARY_SERIALIZE_START")
         outboundSequenceNumber = outboundSequenceNumber &+ 1
-        let binaryData = MeshPacketHeader.encode(message, sequenceNumber: outboundSequenceNumber)
+        guard let binaryData = try? MeshPacketHeader.encode(message, sequenceNumber: outboundSequenceNumber) else {
+            AppLogger.multipeer.error("Failed to encode outbound message (e.g. channel ID too long)")
+            return
+        }
         let estimatedJsonBytes = 450 + message.text.utf8.count
         let savedBytes = max(0, estimatedJsonBytes - binaryData.count)
         let savedPct = Int((Double(savedBytes) / Double(max(1, estimatedJsonBytes))) * 100.0)
@@ -357,7 +379,8 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
                 hopsCount: message.hopsCount,
                 ttl: 5,
                 conversationID: message.conversationID,
-                relayHistory: message.relayHistory.map { $0.uuidString }
+                relayHistory: message.relayHistory.map { $0.uuidString },
+                messageTypeRaw: message.type.rawValue
             ) }
             AppLogger.multipeer.warning("""
             [OFFLINE_QUEUE_STORED]
@@ -447,7 +470,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             return
         }
         
-        let binaryData = MeshPacketHeader.encode(message)
+        guard let binaryData = try? MeshPacketHeader.encode(message) else { return }
         let priority: MeshPacketPriority = message.isSOS ? .critical : .normal
         MeshOutboundQueue.shared.enqueue(
             data: binaryData,
@@ -630,11 +653,15 @@ extension MultipeerService: MCSessionDelegate {
             RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTION_STATE_CHANGE", peer: peerID.displayName, details: details)
             
             switch state {
+            case .connecting:
+                AppLogger.multipeer.info("[MESH_CONNECTING] peer=\(peerID.displayName)")
             case .connected:
                 let resolvedNodeID = self.peerIDToNodeIDMap[peerID] ?? peerID.displayName
                 let cleanName = self.peerIDToHandleMap[peerID] ?? peerID.displayName.cleanBaseName
                 
-                AppLogger.multipeer.info("Peer connected: \(peerID.displayName) -> mapped to nodeID: \(resolvedNodeID), handle: \(cleanName)")
+                AppLogger.multipeer.info("[MESH_CONNECTED] peer=\(peerID.displayName) nodeID=\(resolvedNodeID) handle=\(cleanName)")
+                self.peerConnectionStates[peerID] = .connecting
+                AppLogger.multipeer.info("Peer connecting: \(peerID.displayName) -> mapped to nodeID: \(resolvedNodeID), handle: \(cleanName)")
                 AppLogger.multipeer.info("""
                 [DIAG_PEER_CONNECTED]
                 peer=\(peerID.displayName)
@@ -643,7 +670,9 @@ extension MultipeerService: MCSessionDelegate {
                 """)
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED", peer: resolvedNodeID, details: details)
                 RelaynTransportDiagnosticsManager.shared.recordPeerConnection(peer: resolvedNodeID)
-                MeshNotificationManager.shared.notifyPeerConnected(peerID: resolvedNodeID, displayName: cleanName)
+                
+                self.peerConnectionStates[peerID] = .connected
+                
                 if !self.connectedPeers.contains(where: { $0.id == resolvedNodeID }) {
                     let newPeer = PeerDevice(
                         id: resolvedNodeID,
@@ -656,6 +685,23 @@ extension MultipeerService: MCSessionDelegate {
                     self.connectedPeers.append(newPeer)
                 }
                 
+                // Transmit synthetic SESSION_READY to finalize handshake
+                let readyMsg = Message(
+                    id: UUID(),
+                    originID: NodeIdentity.shared.nodeID,
+                    destinationID: resolvedNodeID,
+                    senderID: NodeIdentity.shared.nodeID,
+                    senderName: NodeIdentity.shared.displayName,
+                    channelID: nil,
+                    text: "SESSION_READY",
+                    timestamp: Date(),
+                    hopsCount: 0,
+                    ttl: 1,
+                    type: .sessionReady
+                )
+                guard let readyData = try? MeshPacketHeader.encode(readyMsg) else { return }
+                try? self.session?.send(readyData, toPeers: [peerID], with: .reliable)
+                
                 let peerList = self.connectedPeers.map { $0.displayName }
                 RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList(peerList)
                 let elapsedMs = self.connectStartTimestamp != nil ? Int(Date().timeIntervalSince(self.connectStartTimestamp!) * 1000) : 0
@@ -667,7 +713,7 @@ extension MultipeerService: MCSessionDelegate {
                 RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "CONNECTED_PEERS_COUNT", peer: resolvedNodeID, details: "count=\(self.connectedPeers.count)")
                 
                 AppLogger.multipeer.info("""
-                [PINGLY_SESSION_READY]
+                [MESH_SESSION_READY]
                 peer=\(peerID.displayName)
                 peerID=\(peerID.displayName)
                 
@@ -681,9 +727,11 @@ extension MultipeerService: MCSessionDelegate {
                 ChannelPresenceManager.shared.broadcastHeartbeat()
                 
             case .notConnected:
+                self.peerConnectionStates[peerID] = .disconnected
                 let resolvedNodeID = self.peerIDToNodeIDMap[peerID] ?? peerID.displayName
                 let cleanName = self.peerIDToHandleMap[peerID] ?? peerID.displayName.cleanBaseName
                 
+                AppLogger.multipeer.info("[MESH_DISCONNECTED] peer=\(peerID.displayName) nodeID=\(resolvedNodeID) handle=\(cleanName)")
                 AppLogger.multipeer.info("Peer disconnected: \(peerID.displayName) -> resolvedNodeID: \(resolvedNodeID)")
                 AppLogger.multipeer.info("""
                 [DIAG_PEER_DISCONNECTED]
@@ -706,10 +754,11 @@ extension MultipeerService: MCSessionDelegate {
                 // 1. Flush the disconnected peer's outbound queue immediately
                 MeshOutboundQueue.shared.flushQueue(for: peerID)
                 
-                // 2. Invalidate cached peer identities & direct routes
+                // 2. Invalidate cached direct routes, but PRESERVE identity mapping for transient reconnects
                 self.connectedPeers.removeAll(where: { $0.id == resolvedNodeID || $0.mcPeerID == peerID })
-                self.peerIDToNodeIDMap.removeValue(forKey: peerID)
-                self.peerIDToHandleMap.removeValue(forKey: peerID)
+                
+                // DO NOT remove from peerIDToNodeIDMap or peerIDToHandleMap here.
+                // If the same MCPeerID reconnects silently, we must retain its canonical NodeID mapping.
                 
                 // Evict disconnected peer from channel presence registries immediately
                 ChannelPresenceManager.shared.handlePeerDisconnected(nodeIDString: resolvedNodeID)
@@ -756,6 +805,7 @@ extension MultipeerService: MCSessionDelegate {
                 guard !self.connectedPeers.isEmpty else { return }
                 
                 let localNodeID = NodeIdentity.shared.nodeID
+                await SwiftDataService.shared.persistenceActor.cleanupAcknowledgedPendingMessages()
                 await SwiftDataService.shared.persistenceActor.resetFailedPendingMessages()
                 let pendingList = SwiftDataService.shared.fetchPendingMessages()
                 guard !pendingList.isEmpty else { return }
@@ -791,6 +841,18 @@ extension MultipeerService: MCSessionDelegate {
                         continue
                     }
                     
+                    // 🔒 P0-3: STORE-AND-FORWARD AUTHORIZATION
+                    let isDirectMessage = (pending.destinationID != "BROADCAST") && !pending.channel.hasPrefix("CH-")
+                    
+                    if pending.queueRole == .origin && isDirectMessage {
+                        if !DirectChatGate.shared.canSendDirectMessage(to: pending.destinationID) {
+                            AppLogger.multipeer.warning("[MESH_CHAT_QUEUE_AUTH_DROP] messageID=\(pending.messageID.uuidString) destinationID=\(pending.destinationID) conversationID=\(pending.conversationID.uuidString) queueRole=\(pending.queueRoleRaw) reason=AUTH_REVOKED")
+                            await SwiftDataService.shared.persistenceActor.updatePendingMessageStatus(messageID: pending.messageID, statusRaw: "FAILED", reason: "AUTH_REVOKED")
+                            continue
+                        }
+                    }
+                    
+                    
                     let targetPeerName = self.connectedPeers.first?.displayName ?? pending.destinationID
                     let shortTarget = String(targetPeerName.prefix(6))
                     
@@ -813,7 +875,7 @@ extension MultipeerService: MCSessionDelegate {
                         isSOS: pending.isSOS,
                         hopsCount: pending.hopsCount + 1,
                         ttl: pending.ttl,
-                        type: isTranscript ? .transcript : .chat
+                        type: P2PMessageType(rawValue: pending.messageTypeRaw) ?? (isTranscript ? .transcript : .chat)
                     )
                     
                     AppLogger.multipeer.info("""
@@ -1137,21 +1199,25 @@ extension MultipeerService: MCSessionDelegate {
             
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                
+                if message.type == .sessionReady {
+                    if message.destinationID == localNodeID {
+                        AppLogger.multipeer.info("[SESSION_READY_HANDSHAKE_RX] Completed from peer=\(peerID.displayName)")
+                        self.peerConnectionStates[peerID] = .sessionReady
+                        let cleanName = self.peerIDToHandleMap[peerID] ?? peerID.displayName.cleanBaseName
+                        MeshNotificationManager.shared.notifyPeerConnected(peerID: message.originID, displayName: cleanName)
+                    }
+                    return
+                }
+                
                 // Handle incoming Delivery ACK frame
                 if message.type == .ack {
                     AppLogger.multipeer.info("\(AppLogger.ackTag(message.id)) ACK_RECEIVE_START peer=\(shortPeer)")
                     RelaynTransportDiagnosticsManager.shared.incrementAckReceived()
                     
-                    AppLogger.multipeer.info("""
-                    [PINGLY_ACK_RX]
-                    ackMessageID=\(message.id.uuidString)
-                    originalMessageID=\(message.id.uuidString)
-                    sender=\(message.senderID)
-                    receiver=\(message.destinationID)
-                    peer=\(peerID.displayName)
-                    """)
+                    AppLogger.multipeer.info("[MESH_ACK] msg=\(message.id.uuidString) origin=\(message.originID) from=\(peerID.displayName) to=\(message.destinationID) hop=\(message.hopsCount)")
                     
-                    let isAckForLocal = (message.originID == localNodeID || message.destinationID == localNodeID || message.destinationID == localUserHandle || message.destinationID.hasPrefix("CH-"))
+                    let isAckForLocal = (message.destinationID == localNodeID)
                     
                     if isAckForLocal {
                         let shortID = String(message.id.uuidString.prefix(6)).uppercased()
@@ -1211,7 +1277,7 @@ extension MultipeerService: MCSessionDelegate {
                             frameType=ACK
                             """)
                             
-                            let binaryAck = MeshPacketHeader.encode(relayAck)
+                            guard let binaryAck = try? MeshPacketHeader.encode(relayAck) else { return }
                             MeshOutboundQueue.shared.enqueue(
                                 data: binaryAck,
                                 priority: .high,
@@ -1250,10 +1316,20 @@ extension MultipeerService: MCSessionDelegate {
                 // from CH-3 does NOT bleed into a device subscribed to CH-1.
                 // Emergency SOS beacons (isSOS == true) bypass channel gates and deliver universally.
                 // Plain broadcasts with no channelID are delivered unconditionally.
-                let shouldDeliverLocally = isSOS ||
+                var shouldDeliverLocally = isSOS ||
                                            (message.destinationID == localNodeID) ||
                                            (isChannelMessage && channelMatches) ||
                                            (!isChannelMessage && message.destinationID == "BROADCAST")
+                
+                // 🔒 P0-1: INCOMING CHAT NETWORK BOUNDARY AUTHORIZATION
+                if shouldDeliverLocally && (message.type == .chat || message.type == .transcript) && message.destinationID == localNodeID {
+                    if !DirectChatGate.shared.canSendDirectMessage(to: message.originID) {
+                        shouldDeliverLocally = false
+                        AppLogger.multipeer.warning("[MESH_CHAT_AUTH_DROP] senderNodeID=\(message.originID) destinationNodeID=\(message.destinationID) messageID=\(message.id.uuidString) conversationID=\(message.conversationID.uuidString) packetType=\(message.type.rawValue) reason=NOT_ACCEPTED")
+                    } else {
+                        AppLogger.multipeer.info("[MESH_CHAT_AUTH_ACCEPT] senderNodeID=\(message.originID) destinationNodeID=\(message.destinationID) messageID=\(message.id.uuidString) authorized=true")
+                    }
+                }
                 
                 // Relay independence: forward if (a) not addressed to this device, (b) channel
                 // broadcast, OR (c) high-priority emergency SOS packet.
@@ -1286,23 +1362,10 @@ extension MultipeerService: MCSessionDelegate {
                 localHandle=\(localUserHandle)
                 matches=\(isForMe)
                 destinationType=\(isChannelMessage ? "CHANNEL_BROADCAST" : (message.destinationID == "BROADCAST" ? "BROADCAST" : "DEVICE"))
-                
-                [PINGLY_ROUTE_BEGIN]
-                messageID=\(message.id.uuidString)
-                frameType=\(message.type.rawValue)
-                senderID=\(message.senderID)
-                destinationID=\(message.destinationID)
-                currentDeviceID=\(localNodeID)
-                channelID=\(message.channelID ?? message.destinationID)
-                currentHop=\(message.hopsCount)
-                maxHop=\(message.ttl)
-                isOrigin=\(message.originID == localNodeID)
-                isRelay=\(!isForMe)
-                isDestination=\(isForMe)
-                isForCurrentDevice=\(isForMe)
-                isForCurrentChannel=\(isChannelMessage && channelMatches)
-                willRelayRegardlessOfChannel=\(isChannelMessage && !channelMatches)
                 """)
+                
+                let convIDStr = message.conversationID.uuidString
+                AppLogger.multipeer.info("[MESH_RX] msg=\(message.id.uuidString) origin=\(message.originID) conv=\(convIDStr) from=\(message.senderID) hop=\(message.hopsCount) ttl=\(message.ttl)")
                 
                 let shortMsgID = String(message.id.uuidString.prefix(6)).uppercased()
                 
@@ -1312,13 +1375,7 @@ extension MultipeerService: MCSessionDelegate {
                 // exactly-once forwarding regardless of mesh topology.
                 let canonicalIdentity = "\(message.originID)_\(message.id.uuidString)"
                 if seenCache.contains(canonicalIdentity) {
-                    AppLogger.multipeer.info("""
-                    [MESH_DEDUP_DROP]
-                    messageID=\(message.id.uuidString)
-                    peer=\(peerID.displayName)
-                    reason=ALREADY_SEEN_IN_MEMORY_CACHE
-                    hop=\(message.hopsCount)/\(message.ttl)
-                    """)
+                    AppLogger.multipeer.info("[MESH_DEDUP_DROP] msg=\(message.id.uuidString) origin=\(message.originID) identity=CANONICAL")
                     RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
                     return
                 }
@@ -1333,12 +1390,8 @@ extension MultipeerService: MCSessionDelegate {
                     RelaynTransportDiagnosticsManager.shared.incrementPhysicalTestReceived()
                     RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "RX_BEGIN", peer: peerID.displayName, details: "messageID=\(shortMsgID) type=\(message.type.rawValue)")
                     RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "DECODE_SUCCESS", peer: peerID.displayName, details: "messageID=\(shortMsgID)")
-                    
-                    AppLogger.multipeer.info("""
-                    [PINGLY_ROUTE_DECISION]
-                    action=DELIVER
-                    reason=DESTINATION_OR_CHANNEL_MATCHES_LOCAL_NODE
-                    """)
+                    let convIDStr = message.conversationID.uuidString
+                    AppLogger.multipeer.info("[MESH_DELIVERED] msg=\(message.id.uuidString) origin=\(message.originID) conv=\(convIDStr)")
                     
                     AppLogger.multipeer.info("\(AppLogger.messageTag(message.id)) DUPLICATE_CHECK")
                     AppLogger.multipeer.info("\(AppLogger.messageTag(message.id)) DUPLICATE=\(alreadyProcessed)")
@@ -1394,6 +1447,23 @@ extension MultipeerService: MCSessionDelegate {
                                 hopCount: UInt8(min(message.hopsCount, 255)),
                                 isDirectPeer: isDirect
                             )
+                        } else if message.type == .friendRequest {
+                            await SwiftDataService.shared.persistenceActor.handleFriendRequest(from: message.originID, handle: message.senderName, requestID: message.id)
+                            NotificationCenter.default.post(name: .didUpdateFriends, object: nil)
+                            AppLogger.multipeer.info("Received Friend Request from \(message.senderName)")
+                        } else if message.type == .friendAccept {
+                            await SwiftDataService.shared.persistenceActor.handleFriendAccept(from: message.originID)
+                            NotificationCenter.default.post(name: .didUpdateFriends, object: nil)
+                            NotificationCenter.default.post(
+                                name: .didBecomeFriend,
+                                object: nil,
+                                userInfo: ["nodeID": message.originID]
+                            )
+                            AppLogger.multipeer.info("Received Friend Accept from \(message.senderName)")
+                        } else if message.type == .friendDecline {
+                            await SwiftDataService.shared.persistenceActor.handleFriendDecline(from: message.originID)
+                            NotificationCenter.default.post(name: .didUpdateFriends, object: nil)
+                            AppLogger.multipeer.info("Received Friend Decline from \(message.senderName)")
                         } else {
                             await SwiftDataService.shared.persistenceActor.saveChatMessage(
                                 id: message.id,
@@ -1448,7 +1518,7 @@ extension MultipeerService: MCSessionDelegate {
                         
                         let deliveryAck = Message(
                             id: message.id,
-                            originID: message.originID,
+                            originID: localNodeID,
                             destinationID: message.originID,
                             senderID: localNodeID,
                             senderName: localUserHandle,
@@ -1483,49 +1553,31 @@ extension MultipeerService: MCSessionDelegate {
                 // so we only need to check originID (don't relay our own originating messages).
                 let localUUID = UUID(uuidString: localNodeID) ?? UUID()
                 if message.relayHistory.contains(localUUID) {
-                    AppLogger.multipeer.info("""
-                    [PINGLY_ROUTE_DECISION]
-                    action=DROP
-                    reason=LOOP_PREVENTION_RELAY_HISTORY_MATCH
-                    """)
+                    AppLogger.multipeer.info("[MESH_LOOP_DROP] msg=\(message.id.uuidString) node=\(localNodeID)")
                     return
                 }
                 
                 if shouldForward && message.originID != localNodeID {
                     RelaynTransportDiagnosticsManager.shared.incrementRelayReceived()
                     
+                    // ── TTL / Hop-Limit Enforcement ───────────────────────────────────────
+                    // Strict less-than against message.ttl:
+                    //   hopsCount=0 < ttl=1 → forward ✓
+                    //   hopsCount=1 < ttl=1 → DROP (TTL exceeded) ✗
+                    guard message.hopsCount < message.ttl else {
+                        AppLogger.multipeer.info("[MESH_TTL_DROP] msg=\(message.id.uuidString) hop=\(message.hopsCount) ttl=\(message.ttl)")
+                        RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+                        return
+                    }
+                    
                     var relayMsg = message
                     relayMsg.previousHopID = localNodeID
                     relayMsg.hopsCount += 1
                     relayMsg.relayHistory.append(localUUID)
-                    
-                    // ── TTL / Hop-Limit Enforcement ───────────────────────────────────────
-                    // Strict less-than against Constants.Mesh.maxMeshHops:
-                    //   hopsCount=4 < maxMeshHops=5 → forward ✓
-                    //   hopsCount=5 < maxMeshHops=5 → DROP (TTL exceeded) ✗
-                    // This prevents a packet from surviving more than maxMeshHops relay hops
-                    // total, bounding the worst-case forwarding storm to a finite diameter.
-                    guard relayMsg.hopsCount < Constants.Mesh.maxMeshHops else {
-                        AppLogger.multipeer.info("""
-                        [MESH_TTL_EXCEEDED]
-                        messageID=\(message.id.uuidString)
-                        hopsCount=\(relayMsg.hopsCount)
-                        maxMeshHops=\(Constants.Mesh.maxMeshHops)
-                        ttl=\(message.ttl)
-                        peer=\(peerID.displayName)
-                        reason=HOP_LIMIT_REACHED
-                        """)
-                        RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
-                        return
-                    }
                     // ─────────────────────────────────────────────────────────────────────
                     
-                    AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARDING hops=\(relayMsg.hopsCount) maxHops=\(Constants.Mesh.maxMeshHops) peer=\(shortPeer)")
-                    AppLogger.multipeer.info("""
-                    [PINGLY_ROUTE_DECISION]
-                    action=RELAY
-                    reason=INTERMEDIATE_NODE_FORWARD
-                    """)
+                    AppLogger.multipeer.info("[MESH_FORWARD] msg=\(relayMsg.id.uuidString) from=\(relayMsg.senderID) to=\(relayMsg.destinationID) hop=\(relayMsg.hopsCount) ttl=\(relayMsg.ttl)")
+                    AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARDING hops=\(relayMsg.hopsCount) maxHops=\(relayMsg.ttl) peer=\(shortPeer)")
                     
                     // ── Anti-Echo Relay ───────────────────────────────────────────────────
                     // Send to all connected peers EXCEPT the one who sent us this packet.
@@ -1554,7 +1606,7 @@ extension MultipeerService: MCSessionDelegate {
                             senderName: message.senderName,
                             previousHopID: message.previousHopID ?? message.senderID,
                             text: message.text,
-                            channel: message.destinationID,
+                            channel: message.channelID ?? message.destinationID,
                             isSOS: message.isSOS,
                             priorityRaw: message.isSOS ? 2 : 0,
                             statusRaw: "PENDING",
@@ -1644,6 +1696,22 @@ extension MultipeerService: MCNearbyServiceAdvertiserDelegate {
         }
         RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_RECEIVED", peer: peerID.displayName, details: "invitation_accepted")
         RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "INVITATION_RECEIVED", peer: peerID.displayName)
+        
+        if let session = session {
+            let stalePeers = session.connectedPeers.filter { $0.displayName == peerID.displayName && $0 != peerID }
+            for stale in stalePeers {
+                AppLogger.multipeer.warning("""
+                [MESH_RECONNECT] Evicting stale MCPeerID for \(stale.displayName) upon invitation receive.
+                """)
+                session.cancelConnectPeer(stale)
+                DispatchQueue.main.async {
+                    self.connectedPeers.removeAll(where: { $0.mcPeerID == stale })
+                    self.peerIDToNodeIDMap.removeValue(forKey: stale)
+                    self.peerIDToHandleMap.removeValue(forKey: stale)
+                }
+            }
+        }
+        
         invitationHandler(true, session)
         RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_ACCEPTED", peer: peerID.displayName, details: "invitation_handler_accepted=true")
         RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "INVITATION_ACCEPTED", peer: peerID.displayName)
@@ -1653,6 +1721,7 @@ extension MultipeerService: MCNearbyServiceAdvertiserDelegate {
 // MARK: - MCNearbyServiceBrowserDelegate
 extension MultipeerService: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
+        AppLogger.multipeer.info("[MESH_PEER_DISCOVERED] peer=\(peerID.displayName)")
         AppLogger.multipeer.info("Browser found peer: \(peerID.displayName)")
         AppLogger.multipeer.info("""
         [DIAG_PEER_FOUND]
@@ -1673,8 +1742,38 @@ extension MultipeerService: MCNearbyServiceBrowserDelegate {
         
         let resolvedNodeID = self.peerIDToNodeIDMap[peerID] ?? peerID.displayName
         let cleanName = self.peerIDToHandleMap[peerID] ?? peerID.displayName.cleanBaseName
-        MeshNotificationManager.shared.notifyPeerDiscovered(peerID: resolvedNodeID, displayName: cleanName)
+        
         guard let session = session else { return }
+        
+        let stalePeers = session.connectedPeers.filter { $0.displayName == peerID.displayName && $0 != peerID }
+        for stale in stalePeers {
+            AppLogger.multipeer.warning("""
+            [MESH_RECONNECT] Evicting stale MCPeerID for \(stale.displayName).
+            New discovery has the same NodeID but a different MCPeerID object.
+            """)
+            session.cancelConnectPeer(stale)
+            DispatchQueue.main.async {
+                self.connectedPeers.removeAll(where: { $0.mcPeerID == stale })
+                self.peerIDToNodeIDMap.removeValue(forKey: stale)
+                self.peerIDToHandleMap.removeValue(forKey: stale)
+            }
+        }
+        
+        MeshNotificationManager.shared.notifyPeerDiscovered(peerID: resolvedNodeID, displayName: cleanName)
+        
+        let newDiscovered = PeerDevice(
+            id: resolvedNodeID,
+            displayName: cleanName,
+            mcPeerID: peerID,
+            isConnected: false
+        )
+        DispatchQueue.main.async {
+            if let idx = self.discoveredPeers.firstIndex(where: { $0.id == resolvedNodeID }) {
+                self.discoveredPeers[idx] = newDiscovered
+            } else {
+                self.discoveredPeers.append(newDiscovered)
+            }
+        }
         
         // Deterministic Multipeer Invitation (Eliminate Socket Error 54 / Cross-Invite Collision)
         let shouldInvite = self.myPeerID.displayName < peerID.displayName
@@ -1690,6 +1789,7 @@ extension MultipeerService: MCNearbyServiceBrowserDelegate {
                 RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "INVITATION_SENT", peer: peerID.displayName, details: "deterministic_invite_winner")
                 RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "INVITATION_SENT", peer: peerID.displayName)
                 let contextData = NodeIdentity.shared.nodeID.data(using: .utf8)
+                AppLogger.multipeer.info("[MESH_INVITATION_SENT] peer=\(peerID.displayName)")
                 browser.invitePeer(peerID, to: session, withContext: contextData, timeout: 15)
             }
         } else {
@@ -1716,8 +1816,10 @@ extension MultipeerService: MCNearbyServiceBrowserDelegate {
         DispatchQueue.main.async {
             let resolvedNodeID = self.peerIDToNodeIDMap[peerID] ?? peerID.displayName
             self.connectedPeers.removeAll(where: { $0.id == resolvedNodeID || $0.mcPeerID == peerID })
-            self.peerIDToNodeIDMap.removeValue(forKey: peerID)
-            self.peerIDToHandleMap.removeValue(forKey: peerID)
+            self.discoveredPeers.removeAll(where: { $0.id == resolvedNodeID || $0.mcPeerID == peerID })
+            
+            // DO NOT remove from peerIDToNodeIDMap or peerIDToHandleMap here.
+            // If the same MCPeerID reconnects silently, we must retain its canonical NodeID mapping.
             let peerList = self.connectedPeers.map { $0.displayName }
             RelaynTransportDiagnosticsManager.shared.updateConnectedPeersList(peerList)
             RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTED_PEERS_COUNT", peer: resolvedNodeID, details: "count=\(self.connectedPeers.count)")

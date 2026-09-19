@@ -404,6 +404,20 @@ struct SettingsView: View {
     
     private var diagnosticsSection: some View {
         Section("Diagnostics & Delivery Status") {
+            NavigationLink(destination: PhysicalValidationHubView()) {
+                HStack {
+                    SettingsIconBadge(systemName: "flag.checkered.circle.fill", backgroundColor: .purple)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Physical Validation Hub")
+                            .font(.body.weight(.bold))
+                            .foregroundColor(.purple)
+                        Text("Campaign identity, mesh topology & PTT console")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
             NavigationLink(destination: MeshDiagnosticsView()) {
                 HStack {
                     SettingsIconBadge(systemName: "bell.badge.waveform.fill", backgroundColor: AppTheme.tintColor)

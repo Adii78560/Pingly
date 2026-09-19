@@ -72,6 +72,7 @@ struct MainTabView: View {
                     }
                     .tag(3)
             }
+            .environmentObject(radarViewModel)
             .tint(AppTheme.tintColor)
 
             if !isSplashFinished {
@@ -96,6 +97,9 @@ struct MainTabView: View {
                     showIncomingCallSheet = false
                 }
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NavigateToDirectMessage"))) { _ in
+            selectedTab = 2 // Switch to Messages tab
         }
         .onAppear {
             ATTManager.shared.requestTrackingPermissionIfFirstLaunch()

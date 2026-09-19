@@ -228,6 +228,25 @@ struct RadarView: View {
                     Circle()
                         .stroke(peer.isConnected ? Color.green : AppTheme.hotMagenta, lineWidth: 2)
                         .frame(width: 66, height: 66)
+                    
+                    let status = viewModel.friendStatus(for: peer.id)
+                    if status != .none {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Image(systemName: statusIcon(for: status))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .background(statusColor(for: status))
+                                    .clipShape(Circle())
+                                    .shadow(radius: 2)
+                            }
+                        }
+                        .frame(width: 66, height: 66)
+                        .offset(x: 4, y: 4)
+                    }
                 }
                 
                 VStack(spacing: 2) {
@@ -240,6 +259,10 @@ struct RadarView: View {
                     Text("\(peer.rssi) dBm")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
+                        
+                    Text(peer.isConnected ? "Connected" : "Discovered")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(peer.isConnected ? .green : AppTheme.hotMagenta)
                 }
             }
             .padding(12)
@@ -247,8 +270,77 @@ struct RadarView: View {
             .cornerRadius(16)
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            let status = viewModel.friendStatus(for: peer.id)
+            if status == .accepted {
+                Button(role: .destructive, action: {
+                    viewModel.removeFriend(peer)
+                }) {
+                    Label("Remove Friend", systemImage: "person.badge.minus")
+                }
+            } else if status == .requestSent {
+                Button(role: .destructive, action: {
+                    viewModel.removeFriend(peer)
+                }) {
+                    Label("Cancel Request", systemImage: "xmark.circle")
+                }
+            } else if status == .requestReceived {
+                Button(action: {
+                    viewModel.acceptFriendRequest(peer.id)
+                }) {
+                    Label("Accept Request", systemImage: "checkmark.circle")
+                }
+                Button(role: .destructive, action: {
+                    viewModel.declineFriendRequest(peer.id)
+                }) {
+                    Label("Decline Request", systemImage: "xmark.circle")
+                }
+            } else if status == .declined {
+                Button(action: {
+                    viewModel.addFriend(peer)
+                }) {
+                    Label("Add Again", systemImage: "person.badge.plus")
+                }
+            } else {
+                Button(action: {
+                    viewModel.addFriend(peer)
+                }) {
+                    Label("Add Friend", systemImage: "person.badge.plus")
+                }
+            }
+            
+            if status == .accepted {
+                Button(action: {
+                    // Direct message action
+                    let convID = DirectConversationID.make(nodeA: NodeIdentity.shared.nodeID, nodeB: peer.id).uuidString
+                    NotificationCenter.default.post(name: NSNotification.Name("NavigateToDirectMessage"), object: nil, userInfo: ["conversationID": convID, "peerID": peer.id, "displayName": peer.displayName])
+                }) {
+                    Label("Message", systemImage: "message")
+                }
+            }
+        }
     }
-
+    
+    // MARK: - Helper Methods
+    private func statusIcon(for status: FriendStatus) -> String {
+        switch status {
+        case .accepted: return "person.2.fill"
+        case .requestSent: return "arrow.up.right"
+        case .requestReceived: return "arrow.down.left"
+        case .declined: return "xmark.octagon.fill"
+        default: return ""
+        }
+    }
+    
+    private func statusColor(for status: FriendStatus) -> Color {
+        switch status {
+        case .accepted: return .green
+        case .requestSent: return .orange
+        case .requestReceived: return .blue
+        case .declined: return .red
+        default: return .clear
+        }
+    }
 }
 
 

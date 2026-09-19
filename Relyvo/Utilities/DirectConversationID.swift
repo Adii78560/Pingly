@@ -8,6 +8,7 @@
 
 import Foundation
 import CryptoKit
+import OSLog
 
 enum DirectConversationID {
     
@@ -27,7 +28,9 @@ enum DirectConversationID {
         
         // 3. Concatenate and hash the sorted pair using SHA256.
         let combinedString = sorted.joined(separator: "_")
-        return makeDeterministicUUID(from: combinedString)
+        let result = makeDeterministicUUID(from: combinedString)
+        AppLogger.multipeer.info("DIRECT_CONVERSATION_ID local=\(nodeA) remote=\(nodeB) result=\(result.uuidString)")
+        return result
     }
     
     /// Generates a deterministic UUID for a channel conversation.
@@ -35,7 +38,9 @@ enum DirectConversationID {
     /// - Parameter channelName: The name of the channel.
     /// - Returns: A globally unique, deterministic UUID representing the channel conversation.
     static func make(channelName: String) -> UUID {
-        return makeDeterministicUUID(from: channelName.uppercased())
+        let result = makeDeterministicUUID(from: channelName.uppercased())
+        AppLogger.multipeer.info("CHANNEL_CONVERSATION_ID channel=\(channelName) result=\(result.uuidString)")
+        return result
     }
     
     private static func makeDeterministicUUID(from string: String) -> UUID {

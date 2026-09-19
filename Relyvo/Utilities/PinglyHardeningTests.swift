@@ -194,7 +194,7 @@ final class RelaynHardeningTests {
             type: .chat
         )
         
-        let encodedBinary = MeshPacketHeader.encode(testMsg)
+        let encodedBinary = try! MeshPacketHeader.encode(testMsg)
         assert(encodedBinary.count == MeshPacketHeader.fixedHeaderSizeV3 + testMsg.text.utf8.count, "MeshPacketHeader encodes with exact header + payload size")
         assert(MeshPacketHeader.isBinaryMeshPacket(encodedBinary), "MeshPacketHeader.isBinaryMeshPacket identifies 0x5245 magic bytes")
         
@@ -240,7 +240,7 @@ final class RelaynHardeningTests {
         
         // A. Sequence Counter in MeshPacketHeader (bytes 60..61)
         let seqTestMsg = Message(senderID: "NODE-SEQ-1", senderName: "SeqTester", text: "Audio Seq Test")
-        let seqEncoded = MeshPacketHeader.encode(seqTestMsg, sequenceNumber: 42100, isEOT: false)
+        let seqEncoded = try! MeshPacketHeader.encode(seqTestMsg, sequenceNumber: 42100, isEOT: false)
         do {
             let seqDecoded = try MeshPacketHeader.decode(from: seqEncoded)
             assert(seqDecoded.sequenceNumber == 42100, "MeshPacketHeader preserves monotonic sequence number 42100")
@@ -268,7 +268,7 @@ final class RelaynHardeningTests {
         assert(loser == nodeBravo, "Deterministic floor arbitration correctly revokes larger UUID/Node ID 'NODE-0002-BRAVO'")
         
         // D. Explicit End-of-Transmission (EOT) Flag (Bit 3 / 0x08)
-        let eotEncoded = MeshPacketHeader.encode(seqTestMsg, sequenceNumber: 42101, isEOT: true)
+        let eotEncoded = try! MeshPacketHeader.encode(seqTestMsg, sequenceNumber: 42101, isEOT: true)
         do {
             let eotDecoded = try MeshPacketHeader.decode(from: eotEncoded)
             assert(eotDecoded.flags.isEOT == true, "MeshPacketHeader preserves isEOT=true flag bit (0x08)")
@@ -280,7 +280,7 @@ final class RelaynHardeningTests {
         // E. Custom Channel Prefix Bounds Guard (Max 32 Bytes)
         // Valid custom channel (< 32 bytes)
         let validCustomMsg = Message(senderID: "NODE-CH-1", senderName: "ChTester", channelID: "VALID-CUSTOM-ROOM", text: "Room Ping")
-        let validCustomData = MeshPacketHeader.encode(validCustomMsg)
+        let validCustomData = try! MeshPacketHeader.encode(validCustomMsg)
         do {
             let validCustomDecoded = try MeshPacketHeader.decode(from: validCustomData)
             assert(validCustomDecoded.channelID == "VALID-CUSTOM-ROOM", "Custom channel name under 32 bytes decodes successfully")
@@ -296,7 +296,7 @@ final class RelaynHardeningTests {
         do {
             _ = try MeshPacketHeader.decode(from: oversizedCustomData)
             assert(false, "MeshPacketHeader.decode should reject custom channel prefix > 32 bytes")
-        } catch let err as MeshPacketDecodeError {
+        } catch let err as MeshPacketError {
             switch err {
             case .customChannelPrefixOverflow(let got, let max):
                 assert(got == 40 && max == 32, "MeshPacketHeader.decode correctly throws customChannelPrefixOverflow for length 40 > 32")
@@ -535,7 +535,7 @@ final class RelaynHardeningTests {
         assert(sosMessage.longitude == -122.4194, "GPS Longitude correctly set")
         
         // B. Binary Encode/Decode Flag Preservation
-        let sosBinary = MeshPacketHeader.encode(sosMessage)
+        let sosBinary = try! MeshPacketHeader.encode(sosMessage)
         let sosDecoded = try? MeshPacketHeader.decode(from: sosBinary)
         assert(sosDecoded != nil, "SOS packet decoded successfully")
         assert(sosDecoded?.flags.isSOS == true, "MeshPacketHeader preserved isSOS bit 0 flag")

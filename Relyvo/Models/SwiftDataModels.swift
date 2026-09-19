@@ -54,6 +54,7 @@ final class SDChatMessage {
     var timestamp: Date
     var isSynced: Bool
     var isDelivered: Bool = false
+    var isRead: Bool = false
     var messageTypeRaw: String = P2PMessageType.chat.rawValue
     var latitude: Double?
     var longitude: Double?
@@ -96,6 +97,7 @@ final class SDChatMessage {
         self.timestamp = timestamp
         self.isSynced = isSynced
         self.isDelivered = isDelivered
+        self.isRead = false
         self.messageTypeRaw = messageType.rawValue
         self.latitude = latitude
         self.longitude = longitude
@@ -172,6 +174,7 @@ final class SDPendingMessage {
     var maxRetries: Int = 5
     var hopsCount: Int = 0
     var ttl: Int = Constants.Emergency.broadcastTTL
+    var messageTypeRaw: String = P2PMessageType.chat.rawValue
     
     // Delivery Lifecycle Timestamps & Receipts
     var queuedAt: Date?
@@ -506,7 +509,7 @@ final class SDBreadcrumbPoint {
 final class SDOfflineMapRegion {
     @Attribute(.unique) var id: String
     var name: String
-    var version: String
+    var version: String? = "1.0"
     var stateOrRegion: String
     var minLatitude: Double
     var minLongitude: Double
@@ -522,7 +525,7 @@ final class SDOfflineMapRegion {
     init(
         id: String,
         name: String,
-        version: String = "1.0",
+        version: String? = "1.0",
         stateOrRegion: String,
         minLatitude: Double,
         minLongitude: Double,
@@ -549,5 +552,38 @@ final class SDOfflineMapRegion {
         self.isDownloaded = isDownloaded
         self.downloadedAt = downloadedAt
         self.localFilePath = localFilePath
+    }
+}
+
+enum FriendStatus: String, Codable {
+    case none
+    case requestSent
+    case requestReceived
+    case accepted
+    case declined
+}
+
+/// SwiftData persistent model tracking a persistent friend on the radar
+@Model
+final class SDFriend {
+    @Attribute(.unique) var nodeID: String
+    var handle: String
+    var dateAdded: Date
+    
+    // Friend protocol properties (Optional for safe lightweight migration)
+    var statusRaw: String? = FriendStatus.none.rawValue
+    var requestID: UUID? = nil
+    
+    var status: FriendStatus {
+        get { FriendStatus(rawValue: statusRaw ?? "none") ?? .none }
+        set { statusRaw = newValue.rawValue }
+    }
+    
+    init(nodeID: String, handle: String, dateAdded: Date = Date(), status: FriendStatus = .none, requestID: UUID? = nil) {
+        self.nodeID = nodeID
+        self.handle = handle
+        self.dateAdded = dateAdded
+        self.statusRaw = status.rawValue
+        self.requestID = requestID
     }
 }

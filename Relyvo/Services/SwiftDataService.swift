@@ -42,7 +42,8 @@ final class SwiftDataService: ObservableObject {
             SDVoiceMessage.self,
             SDBreadcrumbTrack.self,
             SDBreadcrumbPoint.self,
-            SDOfflineMapRegion.self
+            SDOfflineMapRegion.self,
+            SDFriend.self
         ])
         AppLogger.multipeer.info("[Persistence] Model schema loaded (11 entities registered)")
 
@@ -99,6 +100,16 @@ final class SwiftDataService: ObservableObject {
             let transcriptCount = (try? self.context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
             let pendingCount = (try? self.context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
             
+            AppLogger.multipeer.info("""
+            [PERSISTENCE]
+            event=INITIALIZATION_SUCCESS
+            storeURL=\(storeURL.path)
+            inMemory=\(inMemory)
+            migration=SUCCESS
+            modelVersion=1
+            result=PERSISTENT_STORE_MOUNTED
+            """)
+            
             RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_RESTORE_CHECK", details: "chatCount=\(chatCount) voiceTranscriptCount=\(transcriptCount) pendingMessageCount=\(pendingCount)")
             RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_SNAPSHOT", details: "storeExists=\(storeExists) fileSize=\(fileSizeString)")
         } catch {
@@ -106,20 +117,20 @@ final class SwiftDataService: ObservableObject {
             AppLogger.multipeer.error("[Persistence][ERROR] Error = \(error.localizedDescription)")
             AppLogger.multipeer.error("[Persistence][ERROR] Full error description = \(String(describing: error))")
             
-            // Non-destructive fallback: Initialize in-memory container to allow app runtime startup while preserving disk files safely on disk
-            let fallbackConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            do {
-                self.container = try ModelContainer(for: schema, configurations: [fallbackConfig])
-                self.persistenceActor = PersistenceActor(modelContainer: self.container)
-                self.isUsingInMemoryFallback = true
-                AppLogger.multipeer.warning("[Persistence] Container instance created (FALLBACK)")
-                AppLogger.multipeer.warning("[Persistence] Store type = in-memory")
-                AppLogger.multipeer.warning("[Persistence] SwiftData ModelContainer operating in non-destructive fallback mode. Disk store files preserved untouched.")
-                updateUnsyncedCount()
-                logAllEntityCounts()
-            } catch {
-                AppLogger.multipeer.error("[Persistence][ERROR] Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
-                fatalError("Critical: Failed to initialize fallback SwiftData ModelContainer: \(error.localizedDescription)")
+            AppLogger.multipeer.info("""
+            [PERSISTENCE]
+            event=INITIALIZATION_FAILED
+            storeURL=\(storeURL.path)
+            inMemory=\(inMemory)
+            migration=FAILED
+            modelVersion=1
+            result=FATAL_ERROR
+            """)
+            
+            if inMemory {
+                fatalError("Critical: Failed to initialize in-memory SwiftData ModelContainer: \(error.localizedDescription)")
+            } else {
+                fatalError("Critical: Failed to initialize persistent SwiftData ModelContainer. To prevent data corruption or loss, the app will now terminate. Error: \(error.localizedDescription)")
             }
         }
     }
@@ -328,11 +339,28 @@ final class SwiftDataService: ObservableObject {
         
         var validPending: [SDPendingMessage] = []
         for item in allPending {
-            // Purge expired store-and-forward messages (e.g. older than 7 days)
+            // Check Communication Authorization Gate for direct messages
+            let isDirectMessage = item.destinationID != "BROADCAST" && !item.channel.hasPrefix("CH-")
+            
+            var isAuthorized = true
+            if isDirectMessage {
+                let destID = item.destinationID
+                let friendDesc = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == destID })
+                if let friend = (try? context.fetch(friendDesc))?.first {
+                    isAuthorized = (friend.status == .accepted)
+                } else {
+                    isAuthorized = false // No relationship
+                }
+            }
+            
+            // Purge expired store-and-forward messages
             if item.expiresAt < now {
                 context.delete(item)
                 AppLogger.multipeer.info("Purged expired pending message \(item.messageID)")
-            } else {
+            } else if !isAuthorized {
+                item.statusRaw = "CANCELLED"
+                AppLogger.multipeer.warning("Cancelled pending message \(item.messageID) - Unauthorized destination (Status: \(item.statusRaw))")
+            } else if item.statusRaw != "CANCELLED" {
                 validPending.append(item)
             }
         }
@@ -456,6 +484,7 @@ final class SwiftDataService: ObservableObject {
             DispatchQueue.main.async {
                 self.totalUnsyncedCount = 0
             }
+            AppLogger.multipeer.info("[MESSAGE_DELETED] convID=ALL reason=USER_ACTION")
             AppLogger.multipeer.info("Atomically purged all user profiles, messages, locations, tracks, and notifications from SwiftData store.")
         } catch {
             AppLogger.multipeer.error("Failed to purge SwiftData store during account deletion: \(error.localizedDescription)")
@@ -569,6 +598,37 @@ final class SwiftDataService: ObservableObject {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    // MARK: - Friends
+    
+    func fetchFriends() -> [SDFriend] {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        let descriptor = FetchDescriptor<SDFriend>()
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    func addFriend(nodeID: String, displayName: String) {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? context.fetch(descriptor).first {
+            existing.handle = displayName
+        } else {
+            let newFriend = SDFriend(nodeID: nodeID, handle: displayName)
+            context.insert(newFriend)
+        }
+        saveContext()
+    }
+    
+    func removeFriend(nodeID: String) {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? context.fetch(descriptor).first {
+            context.delete(existing)
+            saveContext()
+        }
+    }
     
     private func saveContext() {
         do {

@@ -21,7 +21,8 @@ public final actor PersistenceActor {
         longitude: Double? = nil,
         altitude: Double? = nil,
         accuracy: Double? = nil,
-        conversationID: UUID? = nil
+        conversationID: UUID? = nil,
+        isRead: Bool = false
     ) {
         let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
         AppLogger.multipeer.info("\(tag)_START type=\(messageTypeRaw)")
@@ -32,6 +33,7 @@ public final actor PersistenceActor {
         let descriptor = FetchDescriptor<SDChatMessage>(predicate: #Predicate { $0.id == id })
         if let existing = try? modelContext.fetch(descriptor).first {
             existing.isDelivered = isDelivered
+            existing.isRead = isRead
         } else {
             let message = SDChatMessage(
                 id: id,
@@ -51,11 +53,27 @@ public final actor PersistenceActor {
                 conversationID: conversationID
             )
             message.messageTypeRaw = messageTypeRaw
+            message.isRead = isRead
             modelContext.insert(message)
         }
         
-        try? modelContext.save()
-        AppLogger.multipeer.info("\(tag)_SUCCESS type=\(messageTypeRaw)")
+        do {
+            try modelContext.save()
+            AppLogger.multipeer.info("\(tag)_SUCCESS type=\(messageTypeRaw)")
+            AppLogger.multipeer.info("[MESSAGE_PERSISTED] messageID=\(id.uuidString) type=\(messageTypeRaw) sender=\(senderID) destination=\(resolvedDestinationID) conversationID=\(conversationID?.uuidString ?? "nil")")
+        } catch {
+            AppLogger.multipeer.error("[MESSAGE_SAVE_FAILED] messageID=\(id.uuidString) reason=\(error.localizedDescription)")
+        }
+    }
+    
+    public func markConversationAsRead(conversationID: UUID) {
+        let descriptor = FetchDescriptor<SDChatMessage>(predicate: #Predicate { $0.conversationID == conversationID && $0.isRead == false })
+        if let unreadMessages = try? modelContext.fetch(descriptor) {
+            for message in unreadMessages {
+                message.isRead = true
+            }
+            try? modelContext.save()
+        }
     }
     
     public func enqueuePendingMessage(
@@ -74,7 +92,8 @@ public final actor PersistenceActor {
         hopsCount: Int,
         ttl: Int,
         conversationID: UUID? = nil,
-        relayHistory: [String] = []
+        relayHistory: [String] = [],
+        messageTypeRaw: String = "CHAT"
     ) {
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let existing = try? modelContext.fetch(descriptor).first {
@@ -101,9 +120,14 @@ public final actor PersistenceActor {
         pending.relayHistory = relayHistory
         pending.statusRaw = statusRaw
         pending.queueRoleRaw = queueRoleRaw
+        pending.messageTypeRaw = messageTypeRaw
         
         modelContext.insert(pending)
         try? modelContext.save()
+        
+        let pendingCount = (try? modelContext.fetchCount(FetchDescriptor<SDPendingMessage>())) ?? 0
+        let priorityStr = (priorityRaw == 2) ? "HIGH" : (priorityRaw == 1 ? "NORMAL" : "LOW")
+        AppLogger.multipeer.info("[MESH_QUEUE] msg=\(messageID.uuidString) role=\(queueRoleRaw) priority=\(priorityStr) depth=\(pendingCount) status=\(statusRaw)")
     }
     
     public func markPendingMessageAsACKed(messageID: UUID) {
@@ -125,7 +149,8 @@ public final actor PersistenceActor {
         let pendingDescriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let pendingList = try? modelContext.fetch(pendingDescriptor) {
             for pending in pendingList {
-                modelContext.delete(pending)
+                pending.statusRaw = "ACKNOWLEDGED"
+                pending.lastAttemptTimestamp = Date()
             }
         }
         
@@ -149,6 +174,21 @@ public final actor PersistenceActor {
                 AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(statusRaw) reason=\(r) retryCount=\(pending.retryCount)")
             } else {
                 AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(statusRaw)")
+            }
+        }
+    }
+    public func cleanupAcknowledgedPendingMessages() {
+        let expirationDate = Date().addingTimeInterval(-86400) // 24 hours
+        let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate {
+            $0.statusRaw == "ACKNOWLEDGED" && $0.timestamp < expirationDate
+        })
+        if let pendingList = try? modelContext.fetch(descriptor) {
+            for pending in pendingList {
+                modelContext.delete(pending)
+            }
+            if !pendingList.isEmpty {
+                try? modelContext.save()
+                AppLogger.multipeer.info("[Persistence] Cleaned up \(pendingList.count) ACKNOWLEDGED pending messages older than 24h")
             }
         }
     }
@@ -404,6 +444,75 @@ public final actor PersistenceActor {
             for item in results {
                 item.isDelivered = true
             }
+            try? modelContext.save()
+        }
+    }
+    
+    // MARK: - Friends Operations
+    
+    func fetchFriends() -> [SDFriend] {
+        let descriptor = FetchDescriptor<SDFriend>()
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+    
+    func getFriendStatus(for nodeID: String) -> FriendStatus {
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        return (try? modelContext.fetch(descriptor))?.first?.status ?? .none
+    }
+    
+    func localSendFriendRequest(nodeID: String, displayName: String) -> UUID {
+        let requestID = UUID()
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? modelContext.fetch(descriptor).first {
+            existing.handle = displayName
+            existing.status = .requestSent
+            existing.requestID = requestID
+        } else {
+            let newFriend = SDFriend(nodeID: nodeID, handle: displayName, status: .requestSent, requestID: requestID)
+            modelContext.insert(newFriend)
+        }
+        try? modelContext.save()
+        return requestID
+    }
+    
+    func handleFriendRequest(from nodeID: String, handle: String, requestID: UUID) {
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? modelContext.fetch(descriptor).first {
+            if existing.status == .none {
+                existing.status = .requestReceived
+                existing.requestID = requestID
+                existing.handle = handle
+                try? modelContext.save()
+            }
+        } else {
+            let newFriend = SDFriend(nodeID: nodeID, handle: handle, status: .requestReceived, requestID: requestID)
+            modelContext.insert(newFriend)
+            try? modelContext.save()
+        }
+    }
+    
+    func handleFriendAccept(from nodeID: String) {
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? modelContext.fetch(descriptor).first {
+            if existing.status == .requestSent || existing.status == .requestReceived {
+                existing.status = .accepted
+                try? modelContext.save()
+            }
+        }
+    }
+    
+    func handleFriendDecline(from nodeID: String) {
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? modelContext.fetch(descriptor).first {
+            existing.status = .declined
+            try? modelContext.save()
+        }
+    }
+    
+    func removeFriend(nodeID: String) {
+        let descriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == nodeID })
+        if let existing = try? modelContext.fetch(descriptor).first {
+            modelContext.delete(existing)
             try? modelContext.save()
         }
     }

@@ -90,7 +90,7 @@ public final class SubscriptionManager: NSObject, ObservableObject, Subscription
             return
         }
         
-        let apiKey = Constants.Subscriptions.apiKey
+        let apiKey = Constants.Subscriptions.testApiKey
         AppLogger.multipeer.info("[RevenueCat] Configuring SDK with API Key: \(apiKey.prefix(8))...")
         
         #if DEBUG

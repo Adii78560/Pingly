@@ -355,6 +355,7 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 
                 // Save Voice Message in SwiftData
                 Task {
+                    let m4aPath = VoiceStorageManager.shared.voiceNotesDirectory.appendingPathComponent("\(sessionID.uuidString).m4a").path
                     await SwiftDataService.shared.persistenceActor.saveVoiceMessage(
                         sessionID: sessionID,
                         channelID: channel,
@@ -362,7 +363,7 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                         senderAlias: alias,
                         timestamp: startTime,
                         duration: duration,
-                        audioFilePath: fileURL.path,
+                        audioFilePath: m4aPath,
                         directionRaw: "SENDER",
                         isDelivered: true
                     )
@@ -585,6 +586,7 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
             
             // Save Voice Message in SwiftData
             Task {
+                let m4aPath = VoiceStorageManager.shared.voiceNotesDirectory.appendingPathComponent("\(sessionID.uuidString).m4a").path
                 await SwiftDataService.shared.persistenceActor.saveVoiceMessage(
                     sessionID: sessionID,
                     channelID: channel,
@@ -592,7 +594,7 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                     senderAlias: senderName,
                     timestamp: startTime,
                     duration: duration,
-                    audioFilePath: fileURL.path,
+                    audioFilePath: m4aPath,
                     directionRaw: "RECEIVER",
                     isDelivered: true
                 )

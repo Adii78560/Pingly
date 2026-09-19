@@ -42,6 +42,12 @@ enum MeshPacketType: UInt8 {
     case text           = 0x04   // Chat or transcript text payload
     case ack            = 0x05   // Delivery acknowledgement
     case location       = 0x06   // Location sharing payload
+    case sessionReady   = 0x07   // Handshake completion signal
+    
+    // Friend Protocol
+    case friendRequest  = 0x08
+    case friendAccept   = 0x09
+    case friendDecline  = 0x0A
     
     /// Maps from the semantic P2PMessageType used by the Message model.
     static func from(_ type: P2PMessageType) -> MeshPacketType {
@@ -57,6 +63,10 @@ enum MeshPacketType: UInt8 {
         case .locationExpired:         return .location
         case .relativePosition:        return .location
         case .channelSync:             return .channelPing
+        case .sessionReady:            return .sessionReady
+        case .friendRequest:           return .friendRequest
+        case .friendAccept:            return .friendAccept
+        case .friendDecline:           return .friendDecline
         }
     }
     
@@ -69,6 +79,10 @@ enum MeshPacketType: UInt8 {
         case .text:           return .chat
         case .ack:            return .ack
         case .location:       return .location
+        case .sessionReady:   return .sessionReady
+        case .friendRequest:  return .friendRequest
+        case .friendAccept:   return .friendAccept
+        case .friendDecline:  return .friendDecline
         }
     }
 }
@@ -144,7 +158,7 @@ struct MeshPacketFlags {
 
 // MARK: - Decode Error
 
-enum MeshPacketDecodeError: Error, LocalizedError {
+enum MeshPacketError: Error, LocalizedError {
     case tooShort(got: Int, need: Int)
     case badMagicBytes(byte0: UInt8, byte1: UInt8)
     case unknownPacketType(UInt8)
@@ -211,7 +225,7 @@ enum MeshPacketHeader {
     static let magicByte0: UInt8 = 0x52   // 'R'
     static let magicByte1: UInt8 = 0x45   // 'E'
     static let fixedHeaderSizeV2: Int = 62
-    static let fixedHeaderSizeV3: Int = 78
+    static let fixedHeaderSizeV3: Int = 79
     static let maxCustomChannelPrefixBytes: Int = 32
     
     // MARK: Encode: Message → Data
@@ -223,7 +237,7 @@ enum MeshPacketHeader {
     ///   Binary: 62 bytes header + payload (payload = text.utf8.count, no field name overhead)
     ///
     /// Reduction: ~70-80% for short text messages, up to ~50% for longer transcript payloads.
-    static func encode(_ message: Message, sequenceNumber: UInt16 = 0, isEOT: Bool = false, relayHistory: [UUID] = []) -> Data {
+    static func encode(_ message: Message, sequenceNumber: UInt16 = 0, isEOT: Bool = false, relayHistory: [UUID] = []) throws -> Data {
         let channelByte = MeshChannelByte.from(channelID: message.channelID)
         let isChannelBroadcast = message.channelID != nil && !message.channelID!.isEmpty
         let isRelayHop = message.hopsCount > 0
@@ -237,7 +251,10 @@ enum MeshPacketHeader {
         // Build payload: for custom channels, prefix payload with 1-byte length + channel name UTF-8
         var payloadData = Data()
         if channelByte == .custom, let cid = message.channelID,
-           let cidBytes = cid.data(using: .utf8), cidBytes.count <= maxCustomChannelPrefixBytes {
+           let cidBytes = cid.data(using: .utf8) {
+            guard cidBytes.count <= maxCustomChannelPrefixBytes else {
+                throw MeshPacketError.customChannelPrefixOverflow(got: cidBytes.count, max: maxCustomChannelPrefixBytes)
+            }
             var cidLen = UInt8(cidBytes.count)
             payloadData.append(&cidLen, count: 1)
             payloadData.append(cidBytes)
@@ -299,20 +316,20 @@ enum MeshPacketHeader {
     // MARK: Decode: Data → MeshPacket
     
     /// Decodes compact binary wire format back to a `MeshPacket`.
-    /// Throws `MeshPacketDecodeError` on any structural violation.
+    /// Throws `MeshPacketError` on any structural violation.
     static func decode(from data: Data) throws -> MeshPacket {
         guard data.count >= fixedHeaderSizeV2 else {
-            throw MeshPacketDecodeError.tooShort(got: data.count, need: fixedHeaderSizeV2)
+            throw MeshPacketError.tooShort(got: data.count, need: fixedHeaderSizeV2)
         }
         guard data[0] == magicByte0, data[1] == magicByte1 else {
-            throw MeshPacketDecodeError.badMagicBytes(byte0: data[0], byte1: data[1])
+            throw MeshPacketError.badMagicBytes(byte0: data[0], byte1: data[1])
         }
         
         let version = data[2]
         
         let typeRaw = data[3]
         guard let packetType = MeshPacketType(rawValue: typeRaw) else {
-            throw MeshPacketDecodeError.unknownPacketType(typeRaw)
+            throw MeshPacketError.unknownPacketType(typeRaw)
         }
         let channelByteRaw = data[4]
         let channelByte = MeshChannelByte(rawValue: channelByteRaw) ?? .custom
@@ -333,7 +350,7 @@ enum MeshPacketHeader {
         
         if version >= 0x03 {
             guard data.count >= fixedHeaderSizeV3 else {
-                throw MeshPacketDecodeError.tooShort(got: data.count, need: fixedHeaderSizeV3)
+                throw MeshPacketError.tooShort(got: data.count, need: fixedHeaderSizeV3)
             }
             conversationID = dataToUUID(data.subdata(in: 55..<71))
             let payloadLenBE = data.subdata(in: 71..<75).withUnsafeBytes { $0.load(as: UInt32.self) }
@@ -346,7 +363,7 @@ enum MeshPacketHeader {
             payloadOffset = fixedHeaderSizeV3 + (historyCount * 16)
             
             guard data.count >= payloadOffset + payloadLen else {
-                throw MeshPacketDecodeError.payloadLengthMismatch(declared: payloadLen, available: data.count - payloadOffset)
+                throw MeshPacketError.payloadLengthMismatch(declared: payloadLen, available: data.count - payloadOffset)
             }
             
             for i in 0..<historyCount {
@@ -366,7 +383,7 @@ enum MeshPacketHeader {
             payloadOffset = fixedHeaderSizeV2
             
             guard data.count >= payloadOffset + payloadLen else {
-                throw MeshPacketDecodeError.payloadLengthMismatch(declared: payloadLen, available: data.count - payloadOffset)
+                throw MeshPacketError.payloadLengthMismatch(declared: payloadLen, available: data.count - payloadOffset)
             }
         }
         
@@ -380,25 +397,25 @@ enum MeshPacketHeader {
         var resolvedChannelID = channelByte.toChannelIDString()
         if channelByte == .custom {
             guard !payload.isEmpty else {
-                throw MeshPacketDecodeError.malformedCustomChannelPrefix
+                throw MeshPacketError.malformedCustomChannelPrefix
             }
             let cidLen = Int(payload[0])
             guard cidLen <= maxCustomChannelPrefixBytes else {
-                throw MeshPacketDecodeError.customChannelPrefixOverflow(got: cidLen, max: maxCustomChannelPrefixBytes)
+                throw MeshPacketError.customChannelPrefixOverflow(got: cidLen, max: maxCustomChannelPrefixBytes)
             }
             guard payload.count >= 1 + cidLen else {
-                throw MeshPacketDecodeError.malformedCustomChannelPrefix
+                throw MeshPacketError.malformedCustomChannelPrefix
             }
             let cidData = payload.subdata(in: 1..<(1 + cidLen))
             guard let cidString = String(data: cidData, encoding: .utf8) else {
-                throw MeshPacketDecodeError.malformedCustomChannelPrefix
+                throw MeshPacketError.malformedCustomChannelPrefix
             }
             resolvedChannelID = cidString
             payload = payload.subdata(in: (1 + cidLen)..<payload.count)
         }
         
         guard let textPayload = String(data: payload, encoding: .utf8) else {
-            throw MeshPacketDecodeError.invalidUTF8Payload
+            throw MeshPacketError.invalidUTF8Payload
         }
         
         return MeshPacket(

@@ -50,8 +50,22 @@ struct ChatView: View {
                 }
             }
             
-            // Native iMessage Input Dock
-            iMessageInputDock
+            // 🔒 Communication Authorization Gate
+            if DirectChatGate.shared.canSendDirectMessage(to: currentConversation.recipientNodeID) {
+                // Native iMessage Input Dock
+                iMessageInputDock
+            } else {
+                unauthorizedBanner
+            }
+        }
+        .onAppear {
+            viewModel.markConversationAsRead(conversationID: currentConversation.id)
+            viewModel.selectedConversation = currentConversation
+        }
+        .onDisappear {
+            if viewModel.selectedConversation?.id == currentConversation.id {
+                viewModel.selectedConversation = nil
+            }
         }
         .navigationTitle(currentConversation.displayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -199,6 +213,24 @@ struct ChatView: View {
         case .locationExpired: return "clock.fill"
         default: return "info.circle.fill"
         }
+    }
+    
+    // MARK: - Unauthorized Banner
+    private var unauthorizedBanner: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "hand.raised.slash.fill")
+                .font(.system(size: 24))
+                .foregroundColor(.red)
+            Text("Friend Request Declined")
+                .font(.headline)
+            Text("You cannot message this person unless they accept a new request.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(Color(UIColor.systemGray6))
     }
     
     // MARK: - Floating Native iMessage Input Dock

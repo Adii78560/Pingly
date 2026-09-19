@@ -38,6 +38,8 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             }
+            
+            InAppConsoleOverlay()
         }
         .animation(.easeInOut(duration: 0.35), value: signInManager.authState)
         .animation(.easeInOut(duration: 0.35), value: isSplashFinished)
