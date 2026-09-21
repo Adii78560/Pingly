@@ -431,7 +431,11 @@ final class MessagesViewModel: ObservableObject {
     private func loadSwiftDataConversations() {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            let descriptor = FetchDescriptor<SDChatMessage>(sortBy: [SortDescriptor(\.timestamp, order: .forward)])
+            let chatPredicate = #Predicate<SDChatMessage> { msg in
+                (msg.messageTypeRaw == "CHAT" || msg.messageTypeRaw == "TEXT") &&
+                !msg.text.contains("LOCATION_PROTOCOL:")
+            }
+            let descriptor = FetchDescriptor<SDChatMessage>(predicate: chatPredicate, sortBy: [SortDescriptor(\.timestamp, order: .forward)])
             if let saved = try? SwiftDataService.shared.context.fetch(descriptor) {
                 var grouped: [String: [Message]] = [:]
                 for item in saved {

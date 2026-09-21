@@ -38,6 +38,7 @@ final class LocationShareManager: ObservableObject {
     
     @Published public private(set) var activeSessions: [String: LocationSessionState] = [:]
     @Published public var pendingIncomingRequests: [String: String] = [:] // peerID -> senderName
+    @Published public var cachedPeerLocation: [String: CLLocationCoordinate2D] = [:]
     
     private var dirtySessions: Set<String> = []
     
@@ -130,6 +131,7 @@ final class LocationShareManager: ObservableObject {
     
     /// 1. Ask for Location: Transmits LOCATION_REQUEST packet to remote peer and creates chat event
     public func requestLocation(from remotePeerID: String, displayName: String) {
+        AppLogger.location.info("[LOCATION_REQUEST] Initiating outbound location request to \(displayName) (\(remotePeerID))")
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
         
@@ -172,8 +174,11 @@ final class LocationShareManager: ObservableObject {
     
     /// 2. Respond to Location Request (Accept/Deny)
     public func respondToLocationRequest(from remotePeerID: String, displayName: String, accept: Bool) {
+        AppLogger.location.info("[LOCATION_RESPONSE] Responding to location request from \(displayName) (\(remotePeerID)) - Accept: \(accept)")
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
+        
+        let currentLoc = LocationService.shared.currentCoordinate
         
         let packet = LocationPacket(
             type: "LOCATION_RESPONSE",
@@ -183,8 +188,8 @@ final class LocationShareManager: ObservableObject {
             recipientID: remotePeerID,
             timestamp: Date(),
             accepted: accept,
-            latitude: nil,
-            longitude: nil,
+            latitude: accept ? currentLoc?.latitude : nil,
+            longitude: accept ? currentLoc?.longitude : nil,
             accuracy: nil,
             speed: nil,
             course: nil,
@@ -229,6 +234,7 @@ final class LocationShareManager: ObservableObject {
     
     /// 3. Share My Location: Enables continuous location sharing for local user with target peer
     public func startSharingLocation(with remotePeerID: String, displayName: String) {
+        AppLogger.location.info("[LOCATION_SHARE] Starting location sharing with \(displayName) (\(remotePeerID))")
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
         
@@ -255,6 +261,7 @@ final class LocationShareManager: ObservableObject {
     
     /// 4. Stop Sharing Location: Halts location updates and transmits LOCATION_SHARING_STOPPED packet
     public func stopSharingLocation(with remotePeerID: String, displayName: String) {
+        AppLogger.location.info("[LOCATION_SHARE] Stopping location sharing with \(displayName) (\(remotePeerID))")
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
         
@@ -302,6 +309,7 @@ final class LocationShareManager: ObservableObject {
     
     /// 5. Privacy-Preserving Relative Position Mode: Transmits ONLY relative vector data (zero raw GPS coordinates)
     public func shareRelativePosition(with remotePeerID: String, displayName: String) {
+        AppLogger.location.info("[RELATIVE_POSITION] Sharing relative position with \(displayName) (\(remotePeerID))")
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
         
@@ -365,8 +373,11 @@ final class LocationShareManager: ObservableObject {
         
         switch packet.type {
         case "LOCATION_REQUEST":
+            AppLogger.location.info("[INCOMING_PACKET] Received LOCATION_REQUEST from \(packet.senderName) (\(packet.senderID))")
             DispatchQueue.main.async {
                 self.pendingIncomingRequests[packet.senderID] = packet.senderName
+                ActivityFeedManager.shared.addLocationRequest(peerID: packet.senderID, displayName: packet.senderName)
+                NotificationCenter.default.post(name: NSNotification.Name("didReceiveLocationRequest"), object: nil, userInfo: ["peerID": packet.senderID, "displayName": packet.senderName])
             }
             saveChatLocationEvent(
                 type: .locationRequest,
@@ -385,10 +396,16 @@ final class LocationShareManager: ObservableObject {
             
         case "LOCATION_RESPONSE":
             let accepted = packet.accepted ?? false
+            AppLogger.location.info("[INCOMING_PACKET] Received LOCATION_RESPONSE from \(packet.senderName) (\(packet.senderID)) - Accepted: \(accepted)")
             updateLocalSessionState(remotePeerID: packet.senderID) { state in
                 state.remoteDisplayName = packet.senderName
                 state.isSharingRemote = accepted
                 state.stateRaw = accepted ? "ACTIVE" : "DENIED"
+                if accepted, let lat = packet.latitude, let lon = packet.longitude {
+                    state.lastRemoteLatitude = lat
+                    state.lastRemoteLongitude = lon
+                    state.lastRemoteTimestamp = packet.timestamp
+                }
             }
             flushDirtySessions() // Important state change
             
@@ -412,6 +429,15 @@ final class LocationShareManager: ObservableObject {
             guard let lat = packet.latitude, let lon = packet.longitude,
                   lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 else {
                 return
+            }
+            AppLogger.location.debug("[INCOMING_PACKET] Received LOCATION_UPDATE from \(packet.senderName) (\(packet.senderID)) - Lat/Lon parsed")
+            
+            DispatchQueue.main.async {
+                let loc = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                self.cachedPeerLocation[packet.senderID] = loc
+                if let peer = MultipeerService.shared.connectedPeers.first(where: { $0.id == packet.senderID }) {
+                    self.cachedPeerLocation[peer.id] = loc
+                }
             }
             
             // Sequence Protection for Optional State
@@ -454,6 +480,7 @@ final class LocationShareManager: ObservableObject {
             OfflineNavigationService.shared.updateTargetCoordinate(navTarget)
             
         case "LOCATION_SHARING_STOPPED":
+            AppLogger.location.info("[INCOMING_PACKET] Received LOCATION_SHARING_STOPPED from \(packet.senderName) (\(packet.senderID))")
             updateLocalSessionState(remotePeerID: packet.senderID) { state in
                 state.remoteDisplayName = packet.senderName
                 state.isSharingRemote = false
@@ -477,6 +504,7 @@ final class LocationShareManager: ObservableObject {
             )
             
         case "RELATIVE_POSITION":
+            AppLogger.location.info("[INCOMING_PACKET] Received RELATIVE_POSITION from \(packet.senderName) (\(packet.senderID))")
             let distStr: String
             if let meters = packet.distanceMeters {
                 distStr = meters < 1000 ? String(format: "%.0f m", meters) : String(format: "%.2f km", meters / 1000.0)
@@ -547,6 +575,18 @@ final class LocationShareManager: ObservableObject {
                 senderName: localName
             )
         }
+        
+        // Timeout active sessions > 4 hours
+        let activeSharing = activeSessions.values.filter { $0.isSharingLocal }
+        let maxSessionDuration: TimeInterval = 4 * 60 * 60 // 4 hours
+        for session in activeSharing {
+            if let startTimestamp = session.lastLocalTimestamp,
+               Date().timeIntervalSince(startTimestamp) > maxSessionDuration {
+                AppLogger.location.info("[LOCATION_TIMEOUT] Auto-expiring active sharing session with \(session.remoteDisplayName)")
+                stopSharingLocation(with: session.remotePeerID, displayName: session.remoteDisplayName)
+            }
+        }
+        
         if expiredAny {
             flushDirtySessions()
         }
@@ -628,7 +668,15 @@ final class LocationShareManager: ObservableObject {
         
         LocationService.shared.getCurrentLocationSnapshot { [weak self] location in
             guard let self = self else { return }
-            guard let location = location else {
+#if targetEnvironment(simulator)
+            let maxAllowedAccuracy = 150.0
+#else
+            let maxAllowedAccuracy = 65.0
+#endif
+            guard let location = location,
+                  location.horizontalAccuracy >= 0,
+                  location.horizontalAccuracy <= maxAllowedAccuracy else {
+                AppLogger.location.debug("[LOCATION_FILTER] Discarding coordinate with poor accuracy: \(location?.horizontalAccuracy ?? -1)m")
                 self.startPeriodicBroadcastTimer(interval: 10.0)
                 return
             }
@@ -726,6 +774,38 @@ final class LocationShareManager: ObservableObject {
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
         
+        guard let peer = MultipeerService.shared.connectedPeers.first(where: { 
+            $0.displayName == destinationID || $0.id == destinationID 
+        }) else {
+            AppLogger.location.error("[LOCATION_TX_FAIL] Cannot find connected peer matching nodeID: \(destinationID)")
+            
+            if packet.type != "LOCATION_UPDATE" {
+                // Queue control event for durable offline delivery
+                Task {
+                    await SwiftDataService.shared.persistenceActor.enqueuePendingMessage(
+                        messageID: packet.id,
+                        originID: localNodeID,
+                        destinationID: destinationID,
+                        recipientName: destinationID,
+                        senderName: localName,
+                        previousHopID: nil,
+                        text: "LOCATION_PROTOCOL:\(jsonString)",
+                        channel: destinationID,
+                        isSOS: false,
+                        priorityRaw: 0,
+                        statusRaw: "QUEUED",
+                        queueRoleRaw: "ORIGIN",
+                        hopsCount: 0,
+                        ttl: Constants.Mesh.maxMeshHops,
+                        messageTypeRaw: P2PMessageType.location.rawValue
+                    )
+                }
+            }
+            return
+        }
+        
+        AppLogger.location.info("[LOCATION_TX] Dispatched \(packet.type) to \(destinationID) (\(peer.displayName))")
+        
         let p2pType: P2PMessageType
         switch packet.type {
         case "LOCATION_REQUEST": p2pType = .locationRequest
@@ -746,34 +826,7 @@ final class LocationShareManager: ObservableObject {
             type: p2pType
         )
         
-        let isConnected = MultipeerService.shared.connectedPeers.contains(where: { $0.id == destinationID })
-        if isConnected {
-            MultipeerService.shared.broadcast(message: msg)
-        } else {
-            if packet.type == "LOCATION_UPDATE" {
-                return
-            }
-            // Queue control event for durable offline delivery
-            Task {
-                await SwiftDataService.shared.persistenceActor.enqueuePendingMessage(
-                    messageID: packet.id,
-                    originID: localNodeID,
-                    destinationID: destinationID,
-                    recipientName: destinationID,
-                    senderName: localName,
-                    previousHopID: nil,
-                    text: "LOCATION_PROTOCOL:\(jsonString)",
-                    channel: destinationID,
-                    isSOS: false,
-                    priorityRaw: 0,
-                    statusRaw: "QUEUED",
-                    queueRoleRaw: "ORIGIN",
-                    hopsCount: 0,
-                    ttl: Constants.Mesh.maxMeshHops,
-                    messageTypeRaw: packet.type == "LOCATION_UPDATE" ? "LOCATION_UPDATE" : P2PMessageType.location.rawValue
-                )
-            }
-        }
+        MultipeerService.shared.broadcast(message: msg)
     }
     
     private func saveChatLocationEvent(type: P2PMessageType, text: String, destinationID: String, senderID: String, senderName: String) {

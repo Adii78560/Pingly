@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 /// Native Apple iMessage Conversation Directory View
 struct MessagesView: View {
@@ -13,6 +14,7 @@ struct MessagesView: View {
     @EnvironmentObject var radarViewModel: RadarViewModel
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     @StateObject private var featureAccessManager = FeatureAccessManager.shared
+    @ObservedObject private var activityManager = ActivityFeedManager.shared
     
     @State private var searchText = ""
     @State private var showActivitySheet = false
@@ -66,7 +68,7 @@ struct MessagesView: View {
                                 .font(.system(size: 20))
                                 .foregroundColor(.primary)
                             
-                            if !pendingRequests.isEmpty {
+                            if activityManager.unreadCount > 0 {
                                 Circle()
                                     .fill(Color.red)
                                     .frame(width: 10, height: 10)
@@ -78,6 +80,7 @@ struct MessagesView: View {
             }
             .sheet(isPresented: $showActivitySheet) {
                 activitySheetView
+                    .modelContext(SwiftDataService.shared.context)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NavigateToDirectMessage"))) { note in
                 guard let userInfo = note.userInfo,
@@ -96,86 +99,7 @@ struct MessagesView: View {
     
     // MARK: - Activity Sheet
     private var activitySheetView: some View {
-        NavigationStack {
-            List {
-                if !pendingRequests.isEmpty {
-                    Section(header: Text("Friend Requests")) {
-                        ForEach(pendingRequests, id: \.nodeID) { friend in
-                            friendRequestRow(friend: friend)
-                        }
-                    }
-                }
-                
-                let nearbyFriends = radarViewModel.nearbyPeers.filter { peer in 
-                    radarViewModel.friends.contains(where: { $0.nodeID == peer.id && $0.status == .accepted })
-                }
-                
-                if !nearbyFriends.isEmpty {
-                    Section(header: Text("Nearby Activity")) {
-                        ForEach(nearbyFriends, id: \.id) { peer in
-                            HStack(spacing: 12) {
-                                Circle()
-                                    .fill(Color.green.opacity(0.1))
-                                    .frame(width: 48, height: 48)
-                                    .overlay(
-                                        Image(systemName: "antenna.radiowaves.left.and.right")
-                                            .foregroundColor(.green)
-                                    )
-                                
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(peer.displayName)
-                                        .font(.system(size: 16, weight: .semibold))
-                                    Text("Is nearby and active")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
-                }
-                
-                Section(header: Text("Location Updates")) {
-                    Text("No recent location updates from friends.")
-                        .font(.system(size: 15))
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 8)
-                }
-                
-                if pendingRequests.isEmpty && nearbyFriends.isEmpty {
-                    Section {
-                        VStack(spacing: 16) {
-                            Spacer()
-                            Image(systemName: "bell.slash")
-                                .font(.system(size: 48))
-                                .foregroundColor(Color(UIColor.systemGray3))
-                            Text("No Recent Activity")
-                                .font(.headline)
-                            Text("When friends send requests, share location, or come nearby, it will appear here.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 16)
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 32)
-                    }
-                    .listRowBackground(Color.clear)
-                }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Activity")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        showActivitySheet = false
-                    }
-                }
-            }
-        }
+        ActivityFeedView()
     }
     
     private var messagesListView: some View {

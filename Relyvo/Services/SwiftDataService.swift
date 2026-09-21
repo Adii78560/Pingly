@@ -41,7 +41,8 @@ final class SwiftDataService: ObservableObject {
             SDBreadcrumbTrack.self,
             SDBreadcrumbPoint.self,
             SDOfflineMapRegion.self,
-            SDFriend.self
+            SDFriend.self,
+            SDActivityItem.self
         ])
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
@@ -80,6 +81,36 @@ final class SwiftDataService: ObservableObject {
             let transcriptCount = (try? self.context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
             let pendingCount = (try? self.context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
             
+            // Auto-purge Location Protocol messages from chat bubbles on startup
+            let locationTypes: Set<String> = [
+                "LOCATION",
+                "LOCATION_REQUEST",
+                "LOCATION_RESPONSE",
+                "LOCATION_UPDATE",
+                "LOCATION_SHARING_STARTED",
+                "LOCATION_SHARING_STOPPED",
+                "LOCATION_EXPIRED",
+                "RELATIVE_POSITION"
+            ]
+
+            do {
+                let allMessages = try self.context.fetch(FetchDescriptor<SDChatMessage>())
+                var deletedCount = 0
+                for message in allMessages {
+                    let isLocationType = locationTypes.contains(message.messageTypeRaw)
+                    let containsProtocolString = message.text.contains("LOCATION_PROTOCOL:") || message.text.contains("\"type\":\"LOCATION_")
+                    if isLocationType || containsProtocolString {
+                        self.context.delete(message)
+                        deletedCount += 1
+                    }
+                }
+                if deletedCount > 0 {
+                    try self.context.save()
+                    AppLogger.multipeer.info("[SWIFTDATA_CLEANUP] Purged \(deletedCount) legacy location protocol records from chat database.")
+                }
+            } catch {
+                AppLogger.multipeer.error("[SWIFTDATA_CLEANUP_ERR] Failed to purge location records: \(error.localizedDescription)")
+            }
             
             RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_RESTORE_CHECK", details: "chatCount=\(chatCount) voiceTranscriptCount=\(transcriptCount) pendingMessageCount=\(pendingCount)")
             RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_SNAPSHOT", details: "storeExists=\(storeExists) fileSize=\(fileSizeString)")
