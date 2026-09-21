@@ -9,6 +9,7 @@ import SwiftUI
 import Combine
 import CoreLocation
 import os
+import SwiftData
 
 /// View model driving the Push-To-Talk (PTT) Off-Grid Radio Call screen
 final class RadioCallViewModel: ObservableObject {
@@ -29,8 +30,10 @@ final class RadioCallViewModel: ObservableObject {
             // Immediately halt any in-flight audio from the previous channel so it
             // cannot bleed into the newly selected channel's session.
             networkManager.stopActiveAudioStream()
+            chatMessages.removeAll()
             loadVoiceMessages()
             loadSwiftDataTranscripts()
+            loadSwiftDataChatMessages()
             networkManager.selectedChannel = newChannel
             multipeerService.activeChannelID = newChannel
             ChannelPresenceManager.shared.setActiveChannel(newChannel)
@@ -46,6 +49,8 @@ final class RadioCallViewModel: ObservableObject {
     @Published var latestTextSnippet: String = "Standing by for live voice transmissions..."
     @Published var transcriptHistory: [VoiceTranscript] = []
     @Published var voiceMessages: [VoiceMessage] = []
+    @Published var chatMessages: [Message] = []
+    @Published var messageText: String = ""
     @Published var liveActiveSpeaker: String? = nil
     @Published var activeSOSAlert: SOSAlertPayload? = nil
     @Published var currentLocation: CLLocation? = nil
@@ -115,6 +120,41 @@ final class RadioCallViewModel: ObservableObject {
         setupSubscriptions()
         loadVoiceMessages()
         loadSwiftDataTranscripts()
+        loadSwiftDataChatMessages()
+    }
+    
+    func loadSwiftDataChatMessages() {
+        let channelName = self.selectedChannel
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let descriptor = FetchDescriptor<SDChatMessage>(
+                predicate: #Predicate { $0.channel == channelName && $0.messageTypeRaw == "CHAT" && $0.text != "" },
+                sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+            )
+            if let saved = try? SwiftDataService.shared.context.fetch(descriptor) {
+                self.chatMessages = saved.map { item in
+                    Message(
+                        id: item.id,
+                        originID: item.originID.isEmpty ? item.channel : item.originID,
+                        destinationID: item.destinationID.isEmpty ? item.channel : item.destinationID,
+                        senderID: item.senderID.isEmpty ? item.channel : item.senderID,
+                        senderName: item.senderName,
+                        text: item.text,
+                        timestamp: item.timestamp,
+                        latitude: item.latitude,
+                        longitude: item.longitude,
+                        altitude: item.altitude,
+                        accuracy: item.accuracy,
+                        isSOS: false,
+                        emergencyStatus: .normal,
+                        hopsCount: 0,
+                        conversationID: item.conversationID,
+                        relayHistory: item.relayHistory.compactMap { UUID(uuidString: $0) },
+                        isRead: item.isRead
+                    )
+                }
+            }
+        }
     }
     
     func loadVoiceMessages() {
@@ -131,7 +171,7 @@ final class RadioCallViewModel: ObservableObject {
     }
 
     
-    func createChannel(named name: String) {
+    func createChannel(named name: String, passphrase: String? = nil) {
         guard FeatureAccessManager.shared.canAccess(.createChannel) else {
             AppLogger.multipeer.warning("Custom channel creation blocked: Relyvo Pro subscription required.")
             FeatureAccessManager.shared.presentPaywall(for: .createChannel)
@@ -148,10 +188,26 @@ final class RadioCallViewModel: ObservableObject {
             saved.append(channelName)
             UserDefaults.standard.set(saved, forKey: RadioCallViewModel.customChannelsKey)
         }
+        
+        if let passphrase = passphrase, !passphrase.isEmpty {
+            let success = ChannelKeyStore.shared.setKey(passphrase: passphrase, for: channelName)
+            if success {
+                AppLogger.multipeer.info("Created encrypted channel \(channelName)")
+            } else {
+                AppLogger.multipeer.error("Failed to derive key for channel \(channelName)")
+            }
+        }
+        
         selectedChannel = channelName
         multipeerService.broadcastChannelSync(channelName: channelName)
+        loadSwiftDataChatMessages()
         HapticManager.successFeedback()
-        AppLogger.multipeer.info("Created and broadcasted custom Walkie-Talkie channel: \(channelName)")
+        AppLogger.multipeer.info("""
+        [PINGLY_CHANNEL_CREATE]
+        action=CREATE_CHANNEL
+        channelID=\(channelName)
+        isEncrypted=\(passphrase != nil && !passphrase!.isEmpty)
+        """)
     }
     
     func tuneToEmergencyChannel() {
@@ -168,6 +224,92 @@ final class RadioCallViewModel: ObservableObject {
     func triggerEmergencySOSBeacon(notes: String? = nil) {
         multipeerService.broadcastEmergencySOS(location: currentLocation, notes: notes)
         HapticManager.errorFeedback()
+    }
+    
+    func sendChannelTextMessage(_ text: String) {
+        guard FeatureAccessManager.shared.canAccess(.messaging) else {
+            AppLogger.multipeer.warning("Message drop blocked: Relyvo Pro subscription required.")
+            FeatureAccessManager.shared.presentPaywall(for: .messaging)
+            return
+        }
+        
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        let localNodeID = NodeIdentity.shared.nodeID
+        let handle = localUserHandle
+        
+        let newMessage = Message(
+            originID: localNodeID,
+            destinationID: "BROADCAST",
+            senderID: localNodeID,
+            senderName: handle,
+            channelID: selectedChannel,
+            text: trimmed,
+            timestamp: Date(),
+            latitude: currentLocation?.coordinate.latitude,
+            longitude: currentLocation?.coordinate.longitude,
+            isSOS: false,
+            emergencyStatus: .normal,
+            hopsCount: 0
+        )
+        
+        chatMessages.append(newMessage)
+        Task {
+            await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                id: newMessage.id,
+                senderID: localNodeID,
+                senderName: handle,
+                channel: selectedChannel,
+                text: trimmed,
+                messageTypeRaw: "CHAT",
+                latitude: currentLocation?.coordinate.latitude,
+                longitude: currentLocation?.coordinate.longitude
+            )
+        }
+        multipeerService.broadcast(message: newMessage)
+        messageText = ""
+        HapticManager.lightImpact()
+    }
+    
+    func triggerEmergencySOS(status: EmergencyStatus) {
+        let localNodeID = NodeIdentity.shared.nodeID
+        let handle = localUserHandle
+        let location = self.currentLocation
+        
+        let sosText = "🚨 EMERGENCY DISTRESS BEACON: Need immediate assistance! Status: \(status.rawValue)"
+        let sosMessage = Message(
+            originID: localNodeID,
+            destinationID: "BROADCAST",
+            senderID: localNodeID,
+            senderName: handle,
+            channelID: "CH-1 EMERGENCY",
+            text: sosText,
+            timestamp: Date(),
+            latitude: location?.coordinate.latitude,
+            longitude: location?.coordinate.longitude,
+            isSOS: true,
+            emergencyStatus: status,
+            hopsCount: 0
+        )
+        
+        if selectedChannel == "CH-1 EMERGENCY" {
+            chatMessages.append(sosMessage)
+        }
+        
+        Task {
+            await SwiftDataService.shared.persistenceActor.saveChatMessage(
+                id: sosMessage.id,
+                senderID: localNodeID,
+                senderName: handle,
+                channel: "CH-1 EMERGENCY",
+                text: sosText,
+                messageTypeRaw: "CHAT"
+            )
+        }
+        multipeerService.broadcast(message: sosMessage)
+        HapticManager.warningFeedback()
+        self.activeSOSAlert = nil
     }
     
     func shareActiveChannel() {
@@ -284,6 +426,31 @@ final class RadioCallViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+            
+        // Refresh UI state when keys are purged from in-memory cache
+        NotificationCenter.default.publisher(for: .didPurgeChannelKeys)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+            
+        // Subscribe to incoming mesh text messages
+        multipeerService.receivedMessagePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] message in
+                guard let self = self else { return }
+                // Deduplicate and filter by active channel
+                let isChannelMessage = message.channelID != nil && !message.channelID!.isEmpty && message.channelID!.hasPrefix("CH-")
+                if isChannelMessage && message.channelID == self.selectedChannel {
+                    if message.type == .chat && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if !self.chatMessages.contains(where: { $0.id == message.id }) {
+                            self.chatMessages.append(message)
+                        }
+                    }
+                }
+            }
+            .store(in: &cancellables)
 
 
 
@@ -388,7 +555,6 @@ final class RadioCallViewModel: ObservableObject {
     
     func startTransmittingVoice() {
         guard FeatureAccessManager.shared.canAccess(.walkieTalkie) else {
-            AppLogger.audio.warning("Walkie-Talkie transmission blocked: Relyvo Pro subscription required.")
             FeatureAccessManager.shared.presentPaywall(for: .walkieTalkie)
             return
         }
@@ -398,7 +564,6 @@ final class RadioCallViewModel: ObservableObject {
         let acquired = networkManager.acquireFloor()
         if acquired {
             HapticManager.mediumImpact()
-            AppLogger.audio.info("Acquired floor lock; transmitting PTT voice call on \(self.selectedChannel) with sessionID \(self.networkManager.currentSessionID?.uuidString ?? "nil")")
         } else {
             HapticManager.warningFeedback()
         }
@@ -409,7 +574,6 @@ final class RadioCallViewModel: ObservableObject {
         networkManager.releaseFloor()
         session.activeSpeakerName = nil
         HapticManager.lightImpact()
-        AppLogger.audio.info("Released floor lock; stopped transmitting PTT voice call")
     }
 }
 

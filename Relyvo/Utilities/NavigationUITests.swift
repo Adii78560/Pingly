@@ -14,7 +14,6 @@ final class NavigationUITests {
     
     // Simulates standard Navigation UI interactions to ensure no crash and logical mode switching
     static func runAllTests() async throws {
-        print("\n--- Starting Navigation UI Tests ---")
         
         let start = CFAbsoluteTimeGetCurrent()
         var passed = 0
@@ -23,10 +22,8 @@ final class NavigationUITests {
         func verify(_ condition: Bool, _ message: String) {
             if condition {
                 passed += 1
-                print("✅ [PASS] \(message)")
             } else {
                 failed += 1
-                print("❌ [FAIL] \(message)")
             }
         }
         
@@ -100,15 +97,11 @@ final class NavigationUITests {
             
             verify(viewModel.routeProgress?.isOffRoute == true, "Off-Route detected")
         } else {
-            print("⚠️ Skipping Routing tests because monaco DB is not present.")
         }
         
         viewModel.stopNavigation()
         verify(viewModel.isNavigating == false, "Navigation stopped correctly")
         
         let end = CFAbsoluteTimeGetCurrent()
-        print("\n=== Navigation UI Tests Complete ===")
-        print("Passed: \(passed), Failed: \(failed)")
-        print(String(format: "Time: %.2fs", end - start))
     }
 }

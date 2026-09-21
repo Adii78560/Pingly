@@ -80,7 +80,6 @@ final class ChannelPresenceManager: ObservableObject {
             self.broadcastHeartbeat()
         }
         
-        AppLogger.multipeer.info("[CHANNEL_PRESENCE] Presence engine started (Heartbeat=\(Self.heartbeatInterval)s, TTL=\(Self.presenceTTL)s)")
     }
     
     /// Stops all running presence timers.
@@ -88,7 +87,6 @@ final class ChannelPresenceManager: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         stopTimers()
-        AppLogger.multipeer.info("[CHANNEL_PRESENCE] Presence engine stopped")
     }
     
     private func stopTimers() {
@@ -101,7 +99,6 @@ final class ChannelPresenceManager: ObservableObject {
     private func setupForegroundObserver() {
         NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
             .sink { [weak self] _ in
-                AppLogger.multipeer.info("[CHANNEL_PRESENCE] App entered foreground — broadcasting immediate discovery ping")
                 self?.broadcastHeartbeat()
             }
             .store(in: &cancellables)
@@ -121,7 +118,6 @@ final class ChannelPresenceManager: ObservableObject {
             self.activeChannelMembers = members
         }
         
-        AppLogger.multipeer.info("[CHANNEL_PRESENCE] Switched active channel to '\(channelID)' — \(members.count) cached members")
         
         // Trigger immediate heartbeat broadcast on the new channel
         broadcastHeartbeat()
@@ -129,9 +125,15 @@ final class ChannelPresenceManager: ObservableObject {
     
     /// Broadcasts a compact CHANNEL_PING packet with node alias and active channel.
     func broadcastHeartbeat() {
+        let channel = self.currentChannelID
+        
+        // 🔒 Access Gate Check
+        guard ChannelAccessGate.shared.isAuthorized(for: channel) else {
+            return
+        }
+        
         let localAlias = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
         let originNodeID = NodeIdentity.shared.nodeID
-        let channel = self.currentChannelID
         
         let pingMsg = Message(
             id: UUID(),
@@ -149,13 +151,6 @@ final class ChannelPresenceManager: ObservableObject {
         
         MultipeerService.shared.broadcast(message: pingMsg)
         let rawByte = MeshChannelByte.from(channelID: channel).rawValue
-        AppLogger.multipeer.info("""
-        [DIAG_HEARTBEAT_TX]
-        channel=\(channel)
-        alias=\(localAlias)
-        rawByte=\(rawByte)
-        """)
-        AppLogger.multipeer.info("[CHANNEL_PRESENCE_TX] Broadcasted heartbeat ping for '\(localAlias)' on [\(channel)]")
     }
     
     // MARK: - Ingestion & Registry Store
@@ -173,15 +168,6 @@ final class ChannelPresenceManager: ObservableObject {
         let now = Date()
         
         let matches = (normalizedChannel == self.currentChannelID.uppercased())
-        AppLogger.multipeer.info("""
-        [DIAG_HEARTBEAT_RX]
-        senderPeer=\(cleanAlias)
-        senderChannel=\(channelID)
-        localChannel=\(self.currentChannelID)
-        matches=\(matches)
-        hops=\(hopCount)
-        isDirect=\(isDirectPeer)
-        """)
         
         let peer = ChannelPeer(
             nodeID: originNodeID,
@@ -203,7 +189,6 @@ final class ChannelPresenceManager: ObservableObject {
         let updatedMembers: [ChannelPeer]? = isCurrentChannel ? (registry[normalizedChannel]?.values.map { $0 }.sorted(by: { $0.alias < $1.alias }) ?? []) : nil
         lock.unlock()
         
-        AppLogger.multipeer.info("[CHANNEL_PRESENCE_UPDATE] peer=\(cleanAlias) id=\(originNodeID.uuidString) channel=\(channelID) hops=\(hopCount)")
         
         if isNewPeer {
             MultipeerService.shared.flushPendingStoreAndForwardQueue()
@@ -230,7 +215,6 @@ final class ChannelPresenceManager: ObservableObject {
                 let age = now.timeIntervalSince(peer.lastSeen)
                 if age > Self.presenceTTL {
                     registry[chKey]?.removeValue(forKey: nodeID)
-                    AppLogger.multipeer.info("[CHANNEL_PRESENCE_EVICTED] peer=\(peer.alias) id=\(nodeID.uuidString) channel=\(peer.channelID) reason=HEARTBEAT_TIMEOUT age=\(Int(age))s")
                     
                     if chKey == currentChannelID.uppercased() {
                         currentChannelChanged = true
@@ -266,7 +250,6 @@ final class ChannelPresenceManager: ObservableObject {
         let updatedMembers: [ChannelPeer]? = currentChannelChanged ? (registry[currentChannelID.uppercased()]?.values.map { $0 }.sorted(by: { $0.alias < $1.alias }) ?? []) : nil
         lock.unlock()
         
-        AppLogger.multipeer.info("[CHANNEL_PRESENCE_PURGED_DISCONNECT] id=\(nodeID.uuidString)")
         
         if let members = updatedMembers {
             DispatchQueue.main.async {

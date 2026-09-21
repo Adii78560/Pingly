@@ -65,7 +65,6 @@ final class OfflineNavigationService: ObservableObject {
             target: target
         )
         
-        AppLogger.location.info("[Navigation] Started navigating to target: \(target.displayName) (Type: \(target.targetType.rawValue))")
     }
     
     /// Update existing target's coordinates when fresh P2P mesh packets arrive
@@ -86,7 +85,6 @@ final class OfflineNavigationService: ObservableObject {
         self.isNavigating = false
         self.distanceHistory.removeAll()
         CompassHapticManager.shared.resetState()
-        AppLogger.location.info("[Navigation] Stopped navigation session")
     }
     
     // MARK: - Core Calculation Engine

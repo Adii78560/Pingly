@@ -3,10 +3,7 @@ from pbxproj import XcodeProject
 project = XcodeProject.load('Relyvo.xcodeproj/project.pbxproj')
 
 files_to_add = [
-    'Relyvo/Models/RoutingModels.swift',
-    'Relyvo/Services/OfflineRoutingService.swift',
-    'Relyvo/Services/RoutingDatabase.swift',
-    'Relyvo/Utilities/RoutingTests.swift'
+    'Relyvo/Services/ChannelAccessGate.swift'
 ]
 
 for file_path in files_to_add:

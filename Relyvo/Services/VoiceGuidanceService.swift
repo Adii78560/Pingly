@@ -99,6 +99,5 @@ final class VoiceGuidanceService: NSObject, AVSpeechSynthesizerDelegate, @unchec
         
         // This duckOthers policy is active globally via BackgroundAudioSessionManager.
         synthesizer.speak(utterance)
-        AppLogger.audio.info("[VoiceGuidance] Speaking: \(text)")
     }
 }

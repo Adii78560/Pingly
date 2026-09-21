@@ -144,14 +144,6 @@ final class VoiceStorageManager: ObservableObject {
                 let compBytes = (try? fileManager.attributesOfItem(atPath: m4aURL.path)[.size] as? Int64) ?? 0
                 let savings = origBytes > 0 ? Int((Double(origBytes - compBytes) / Double(origBytes)) * 100.0) : 0
                 
-                AppLogger.audio.info("""
-                [VOICE_COMPRESS_COMPLETE]
-                sessionID=\(sessionID.uuidString)
-                originalSize=\(origBytes)B
-                compressedSize=\(compBytes)B
-                savings=\(savings)%
-                file=\(m4aURL.lastPathComponent)
-                """)
                 
                 // Update SwiftData record on main thread
                 Task { @MainActor in
@@ -162,7 +154,6 @@ final class VoiceStorageManager: ObservableObject {
                 
                 completion?(.success(m4aURL))
             } catch {
-                AppLogger.audio.error("[VOICE_COMPRESS_ERROR] sessionID=\(sessionID.uuidString) error=\(error.localizedDescription)")
                 completion?(.failure(error))
             }
         }
@@ -222,9 +213,7 @@ final class VoiceStorageManager: ObservableObject {
                     try fileManager.removeItem(at: url)
                     deletedCount += 1
                     freedBytes += fileSize
-                    AppLogger.audio.info("[STORAGE_AGE_EVICTED] file=\(url.lastPathComponent) age=\(Int(age / 86400))d size=\(fileSize)B")
                 } catch {
-                    AppLogger.audio.error("[STORAGE_EVICT_ERR] Failed to delete expired file: \(url.lastPathComponent)")
                 }
             } else {
                 remainingFiles.append(FileMeta(url: url, modDate: modDate, size: fileSize))
@@ -245,20 +234,11 @@ final class VoiceStorageManager: ObservableObject {
                     deletedCount += 1
                     freedBytes += file.size
                     totalFolderBytes -= file.size
-                    AppLogger.audio.info("[STORAGE_LRU_EVICTED] file=\(file.url.lastPathComponent) size=\(file.size)B remainingFolderSize=\(totalFolderBytes)B")
                 } catch {
-                    AppLogger.audio.error("[STORAGE_LRU_ERR] Failed to LRU-evict file: \(file.url.lastPathComponent)")
                 }
             }
         }
         
-        AppLogger.audio.info("""
-        [STORAGE_PURGE_RUN]
-        scannedFiles=\(fileURLs.count)
-        deletedFiles=\(deletedCount)
-        freedBytes=\(freedBytes)
-        currentFolderSize=\(totalFolderBytes)B
-        """)
         
         return (deletedCount, freedBytes)
     }

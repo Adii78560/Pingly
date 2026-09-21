@@ -36,20 +36,25 @@ final class PTTMeshTests {
         let sessionID = UUID()
         
         let header = PTTFrameHeader(
+            version: .v2,
             type: .chunk,
+            channel: MeshChannelByte.ch1Emergency.rawValue,
             hopCount: 1,
             ttl: 3,
             sequenceNo: 40000,
             timestampMs: 1234567,
             senderNodeID: senderID,
-            sessionID: sessionID
+            sessionID: sessionID,
+            isEncrypted: false
         )
         
         let data = header.encode()
-        guard data.count == 41 else { return false }
+        guard data.count == 43 else { return false }
         
         guard let decoded = PTTFrameHeader.decode(from: data) else { return false }
-        return decoded.type == .chunk &&
+        return decoded.version == .v2 &&
+               decoded.type == .chunk &&
+               decoded.channel == MeshChannelByte.ch1Emergency.rawValue &&
                decoded.hopCount == 1 &&
                decoded.ttl == 3 &&
                decoded.sequenceNo == 40000 &&

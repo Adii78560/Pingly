@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import MultipeerConnectivity
 
 /// View model driving the Proximity Radar screen
 final class RadarViewModel: ObservableObject {
@@ -66,6 +67,53 @@ final class RadarViewModel: ObservableObject {
                 self?.fetchFriends()
             }
             .store(in: &cancellables)
+    }
+    
+    struct RadarContact: Identifiable {
+        let peer: PeerDevice
+        let angle: Angle
+        let radiusFraction: Double
+        var id: String { peer.id }
+    }
+    
+    func radarContacts(deviceHeading: Double) -> [RadarContact] {
+        var contacts: [RadarContact] = []
+        var innerPeers: [PeerDevice] = []
+        var middlePeers: [PeerDevice] = []
+        var outerPeers: [PeerDevice] = []
+        
+        for peer in nearbyPeers {
+            let peerKey = peer.mcPeerID?.displayName ?? peer.displayName
+            if let session = LocationShareManager.shared.getSession(for: peerKey),
+               let remoteLat = session.lastRemoteLatitude, let remoteLon = session.lastRemoteLongitude,
+               let info = LocationService.shared.relativeBearing(toLat: remoteLat, lon: remoteLon) {
+                // GPS Available
+                let clampedDistance = min(info.distanceMeters, 1000.0) // Assume max range 1000m for radar bounds
+                let fraction = max(0.1, clampedDistance / 1000.0)
+                let angle = Angle.degrees(info.initialBearing - deviceHeading - 90) // -90 so 0 is up (North)
+                contacts.append(RadarContact(peer: peer, angle: angle, radiusFraction: fraction))
+            } else {
+                // RSSI Only
+                if peer.rssi >= -65 {
+                    innerPeers.append(peer)
+                } else if peer.rssi >= -80 {
+                    middlePeers.append(peer)
+                } else {
+                    outerPeers.append(peer)
+                }
+            }
+        }
+        
+        // Distribute RSSI peers evenly
+        let rings = [(peers: innerPeers, radius: 0.33), (peers: middlePeers, radius: 0.66), (peers: outerPeers, radius: 0.9)]
+        for ring in rings {
+            let count = ring.peers.count
+            for (i, peer) in ring.peers.enumerated() {
+                let angleDeg = (360.0 / Double(count)) * Double(i) - 90.0
+                contacts.append(RadarContact(peer: peer, angle: .degrees(angleDeg), radiusFraction: ring.radius))
+            }
+        }
+        return contacts
     }
     
     private func cleanBaseName(_ name: String) -> String {

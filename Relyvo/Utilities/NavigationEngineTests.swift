@@ -24,16 +24,11 @@ final class NavigationEngineTests {
         func assert(_ condition: Bool, _ message: String) {
             if condition {
                 passed += 1
-                AppLogger.location.info("[NAV_TEST_PASSED] \(message)")
             } else {
                 failed += 1
-                AppLogger.location.error("[NAV_TEST_FAILED] \(message)")
             }
         }
         
-        AppLogger.location.info("==================================================")
-        AppLogger.location.info("RUNNING OFFLINE NAVIGATION ENGINE VERIFICATION SUITE")
-        AppLogger.location.info("==================================================")
         
         let nav = OfflineNavigationService.shared
         
@@ -159,9 +154,6 @@ final class NavigationEngineTests {
         breadcrumbService.stopTracking()
         assert(returnTarget?.targetType == .returnToStart, "Return-to-Start target correctly generated as .returnToStart type")
         
-        AppLogger.location.info("==================================================")
-        AppLogger.location.info("NAVIGATION VERIFICATION SUITE FINISHED: Passed=\(passed), Failed=\(failed)")
-        AppLogger.location.info("==================================================")
         
         return (passed, failed)
     }

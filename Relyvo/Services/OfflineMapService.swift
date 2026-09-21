@@ -184,7 +184,6 @@ final class OfflineMapService: ObservableObject {
         self.downloadedRegionIDs = downloaded
         self.activeRegion = regions.first(where: { downloaded.contains($0.id) }) ?? regions.last
         
-        AppLogger.location.info("[OfflineMap] Initialized \(regions.count) offline regions, \(downloaded.count) active locally")
     }
     
     /// Synchronizes the SwiftData state with the actual `.pmtiles` files present in the `OfflineMaps` directory.
@@ -227,7 +226,6 @@ final class OfflineMapService: ObservableObject {
             self.activeRegion = self.availableRegions.first(where: { downloaded.contains($0.id) }) ?? self.availableRegions.last
         }
         
-        AppLogger.location.info("[OfflineMap] Synced with filesystem. \(downloaded.count) active locally.")
     }
     
     // MARK: - Region Actions
@@ -247,7 +245,6 @@ final class OfflineMapService: ObservableObject {
             sdRegion.localFilePath = nil
             sdRegion.downloadedAt = nil
             downloadedRegionIDs.remove(regionID)
-            AppLogger.location.info("[OfflineMap] Deleted offline region: \(regionID)")
         } else {
             // Mark as downloaded locally
             let localPath = documentsDirectory.appendingPathComponent("\(regionID).pmtiles").path
@@ -255,7 +252,6 @@ final class OfflineMapService: ObservableObject {
             sdRegion.localFilePath = localPath
             sdRegion.downloadedAt = Date()
             downloadedRegionIDs.insert(regionID)
-            AppLogger.location.info("[OfflineMap] Downloaded offline region package: \(regionID)")
         }
         
         try? context.save()

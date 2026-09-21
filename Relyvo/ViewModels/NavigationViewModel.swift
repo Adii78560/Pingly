@@ -238,7 +238,6 @@ final class NavigationViewModel: ObservableObject {
                     self.navService.stopNavigating() // Stop direct mode overlapping
                     self.locationService.startSharingLocation()
                     
-                    AppLogger.location.info("[NavigationViewModel] Road routing activated for \(target.displayName)")
                     
                     // Setup new subscription to progress service
                 }
@@ -247,7 +246,6 @@ final class NavigationViewModel: ObservableObject {
                 
                 await MainActor.run {
                     self.isRoutingCalculationActive = false
-                    AppLogger.location.warning("[NavigationViewModel] Routing failed: \(error.localizedDescription). Falling back to Direct Target.")
                     self.activateDirectNavigation(target: target)
                 }
             }
@@ -261,7 +259,6 @@ final class NavigationViewModel: ObservableObject {
         self.routeProgress = nil
         self.isNavigating = true
         navService.startNavigating(to: target)
-        AppLogger.location.info("[NavigationViewModel] Direct Target Navigation activated for \(target.displayName)")
     }
     
     // MARK: - Progress Updates

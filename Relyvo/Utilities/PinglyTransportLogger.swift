@@ -90,7 +90,6 @@ final class RelaynTransportDiagnosticsManager: ObservableObject {
         let shortPeer = String(peer.prefix(6))
         
         let logLine = "[PhysicalTest][run=\(runID)][device=\(deviceFingerprint)][\(category)] \(event) peer=\(shortPeer) \(details)"
-        AppLogger.multipeer.info("\(logLine)")
         
         let newEvent = SessionLifecycleEvent(tag: category, event: event, peer: peer, details: details)
         lock.unlock()
@@ -160,10 +159,6 @@ final class RelaynTransportDiagnosticsManager: ObservableObject {
     func recordLifecycleEvent(event: String, peer: String = "N/A", details: String = "") {
         lock.lock()
         let newEvent = SessionLifecycleEvent(tag: "SessionLifecycle", event: event, peer: peer, details: details)
-        let fingerprint = String(KeychainIdentityService.shared.fetchOrCreateDeviceID().uuidString.prefix(6))
-        
-        // Log structured lifecycle log
-        AppLogger.multipeer.info("[Device=\(fingerprint)][SessionLifecycle] event=\(event) peer=\(String(peer.prefix(6))) details=\(details)")
         
         lock.unlock()
         
@@ -385,7 +380,6 @@ final class RelaynTransportDiagnosticsManager: ObservableObject {
         queueFailed=\(queueFailedCount)
         queueDelivered=\(queueDeliveredCount)
         """
-        AppLogger.multipeer.info("\(summary)")
     }
 }
 

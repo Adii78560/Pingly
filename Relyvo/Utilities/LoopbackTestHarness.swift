@@ -51,9 +51,8 @@ final class LoopbackTransport {
             case .normal:
                 await target.receiveFrame(data: data, fromPeerID: originNodeID)
             case .dropACKs:
-                AppLogger.multipeer.info("[LoopbackTransport] Test mode DROP_ACKS: Dropping ACK frame from \(originNodeID) to \(targetNodeID)")
+                break
             case .delayACK(let seconds):
-                AppLogger.multipeer.info("[LoopbackTransport] Test mode DELAY_ACK: Delaying ACK frame by \(seconds)s from \(originNodeID) to \(targetNodeID)")
                 Task {
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                     await target.receiveFrame(data: data, fromPeerID: originNodeID)
@@ -90,6 +89,13 @@ final class SimulatedNode {
         self.nodeID = nodeID
         self.displayName = displayName
         self.swiftDataService = SwiftDataService(inMemory: true)
+        
+        // Insert test peers as accepted friends to pass direct message authorization
+        let context = swiftDataService.context
+        for peer in ["TEST-A", "TEST-B", "TEST-C", "TEST-OTHER"] {
+            context.insert(SDFriend(nodeID: peer, handle: peer, status: .accepted))
+        }
+        try? context.save()
     }
     
     func sendChatMessage(to destinationID: String, text: String, messageID: UUID = UUID(), hopsCount: Int = 0, ttl: Int = 5) async -> Message {
@@ -137,32 +143,26 @@ final class SimulatedNode {
             message = try JSONDecoder().decode(Message.self, from: data)
         } catch {
             let dataStr = String(data: data, encoding: .utf8) ?? data.map { String(format: "%02hhX", $0) }.joined()
-            AppLogger.multipeer.error("[LoopbackTest] JSON DECODE ERROR: \(error.localizedDescription) - Data: \(dataStr)")
-            AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=JSON_DECODE_FAILED node=\(self.nodeID)")
             return
         }
         
         // 1. Protocol Version Validation
         guard message.protocolVersion <= Constants.Mesh.currentProtocolVersion else {
-            AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=UNSUPPORTED_PROTOCOL_VERSION actual=\(message.protocolVersion) node=\(self.nodeID)")
             return
         }
         
         // 2. CryptoKit HMAC Verification
         guard MeshSecurityManager.shared.verify(message: message) else {
-            AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=HMAC_VERIFICATION_FAILED node=\(self.nodeID)")
             return
         }
         
         // 3. Self-echo prevention
         guard message.senderID != nodeID && message.previousHopID != nodeID else {
-            AppLogger.multipeer.info("[LoopbackTest] LOOP_REJECTED reason=SELF_ECHO node=\(self.nodeID)")
             return
         }
         
         // 4. Origin local reject
         if message.type != .ack && message.originID == nodeID {
-            AppLogger.multipeer.info("[LoopbackTest] LOOP_REJECTED reason=LOCAL_ORIGIN node=\(self.nodeID)")
             return
         }
         
@@ -233,7 +233,6 @@ final class SimulatedNode {
                     await transport?.broadcast(data: relayData, from: nodeID)
                 }
             } else {
-                AppLogger.multipeer.warning("[LoopbackTest] TTL_EXHAUSTED messageID=\(message.id) hops=\(relayMsg.hopsCount)/\(relayMsg.ttl) node=\(self.nodeID)")
             }
         }
     }
@@ -255,22 +254,18 @@ final class LoopbackTestHarness {
             let statusStr = success ? "PASS" : "FAIL"
             if success {
                 passed += 1
-                AppLogger.multipeer.info("[LoopbackTest] PASS name=\(name) details=\(details)")
             } else {
                 failed += 1
-                AppLogger.multipeer.error("[LoopbackTest] FAIL name=\(name) details=\(details)")
             }
             results.append((name, statusStr, details))
         }
         
         AppLogger.multipeer.info("==================================================")
-        AppLogger.multipeer.info("[LoopbackTest] STARTING SIMULATOR LOOPBACK TEST SUITE")
         AppLogger.multipeer.info("==================================================")
         
         // -------------------------------------------------------------
         // Test 1: Message Correlation ID Preservation
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=CorrelationIDPreservation")
         let transport1 = LoopbackTransport()
         let nodeA1 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB1 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -301,7 +296,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 2: Basic A -> B Delivery
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=BasicAtoBDelivery")
         let transport2 = LoopbackTransport()
         let nodeA2 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB2 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -327,7 +321,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 3: Basic B -> A Delivery (Symmetry Test)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=BasicBtoADelivery")
         let msg3 = await nodeB2.sendChatMessage(to: "TEST-A", text: "Hello Node A (Reverse)")
         let nodeB2Pending = nodeB2.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg3.id })
         let nodeA2Rx = nodeA2.receivedMessages.first(where: { $0.id == msg3.id })
@@ -342,7 +335,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 4: Duplicate Delivery Handling
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=DuplicateDeliveryHandling")
         let transport4 = LoopbackTransport()
         let nodeA4 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB4 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -383,7 +375,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 5: ACK Correlation & Mismatch Prevention
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=ACKCorrelation")
         let transport5 = LoopbackTransport()
         let nodeA5 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB5 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -439,7 +430,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 6: Serialization Round Trip
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=SerializationRoundTrip")
         let roundTripID = UUID()
         let originalMsg = Message(
             id: roundTripID,
@@ -480,7 +470,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 7: Malformed Frames Handling
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=MalformedFramesHandling")
         let nodeA7 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         
         let emptyData = Data()
@@ -506,7 +495,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 8: ACK Timeout & Retry Identity
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=ACKTimeoutAndRetryIdentity")
         let transport8 = LoopbackTransport()
         transport8.mode = .dropACKs
         let nodeA8 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
@@ -540,7 +528,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 9: Delayed ACK Race Condition Prevention
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=DelayedACKRaceCondition")
         let transport9 = LoopbackTransport()
         let nodeA9 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB9 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -569,7 +556,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 10: Duplicate Send Queue Handling
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=DuplicateSendQueueHandling")
         let nodeA10 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let msg10ID = UUID()
         
@@ -588,7 +574,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 11: Multi-Hop Routing in Memory (A -> B -> C)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=MultiHopRoutingAtoBtoC")
         let transport11 = LoopbackTransport()
         let nodeA11 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB11 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B") // Relay
@@ -613,7 +598,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 12: TTL Handling & Forwarding Expiry
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=TTLHandlingAndForwardingExpiry")
         let transport12 = LoopbackTransport()
         let nodeA12 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB12 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -636,7 +620,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 13: Loop Prevention (Self-Echo / Local Loop Drop)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=LoopPrevention")
         let transport13 = LoopbackTransport()
         let nodeA13 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         transport13.register(node: nodeA13)
@@ -666,7 +649,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 14: SwiftData Isolation (Production Store Protection)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=SwiftDataIsolation")
         let prodChatCountBefore = (try? SwiftDataService.shared.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
         
         // Execute a simulated node transaction
@@ -685,7 +667,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 15: PTT Audio Session Persistence & Metadata Verification
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=PTTAudioSessionPersistence")
         let testNode = SimulatedNode(nodeID: "TEST-PTT", displayName: "PTT Node")
         let testSessionID = UUID()
         let testFileURLString = "/tmp/test_session.wav"
@@ -733,7 +714,6 @@ final class LoopbackTestHarness {
         let fullReport = summaryLines.joined(separator: "\n")
         
         AppLogger.multipeer.info("==================================================")
-        AppLogger.multipeer.info("[LoopbackTest] TEST SUITE COMPLETE: \(passed) Passed, \(failed) Failed")
         AppLogger.multipeer.info("\(fullReport)")
         AppLogger.multipeer.info("==================================================")
         

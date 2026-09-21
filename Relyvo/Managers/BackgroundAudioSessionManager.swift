@@ -63,50 +63,42 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
                     self.isAudioSessionActive = true
                 }
                 self.checkCurrentRoute()
-                AppLogger.audio.info("[AUDIO_SESSION_CONFIG] AVAudioSession configured (.playAndRecord, .voiceChat, .duckOthers, .defaultToSpeaker)")
             } catch {
-                AppLogger.audio.error("[AUDIO_SESSION_ERR] Failed to configure AVAudioSession: \(error.localizedDescription)")
             }
         }
     }
     
-    /// Deactivates system AVAudioSession to power down hardware microphone and conserve battery.
     func deactivateAudioSession() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        audioSessionQueue.async { [weak self] in
             do {
                 try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
                 DispatchQueue.main.async {
                     self?.isAudioSessionActive = false
                 }
-                AppLogger.audio.info("[AUDIO_SESSION_DEACTIVATE] AVAudioSession deactivated")
             } catch {
-                AppLogger.audio.warning("[AUDIO_SESSION_WARN] Could not deactivate AVAudioSession: \(error.localizedDescription)")
             }
         }
     }
     
     /// Applies loudspeaker policy: routes to speaker unless a headset/AirPods/Bluetooth device is attached.
     func applyLoudspeakerPolicy(for session: AVAudioSession = AVAudioSession.sharedInstance()) {
-        guard session.category == .playAndRecord else {
-            AppLogger.audio.info("[AUDIO_ROUTE_POLICY] Skipped port override: session category is \(session.category.rawValue), not .playAndRecord")
-            return
-        }
-        
-        let hasHeadset = isExternalOutputConnected(session: session)
-        let isAlreadySpeaker = session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
-        
-        do {
-            if hasHeadset {
-                try session.overrideOutputAudioPort(.none)
-                AppLogger.audio.info("[AUDIO_ROUTE_POLICY] Headset/Bluetooth detected — speaker override cleared (.none)")
-            } else if !isAlreadySpeaker {
-                try session.overrideOutputAudioPort(.speaker)
-                AppLogger.audio.info("[AUDIO_ROUTE_POLICY] Internal speaker active — loud loudspeaker override applied (.speaker)")
-            } else {
-                AppLogger.audio.info("[AUDIO_ROUTE_POLICY] Route is already builtInSpeaker — redundant override skipped")
+        audioSessionQueue.async {
+            guard session.category == .playAndRecord else {
+                return
             }
-        } catch {
-            AppLogger.audio.error("[AUDIO_ROUTE_ERR] Failed to set port override: \(error.localizedDescription)")
+            
+            let hasHeadset = self.isExternalOutputConnected(session: session)
+            let isAlreadySpeaker = session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
+            
+            do {
+                if hasHeadset {
+                    try session.overrideOutputAudioPort(.none)
+                } else if !isAlreadySpeaker {
+                    try session.overrideOutputAudioPort(.speaker)
+                }
+            } catch {
+                AppLogger.multipeer.error("Failed to apply loudspeaker policy: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -136,7 +128,6 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
             self?.endBackgroundTask()
         }
         
-        AppLogger.audio.info("Background PTT execution task started.")
     }
     
     /// Releases iOS background task lock.
@@ -147,7 +138,6 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
         guard backgroundTaskID != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTaskID)
         backgroundTaskID = .invalid
-        AppLogger.audio.info("Background PTT execution task ended.")
     }
     
     // MARK: - Handlers & Notification Observers
@@ -169,7 +159,6 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
         
         switch type {
         case .began:
-            AppLogger.audio.warning("[AUDIO_INTERRUPTION_BEGAN] Interruption started (phone call/alarm) — releasing PTT floor and pausing streams")
             
             // 1. If transmitting (holding PTT): immediately release floor and stop mic capture
             if WalkieTalkieNetworkManager.shared.isFloorLockedBySelf {
@@ -182,7 +171,6 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
             AudioStreamEngine.shared.playerNode.stop()
             VoiceMessagePlayerManager.shared.stop()
             
-            AppLogger.audio.info("[AUDIO_INTERRUPTION_BEGAN] floorReleased=true")
             
         case .ended:
             var shouldResume = false
@@ -191,7 +179,6 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
                 shouldResume = options.contains(.shouldResume)
             }
             
-            AppLogger.audio.info("[AUDIO_INTERRUPTION_ENDED] shouldResume=\(shouldResume)")
             
             // Reactivate audio session and restore engine nodes to ready state without auto-locking floor
             configureAudioSession()
@@ -213,30 +200,32 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
         }
         
         let session = AVAudioSession.sharedInstance()
-        let outputs = session.currentRoute.outputs.map { $0.portName }
-        AppLogger.audio.info("[AUDIO_ROUTE_CHANGED] reason=\(reasonValue) currentRoute=\(outputs.joined(separator: ", "))")
         
-        switch reason {
-        case .oldDeviceUnavailable:
-            // E.g. AirPods disconnected / Bluetooth disconnected
-            AppLogger.audio.warning("[AUDIO_ROUTE_CHANGED] Old device unavailable (AirPods disconnected) — reverting to loudspeaker")
-            // Pause active replay to avoid blasting audio unexpectedly
-            VoiceMessagePlayerManager.shared.pause()
-            applyLoudspeakerPolicy(for: session)
+        audioSessionQueue.async { [weak self] in
+            switch reason {
+            case .oldDeviceUnavailable:
+                // E.g. AirPods disconnected / Bluetooth disconnected
+                // Pause active replay to avoid blasting audio unexpectedly
+                DispatchQueue.main.async {
+                    VoiceMessagePlayerManager.shared.pause()
+                }
+                do {
+                    try session.overrideOutputAudioPort(.speaker)
+                } catch {}
+                
+            case .newDeviceAvailable:
+                // E.g. AirPods connected. Let iOS route it to the new device automatically.
+                break
+                
+            case .categoryChange, .override, .wakeFromSleep:
+                self?.applyLoudspeakerPolicy(for: session)
+                
+            default:
+                self?.applyLoudspeakerPolicy(for: session)
+            }
             
-        case .newDeviceAvailable:
-            // E.g. AirPods connected
-            AppLogger.audio.info("[AUDIO_ROUTE_CHANGED] New device available (AirPods connected) — clearing speaker override")
-            applyLoudspeakerPolicy(for: session)
-            
-        case .categoryChange, .override, .wakeFromSleep:
-            applyLoudspeakerPolicy(for: session)
-            
-        default:
-            applyLoudspeakerPolicy(for: session)
+            self?.checkCurrentRoute()
         }
-        
-        checkCurrentRoute()
     }
     
     private func checkCurrentRoute() {
@@ -249,16 +238,13 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
     // MARK: - Media Server Reset Recovery
     
     @objc func handleMediaServicesLost(notification: Notification) {
-        AppLogger.audio.error("[AUDIO_MEDIA_SERVER_LOST] CoreAudio media services lost — marking inactive")
         DispatchQueue.main.async {
             self.isAudioSessionActive = false
         }
     }
     
     @objc func handleMediaServicesReset(notification: Notification) {
-        AppLogger.audio.warning("[AUDIO_MEDIA_SERVER_RESET] CoreAudio media services reset — reconstructing engine & session")
         configureAudioSession()
         AudioStreamEngine.shared.reconstructAudioEngine()
-        AppLogger.audio.info("[AUDIO_MEDIA_SERVER_RESET] engineRebuilt=true")
     }
 }

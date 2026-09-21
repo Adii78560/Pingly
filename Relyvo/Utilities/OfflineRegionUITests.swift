@@ -5,12 +5,10 @@ import CoreLocation
 @MainActor
 class OfflineRegionUITests {
     func runAllTests() async {
-        print("--- Starting Offline Region UI Tests ---")
         
         await testInitialStateAndRecommendations()
         await testInstallStateFlow()
         
-        print("--- Offline Region UI Tests Complete ---")
     }
     
     func testInitialStateAndRecommendations() async {
@@ -29,7 +27,6 @@ class OfflineRegionUITests {
         assert(viewModel.installState == .idle, "Should start idle")
         assert(viewModel.availableRegions.count == catalog.availableRegions.count, "Available regions should match catalog")
         
-        print("✅ testInitialStateAndRecommendations passed")
     }
     
     func testInstallStateFlow() async {
@@ -50,9 +47,8 @@ class OfflineRegionUITests {
         
         switch viewModel.installState {
         case .success, .failed:
-            print("✅ testInstallStateFlow passed (State finalized correctly)")
+            break
         default:
-            print("❌ testInstallStateFlow failed. Ended up in state \(viewModel.installState)")
             fatalError()
         }
     }

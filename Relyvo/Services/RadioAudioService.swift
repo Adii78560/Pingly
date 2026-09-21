@@ -68,9 +68,7 @@ final class RadioAudioService: ObservableObject {
             DispatchQueue.main.async {
                 self.isRecording = true
             }
-            AppLogger.audio.info("Started recording live PTT voice stream")
         } catch {
-            AppLogger.audio.error("Failed to start AVAudioEngine: \(error.localizedDescription)")
         }
     }
     
@@ -82,7 +80,6 @@ final class RadioAudioService: ObservableObject {
             self.isRecording = false
             self.currentAudioLevel = 0.0
         }
-        AppLogger.audio.info("Stopped recording live PTT voice stream")
     }
     
     func playReceivedAudioChunk(_ data: Data) {

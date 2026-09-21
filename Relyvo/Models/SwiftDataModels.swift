@@ -41,6 +41,60 @@ final class SDVoiceTranscript {
     }
 }
 
+/// SwiftData persistent model for a Channel (Public or Private)
+@Model
+final class SDChannel {
+    @Attribute(.unique) var id: UUID
+    var displayName: String
+    var typeRaw: String // "PUBLIC" or "PRIVATE"
+    var ownerNodeID: String
+    var createdAt: Date
+    var updatedAt: Date
+    
+    init(
+        id: UUID = UUID(),
+        displayName: String,
+        typeRaw: String = "PUBLIC",
+        ownerNodeID: String = NodeIdentity.shared.nodeID,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.typeRaw = typeRaw
+        self.ownerNodeID = ownerNodeID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+/// SwiftData persistent model for Channel Membership
+@Model
+final class SDChannelMember {
+    @Attribute(.unique) var id: UUID
+    var channelID: UUID
+    var nodeID: String
+    var statusRaw: String // "INVITED", "ACCEPTED", "DECLINED", "REVOKED"
+    var joinedAt: Date?
+    var keyVersion: Int
+    
+    init(
+        id: UUID = UUID(),
+        channelID: UUID,
+        nodeID: String,
+        statusRaw: String = "INVITED",
+        joinedAt: Date? = nil,
+        keyVersion: Int = 1
+    ) {
+        self.id = id
+        self.channelID = channelID
+        self.nodeID = nodeID
+        self.statusRaw = statusRaw
+        self.joinedAt = joinedAt
+        self.keyVersion = keyVersion
+    }
+}
+
 /// SwiftData persistent model for P2P off-grid text & location messages partitioned by channel.
 @Model
 final class SDChatMessage {

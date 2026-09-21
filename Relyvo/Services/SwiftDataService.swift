@@ -28,8 +28,6 @@ final class SwiftDataService: ObservableObject {
     public private(set) var persistenceActor: PersistenceActor!
     
     init(inMemory: Bool = false) {
-        AppLogger.multipeer.info("[Persistence] App launch detected (inMemory=\(inMemory))")
-        AppLogger.multipeer.info("[Persistence] Starting SwiftData initialization")
         
         let schema = Schema([
             SDVoiceTranscript.self,
@@ -45,7 +43,6 @@ final class SwiftDataService: ObservableObject {
             SDOfflineMapRegion.self,
             SDFriend.self
         ])
-        AppLogger.multipeer.info("[Persistence] Model schema loaded (11 entities registered)")
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         let storeURL = config.url
@@ -54,16 +51,12 @@ final class SwiftDataService: ObservableObject {
         if !inMemory {
             let parentDir = storeURL.deletingLastPathComponent()
             if !fileManager.fileExists(atPath: parentDir.path) {
-                AppLogger.multipeer.info("[Persistence] Application Support directory missing. Creating directory: \(parentDir.path)")
                 do {
                     try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true, attributes: nil)
-                    AppLogger.multipeer.info("[Persistence] Application Support directory creation succeeded")
                 } catch {
-                    AppLogger.multipeer.error("[Persistence][ERROR] Application Support directory creation failed: \(error.localizedDescription)")
                     fatalError("[Persistence][CRITICAL] Failed to create Application Support directory: \(error.localizedDescription)")
                 }
             } else {
-                AppLogger.multipeer.info("[Persistence] Application Support directory verified existing")
             }
         }
         
@@ -74,23 +67,10 @@ final class SwiftDataService: ObservableObject {
             fileSizeString = "\(fileSize) bytes"
         }
         
-        AppLogger.multipeer.info("[Persistence] Persistent store location = \(storeURL.path)")
-        AppLogger.multipeer.info("[Persistence] Persistent store URL exists = \(storeExists)")
-        AppLogger.multipeer.info("[Persistence] Persistent store file size = \(fileSizeString)")
-        AppLogger.multipeer.info("[Persistence] Existing persistent store detected = \(storeExists)")
-        AppLogger.multipeer.info("[Persistence] ModelContainer creation started")
         
         do {
             self.container = try ModelContainer(for: schema, configurations: [config])
             self.persistenceActor = PersistenceActor(modelContainer: self.container)
-            AppLogger.multipeer.info("[Persistence] ModelContainer creation succeeded")
-            AppLogger.multipeer.info("[Persistence] ModelContext created")
-            AppLogger.multipeer.info("[Persistence] Container instance created")
-            AppLogger.multipeer.info("[Persistence] Container configuration = isStoredInMemoryOnly: false")
-            AppLogger.multipeer.info("[Persistence] Store type = persistent")
-            AppLogger.multipeer.info("[Persistence] Store URL = \(storeURL.path)")
-            AppLogger.multipeer.info("[Persistence] Existing store = \(storeExists)")
-            AppLogger.multipeer.info("[Persistence] SwiftData initialization completed")
             
             self.isUsingInMemoryFallback = false
             updateUnsyncedCount()
@@ -100,32 +80,11 @@ final class SwiftDataService: ObservableObject {
             let transcriptCount = (try? self.context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
             let pendingCount = (try? self.context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
             
-            AppLogger.multipeer.info("""
-            [PERSISTENCE]
-            event=INITIALIZATION_SUCCESS
-            storeURL=\(storeURL.path)
-            inMemory=\(inMemory)
-            migration=SUCCESS
-            modelVersion=1
-            result=PERSISTENT_STORE_MOUNTED
-            """)
             
             RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_RESTORE_CHECK", details: "chatCount=\(chatCount) voiceTranscriptCount=\(transcriptCount) pendingMessageCount=\(pendingCount)")
             RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "Persistence", event: "PERSISTENCE_SNAPSHOT", details: "storeExists=\(storeExists) fileSize=\(fileSizeString)")
         } catch {
-            AppLogger.multipeer.error("[Persistence][ERROR] ModelContainer initialization failed")
-            AppLogger.multipeer.error("[Persistence][ERROR] Error = \(error.localizedDescription)")
-            AppLogger.multipeer.error("[Persistence][ERROR] Full error description = \(String(describing: error))")
             
-            AppLogger.multipeer.info("""
-            [PERSISTENCE]
-            event=INITIALIZATION_FAILED
-            storeURL=\(storeURL.path)
-            inMemory=\(inMemory)
-            migration=FAILED
-            modelVersion=1
-            result=FATAL_ERROR
-            """)
             
             if inMemory {
                 fatalError("Critical: Failed to initialize in-memory SwiftData ModelContainer: \(error.localizedDescription)")
@@ -144,12 +103,6 @@ final class SwiftDataService: ObservableObject {
         let notificationCount = (try? context.fetch(FetchDescriptor<SDNotificationEvent>()))?.count ?? 0
         let locationSessionCount = (try? context.fetch(FetchDescriptor<SDLocationShareSession>()))?.count ?? 0
         
-        AppLogger.multipeer.info("[Persistence] Message count = \(chatCount)")
-        AppLogger.multipeer.info("[Persistence] Voice transcript count = \(transcriptCount)")
-        AppLogger.multipeer.info("[Persistence] Pending message count = \(pendingCount)")
-        AppLogger.multipeer.info("[Persistence] User count = \(userCount)")
-        AppLogger.multipeer.info("[Persistence] Notification event count = \(notificationCount)")
-        AppLogger.multipeer.info("[Persistence] Location share session count = \(locationSessionCount)")
     }
     
     /// Phase 5 Diagnostic: Performs a non-destructive WRITE -> SAVE -> FETCH -> VERIFY -> DELETE cycle to test SwiftData health
@@ -183,7 +136,6 @@ final class SwiftDataService: ObservableObject {
                 )
             }
         } catch {
-            AppLogger.audio.error("Failed to fetch transcripts for \(channel): \(error.localizedDescription)")
             return []
         }
     }
@@ -206,7 +158,6 @@ final class SwiftDataService: ObservableObject {
         do {
             return try context.fetch(descriptor)
         } catch {
-            AppLogger.audio.error("Failed to fetch audio segments for \(channel): \(error.localizedDescription)")
             return []
         }
     }
@@ -242,7 +193,6 @@ final class SwiftDataService: ObservableObject {
                 )
             }
         } catch {
-            AppLogger.audio.error("Failed to fetch voice messages for \(channel): \(error.localizedDescription)")
             return []
         }
     }
@@ -294,8 +244,10 @@ final class SwiftDataService: ObservableObject {
             predicate: #Predicate { !$0.isSynced }
         )
         
-        let unsyncedTranscripts = (try? context.fetch(transcriptDescriptor)) ?? []
-        let unsyncedMessages = (try? context.fetch(messageDescriptor)) ?? []
+        let backgroundContext = ModelContext(container)
+        
+        let unsyncedTranscripts = (try? backgroundContext.fetch(transcriptDescriptor)) ?? []
+        let unsyncedMessages = (try? backgroundContext.fetch(messageDescriptor)) ?? []
         
         return (unsyncedTranscripts, unsyncedMessages)
     }
@@ -333,9 +285,12 @@ final class SwiftDataService: ObservableObject {
         queueLock.lock()
         defer { queueLock.unlock() }
         
+        // Ephemeral context to avoid "Unbinding from main queue" runtime warning when called from background tasks
+        let backgroundContext = ModelContext(container)
+        
         let now = Date()
         let descriptor = FetchDescriptor<SDPendingMessage>()
-        guard let allPending = try? context.fetch(descriptor) else { return [] }
+        guard let allPending = try? backgroundContext.fetch(descriptor) else { return [] }
         
         var validPending: [SDPendingMessage] = []
         for item in allPending {
@@ -346,7 +301,7 @@ final class SwiftDataService: ObservableObject {
             if isDirectMessage {
                 let destID = item.destinationID
                 let friendDesc = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == destID })
-                if let friend = (try? context.fetch(friendDesc))?.first {
+                if let friend = (try? backgroundContext.fetch(friendDesc))?.first {
                     isAuthorized = (friend.status == .accepted)
                 } else {
                     isAuthorized = false // No relationship
@@ -355,16 +310,16 @@ final class SwiftDataService: ObservableObject {
             
             // Purge expired store-and-forward messages
             if item.expiresAt < now {
-                context.delete(item)
+                backgroundContext.delete(item)
                 AppLogger.multipeer.info("Purged expired pending message \(item.messageID)")
             } else if !isAuthorized {
                 item.statusRaw = "CANCELLED"
                 AppLogger.multipeer.warning("Cancelled pending message \(item.messageID) - Unauthorized destination (Status: \(item.statusRaw))")
-            } else if item.statusRaw != "CANCELLED" {
+            } else if item.statusRaw == "QUEUED" || item.statusRaw == "PENDING" || item.statusRaw == "TRANSMITTING" || item.statusRaw == "SENT" || item.statusRaw == "WAITING_FOR_ACK" || item.statusRaw == "DELIVERED" {
                 validPending.append(item)
             }
         }
-        saveContext()
+        try? backgroundContext.save()
         
         // Priority ordering: Emergency SOS first (priorityRaw descending), followed by timestamp order
         return validPending.sorted { first, second in
@@ -381,16 +336,18 @@ final class SwiftDataService: ObservableObject {
 
     
     func isMessageAlreadyProcessed(messageID: UUID) -> Bool {
+        let backgroundContext = ModelContext(container)
+        
         let chatDescriptor = FetchDescriptor<SDChatMessage>(
             predicate: #Predicate { $0.id == messageID }
         )
-        if (try? context.fetch(chatDescriptor))?.isEmpty == false {
+        if (try? backgroundContext.fetch(chatDescriptor))?.isEmpty == false {
             return true
         }
         let voiceDescriptor = FetchDescriptor<SDVoiceTranscript>(
             predicate: #Predicate { $0.id == messageID }
         )
-        if (try? context.fetch(voiceDescriptor))?.isEmpty == false {
+        if (try? backgroundContext.fetch(voiceDescriptor))?.isEmpty == false {
             return true
         }
         return false
@@ -484,7 +441,6 @@ final class SwiftDataService: ObservableObject {
             DispatchQueue.main.async {
                 self.totalUnsyncedCount = 0
             }
-            AppLogger.multipeer.info("[MESSAGE_DELETED] convID=ALL reason=USER_ACTION")
             AppLogger.multipeer.info("Atomically purged all user profiles, messages, locations, tracks, and notifications from SwiftData store.")
         } catch {
             AppLogger.multipeer.error("Failed to purge SwiftData store during account deletion: \(error.localizedDescription)")
@@ -528,7 +484,6 @@ final class SwiftDataService: ObservableObject {
             predicate: #Predicate { $0.deduplicationKey == deduplicationKey }
         )
         if let existing = try? context.fetch(descriptor), !existing.isEmpty {
-            AppLogger.notifications.info("[Notification] Deduplication hit for key '\(deduplicationKey)'. Skipping record.")
             return false
         }
         
@@ -545,7 +500,6 @@ final class SwiftDataService: ObservableObject {
         )
         context.insert(event)
         saveContext()
-        AppLogger.notifications.info("[Notification] Recorded event '\(eventTypeRaw)' with key '\(deduplicationKey)'")
         return true
     }
     
@@ -568,9 +522,7 @@ final class SwiftDataService: ObservableObject {
         do {
             try context.delete(model: SDNotificationEvent.self)
             saveContext()
-            AppLogger.notifications.info("[Notification] Cleared all persistent notification events.")
         } catch {
-            AppLogger.notifications.error("[Notification] Failed to clear notification events: \(error.localizedDescription)")
         }
     }
 

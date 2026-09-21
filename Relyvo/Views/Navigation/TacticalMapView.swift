@@ -29,11 +29,16 @@ struct TacticalMapView: View {
                 Color(red: 0.05, green: 0.07, blue: 0.09)
                     .ignoresSafeArea()
                 
-                // Vector Map Canvas Layer
+                // Static Contour & Grid Canvas (Cached)
+                TopoCanvasView(
+                    zoomLevel: viewModel.zoomLevel,
+                    showGridLayer: viewModel.showGridLayer,
+                    showTopoContours: viewModel.showTopoContours
+                )
+                .equatable()
+                
+                // Dynamic Overlays Vector Canvas Layer
                 Canvas { context, size in
-                    drawTacticalGrid(context: context, size: size)
-                    drawTopoContours(context: context, size: size)
-                    
                     if viewModel.showBreadcrumbsLayer {
                         drawBreadcrumbTrail(context: context, size: size)
                     }
@@ -98,10 +103,16 @@ struct TacticalMapView: View {
                                 )
                                 if isVisible(point: pos, in: viewSize) {
                                     VStack(spacing: 2) {
-                                        Image(systemName: "person.circle.fill")
-                                            .font(.system(size: 16))
-                                            .foregroundColor(.cyan)
-                                            .background(Circle().fill(Color.black))
+                                        ZStack {
+                                            if let course = session.lastRemoteCourse, let speed = session.lastRemoteSpeed, speed > 0.5 {
+                                                Image(systemName: "location.north.fill")
+                                                    .foregroundColor(AppTheme.tintColor)
+                                                    .font(.system(size: 24))
+                                                    .offset(y: -18)
+                                                    .rotationEffect(.degrees(course))
+                                            }
+                                            CircularAvatarView(senderAlias: peer.displayName, senderID: peer.id, size: 28)
+                                        }
                                         Text(peer.displayName)
                                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                                             .foregroundColor(.white)
@@ -300,44 +311,6 @@ struct TacticalMapView: View {
     
     // MARK: - Canvas Drawing Subroutines
     
-    private func drawTacticalGrid(context: GraphicsContext, size: CGSize) {
-        guard viewModel.showGridLayer else { return }
-        
-        var gridPath = Path()
-        let step: CGFloat = 60.0
-        
-        var x: CGFloat = 0
-        while x <= size.width {
-            gridPath.move(to: CGPoint(x: x, y: 0))
-            gridPath.addLine(to: CGPoint(x: x, y: size.height))
-            x += step
-        }
-        
-        var y: CGFloat = 0
-        while y <= size.height {
-            gridPath.move(to: CGPoint(x: 0, y: y))
-            gridPath.addLine(to: CGPoint(x: size.width, y: y))
-            y += step
-        }
-        
-        context.stroke(gridPath, with: .color(Color.white.opacity(0.04)), lineWidth: 1)
-    }
-    
-    private func drawTopoContours(context: GraphicsContext, size: CGSize) {
-        guard viewModel.showTopoContours else { return }
-        // Subtle topological altitude elevation line curves
-        var topoPath = Path()
-        let waveCount = 5
-        for i in 0..<waveCount {
-            let baseY = size.height * CGFloat(i + 1) / CGFloat(waveCount + 1)
-            topoPath.move(to: CGPoint(x: 0, y: baseY))
-            topoPath.addQuadCurve(
-                to: CGPoint(x: size.width, y: baseY + 15 * sin(Double(i))),
-                control: CGPoint(x: size.width / 2, y: baseY - 30 * cos(Double(i)))
-            )
-        }
-        context.stroke(topoPath, with: .color(Color.teal.opacity(0.06)), lineWidth: 1)
-    }
     
     private func drawBreadcrumbTrail(context: GraphicsContext, size: CGSize) {
         let points = breadcrumbs.recordedPoints
@@ -523,5 +496,65 @@ struct MapLayersSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - TopoCanvasView for Map Background Rendering Performance
+
+struct TopoCanvasView: View, Equatable {
+    let zoomLevel: Double
+    let showGridLayer: Bool
+    let showTopoContours: Bool
+    
+    static func == (lhs: TopoCanvasView, rhs: TopoCanvasView) -> Bool {
+        return lhs.showGridLayer == rhs.showGridLayer &&
+               lhs.showTopoContours == rhs.showTopoContours &&
+               abs(lhs.zoomLevel - rhs.zoomLevel) < (rhs.zoomLevel * 0.20) // Only re-render if zoom changes by >20%
+    }
+    
+    var body: some View {
+        Canvas { context, size in
+            drawTacticalGrid(context: context, size: size)
+            drawTopoContours(context: context, size: size)
+        }
+    }
+    
+    private func drawTacticalGrid(context: GraphicsContext, size: CGSize) {
+        guard showGridLayer else { return }
+        
+        var gridPath = Path()
+        let step: CGFloat = 60.0
+        
+        var x: CGFloat = 0
+        while x <= size.width {
+            gridPath.move(to: CGPoint(x: x, y: 0))
+            gridPath.addLine(to: CGPoint(x: x, y: size.height))
+            x += step
+        }
+        
+        var y: CGFloat = 0
+        while y <= size.height {
+            gridPath.move(to: CGPoint(x: 0, y: y))
+            gridPath.addLine(to: CGPoint(x: size.width, y: y))
+            y += step
+        }
+        
+        context.stroke(gridPath, with: .color(Color.white.opacity(0.04)), lineWidth: 1)
+    }
+    
+    private func drawTopoContours(context: GraphicsContext, size: CGSize) {
+        guard showTopoContours else { return }
+        // Subtle topological altitude elevation line curves
+        var topoPath = Path()
+        let waveCount = 5
+        for i in 0..<waveCount {
+            let baseY = size.height * CGFloat(i + 1) / CGFloat(waveCount + 1)
+            topoPath.move(to: CGPoint(x: 0, y: baseY))
+            topoPath.addQuadCurve(
+                to: CGPoint(x: size.width, y: baseY + 15 * sin(Double(i))),
+                control: CGPoint(x: size.width / 2, y: baseY - 30 * cos(Double(i)))
+            )
+        }
+        context.stroke(topoPath, with: .color(Color.teal.opacity(0.06)), lineWidth: 1)
     }
 }

@@ -75,9 +75,7 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
             DispatchQueue.main.async {
                 self?.isAuthorized = granted
                 if let error = error {
-                    AppLogger.notifications.error("[Notification] Authorization request failed: \(error.localizedDescription)")
                 } else {
-                    AppLogger.notifications.info("[Notification] Authorization status granted=\(granted)")
                 }
                 completion?(granted)
             }
@@ -89,7 +87,6 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         center.getNotificationSettings { [weak self] settings in
             DispatchQueue.main.async {
                 self?.isAuthorized = (settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional)
-                AppLogger.notifications.info("[Notification] Checked authorization status: \(settings.authorizationStatus.rawValue)")
             }
         }
     }
@@ -114,7 +111,6 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         }
         
         center.setNotificationCategories(categories)
-        AppLogger.notifications.info("[Notification] Configured \(categories.count) UNNotificationCategories.")
     }
     
     // MARK: - Core Notification Delivery Engine
@@ -130,14 +126,12 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         userInfo: [String: Any] = [:]
     ) {
         guard isCategoryEnabled(category) else {
-            AppLogger.notifications.info("[Notification] Category '\(category.rawValue)' is disabled in settings. Skipping key '\(deduplicationKey)'.")
             return
         }
         
         // 1. Thread-safe SwiftData Deduplication Check
         let alreadyStored = SwiftDataService.shared.isNotificationDeduplicated(deduplicationKey: deduplicationKey)
         guard !alreadyStored else {
-            AppLogger.notifications.info("[Notification] Deduplication hit for key '\(deduplicationKey)'. Suppressing notification.")
             return
         }
         
@@ -173,9 +167,7 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         
         center.add(request) { error in
             if let error = error {
-                AppLogger.notifications.error("[Notification] Failed to deliver UNNotificationRequest '\(deduplicationKey)': \(error.localizedDescription)")
             } else {
-                AppLogger.notifications.info("[Notification] Successfully posted local notification '\(category.rawValue)' with key '\(deduplicationKey)'")
             }
         }
     }
@@ -266,7 +258,6 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         let now = Date()
         if let lastTime = lastPeerDiscoveredTimestamp[peerID], now.timeIntervalSince(lastTime) < discoveryCooldownSeconds {
             lock.unlock()
-            AppLogger.notifications.info("[Peer] Throttling PEER_DISCOVERED notification for '\(displayName)' (\(peerID)). Last seen \(now.timeIntervalSince(lastTime))s ago.")
             return
         }
         lastPeerDiscoveredTimestamp[peerID] = now
@@ -289,7 +280,6 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         if let timer = pendingDisconnectionTimers[peerID] {
             timer.invalidate()
             pendingDisconnectionTimers.removeValue(forKey: peerID)
-            AppLogger.notifications.info("[Peer] Peer '\(displayName)' re-connected within grace period. Cancelled disconnection alert.")
         }
         
         let sessionKey = "\(peerID)_CONNECTED"
@@ -408,7 +398,6 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         // Foreground presentation handling
-        AppLogger.notifications.info("[Notification] Presenting foreground notification '\(notification.request.identifier)'")
         completionHandler([.banner, .sound, .list])
     }
     
@@ -418,7 +407,6 @@ public final class MeshNotificationManager: NSObject, ObservableObject, UNUserNo
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
-        AppLogger.notifications.info("[Notification] User tapped notification response '\(response.actionIdentifier)': \(userInfo)")
         completionHandler()
     }
 }

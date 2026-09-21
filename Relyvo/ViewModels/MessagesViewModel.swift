@@ -40,6 +40,10 @@ final class MessagesViewModel: ObservableObject {
         self.multipeerService = multipeerService
         self.locationService = locationService
         setupSubscriptions()
+        
+        // Channels are strictly managed by the Walkie-Talkie UI layer (RadioCallViewModel).
+        // No public predefined channels are instantiated here.
+        
         loadSwiftDataConversations()
     }
 
@@ -112,6 +116,7 @@ final class MessagesViewModel: ObservableObject {
         conversations.append(newConv)
         return newConv
     }
+    
 
     
     func sendMessageToConversation(_ text: String, in conversation: Conversation) {
@@ -134,12 +139,16 @@ final class MessagesViewModel: ObservableObject {
         let handle = NodeIdentity.shared.displayName
         let location = locationService.currentLocation
         
+        let isChannel = conversation.displayName.hasPrefix("CH-")
+        let destination = isChannel ? "BROADCAST" : conversation.recipientNodeID
+        let channel = isChannel ? conversation.displayName : nil
+        
         let newMessage = Message(
             originID: localNodeID,
-            destinationID: conversation.recipientNodeID,
+            destinationID: destination,
             senderID: localNodeID,
             senderName: handle,
-            channelID: nil,
+            channelID: channel,
             text: trimmed,
             timestamp: Date(),
             latitude: location?.latitude,
@@ -205,9 +214,15 @@ final class MessagesViewModel: ObservableObject {
         if !multipeerService.connectedPeers.isEmpty {
             multipeerService.broadcast(message: newMessage)
             Task {
-                await SwiftDataService.shared.persistenceActor.updatePendingMessageStatus(messageID: newMessage.id, statusRaw: "WAITING_FOR_ACK")
+                let isBroadcastOrChannel = (newMessage.destinationID == "BROADCAST") || (newMessage.channelID?.hasPrefix("CH-") == true)
+                if isBroadcastOrChannel {
+                    await SwiftDataService.shared.persistenceActor.deletePendingMessage(messageID: newMessage.id)
+                    AppLogger.multipeer.info("Broadcasted P2P message \(newMessage.id) for '\(conversation.displayName)' without ACK tracking.")
+                } else {
+                    await SwiftDataService.shared.persistenceActor.updatePendingMessageStatus(messageID: newMessage.id, statusRaw: "WAITING_FOR_ACK")
+                    AppLogger.multipeer.info("Broadcasted P2P message \(newMessage.id) for '\(conversation.displayName)' (waiting for ACK).")
+                }
             }
-            AppLogger.multipeer.info("Broadcasted P2P message \(newMessage.id) for '\(conversation.displayName)' (waiting for ACK).")
         } else {
             AppLogger.multipeer.info("Peer '\(conversation.displayName)' is offline. Enqueued message \(newMessage.id) to store-and-forward queue.")
         }
@@ -324,95 +339,21 @@ final class MessagesViewModel: ObservableObject {
 
 
     
-    func sendMessageDrop() {
-        guard FeatureAccessManager.shared.canAccess(.messaging) else {
-            AppLogger.multipeer.warning("Message drop blocked: Relyvo Pro subscription required.")
-            FeatureAccessManager.shared.presentPaywall(for: .messaging)
-            return
-        }
-        
-        let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
-        let localNodeID = NodeIdentity.shared.nodeID
-        let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-        let location = locationService.currentLocation
-        
-        let newMessage = Message(
-            originID: localNodeID,
-            destinationID: "BROADCAST",
-            senderID: localNodeID,
-            senderName: handle,
-            channelID: "CH-1 EMERGENCY",
-            text: trimmed,
-            timestamp: Date(),
-            latitude: location?.latitude,
-            longitude: location?.longitude,
-            isSOS: isSOSAlertActive,
-            emergencyStatus: activeEmergencyStatus,
-            hopsCount: 0
-        )
-        
-        messages.append(newMessage)
-        Task {
-            await SwiftDataService.shared.persistenceActor.saveChatMessage(
-                id: newMessage.id,
-                senderID: localNodeID,
-                senderName: handle,
-                channel: "CH-1 EMERGENCY",
-                text: trimmed,
-                messageTypeRaw: "CHAT"
-            )
-        }
-        multipeerService.broadcast(message: newMessage)
-        messageText = ""
-        HapticManager.lightImpact()
-    }
+
     
-    func triggerEmergencySOS(status: EmergencyStatus) {
-        self.activeEmergencyStatus = status
-        self.isSOSAlertActive = true
-        
-        let localNodeID = NodeIdentity.shared.nodeID
-        let handle = UserDefaults.standard.string(forKey: Constants.StorageKeys.userHandle) ?? Constants.App.defaultUserHandle
-        let location = locationService.currentLocation
-        
-        let sosText = "🚨 EMERGENCY DISTRESS BEACON: Need immediate assistance! Status: \(status.rawValue)"
-        let sosMessage = Message(
-            originID: localNodeID,
-            destinationID: "BROADCAST",
-            senderID: localNodeID,
-            senderName: handle,
-            channelID: "CH-1 EMERGENCY",
-            text: sosText,
-            timestamp: Date(),
-            latitude: location?.latitude,
-            longitude: location?.longitude,
-            isSOS: true,
-            emergencyStatus: status,
-            hopsCount: 0
-        )
-        
-        messages.append(sosMessage)
-        Task {
-            await SwiftDataService.shared.persistenceActor.saveChatMessage(
-                id: sosMessage.id,
-                senderID: localNodeID,
-                senderName: handle,
-                channel: "CH-1 EMERGENCY",
-                text: sosText,
-                messageTypeRaw: "CHAT"
-            )
-        }
-        multipeerService.broadcast(message: sosMessage)
-        HapticManager.warningFeedback()
-        AppLogger.emergency.critical("Triggered Emergency SOS Beacon with status: \(status.rawValue)")
-    }
+
     
     private func handleIncomingMessage(_ message: Message) {
         let localNodeID = NodeIdentity.shared.nodeID
         guard message.originID != localNodeID else { return } // Avoid self-echo
         guard message.type == .chat || message.type == .location || message.type == .transcript else { return }
+        
+        let isChannelMessage = message.channelID != nil && !message.channelID!.isEmpty && message.channelID!.hasPrefix("CH-")
+        if isChannelMessage {
+            // MultipeerService (line ~1495) handles background persistence globally.
+            // We exit early here to ensure Channels NEVER generate a Messages-tab conversation card.
+            return
+        }
         
         var relayedMessage = message
         relayedMessage.hopsCount += 1
@@ -422,19 +363,15 @@ final class MessagesViewModel: ObservableObject {
         }
         
         let senderNodeID = message.originID
-        let isChannelMessage = message.channelID != nil && !message.channelID!.isEmpty && message.channelID!.hasPrefix("CH-")
-        
-        if isChannelMessage {
-            return
-        }
+        let convID = message.conversationID.uuidString
+        let convName = message.senderName
+        let convRecipient = senderNodeID
         
         // 🔒 Communication Authorization Gate
         if !DirectChatGate.shared.canSendDirectMessage(to: senderNodeID) {
             AppLogger.multipeer.warning("Blocked incoming direct CHAT packet \(message.id) from unauthorized sender: \(senderNodeID)")
             return
         }
-        
-        let convID = message.conversationID.uuidString
         
         if selectedConversation?.id == convID {
             relayedMessage.isRead = true
@@ -458,15 +395,15 @@ final class MessagesViewModel: ObservableObject {
         } else {
             let newConv = Conversation(
                 id: convID,
-                displayName: message.senderName,
-                recipientNodeID: senderNodeID,
+                displayName: convName,
+                recipientNodeID: convRecipient,
                 isOnline: true,
                 lastMessage: message.text,
                 lastTimestamp: message.timestamp.logTimeString,
                 messages: [relayedMessage]
             )
             conversations.append(newConv)
-            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer: \(message.senderName) (ConvID: \(convID))")
+            AppLogger.multipeer.info("Auto-created conversation thread for incoming peer/channel: \(convName) (ConvID: \(convID))")
         }
         
         Task {
@@ -476,11 +413,11 @@ final class MessagesViewModel: ObservableObject {
                 senderID: message.senderID,
                 destinationID: message.destinationID,
                 senderName: message.senderName,
-                channel: senderNodeID,
+                channel: isChannelMessage ? message.channelID! : senderNodeID,
                 text: message.text,
                 isDelivered: true,
                 messageTypeRaw: "CHAT",
-                conversationID: message.conversationID,
+                conversationID: isChannelMessage ? UUID(uuidString: convID)! : message.conversationID,
                 isRead: relayedMessage.isRead
             )
         }

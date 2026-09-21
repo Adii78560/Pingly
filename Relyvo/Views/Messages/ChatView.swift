@@ -32,9 +32,18 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(conversationMessages) { message in
+                        ForEach(Array(conversationMessages.enumerated()), id: \.element.id) { index, message in
                             let isMe = (message.senderID == NodeIdentity.shared.nodeID || message.originID == NodeIdentity.shared.nodeID)
-                            iMessageBubbleRow(message: message, isSentByMe: isMe)
+                            let isLastInGroup: Bool = {
+                                guard index < conversationMessages.count - 1 else { return true }
+                                let nextMsg = conversationMessages[index + 1]
+                                let sameSender = nextMsg.senderID == message.senderID
+                                let timeDiff = abs(nextMsg.timestamp.timeIntervalSince(message.timestamp))
+                                return !(sameSender && timeDiff < 60)
+                            }()
+                            let showAvatar = !isMe && isLastInGroup
+                            
+                            iMessageBubbleRow(message: message, isSentByMe: isMe, isLastInGroup: isLastInGroup, showAvatar: showAvatar)
                                 .id(message.id)
                         }
                     }
@@ -129,8 +138,8 @@ struct ChatView: View {
     }
     
     // MARK: - iMessage Bubble Row
-    private func iMessageBubbleRow(message: Message, isSentByMe: Bool) -> some View {
-        HStack {
+    private func iMessageBubbleRow(message: Message, isSentByMe: Bool, isLastInGroup: Bool, showAvatar: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
             if isSystemLocationEvent(message.type) {
                 Spacer()
                 HStack(spacing: 6) {
@@ -147,7 +156,15 @@ struct ChatView: View {
                 .cornerRadius(12)
                 Spacer()
             } else {
-                if isSentByMe { Spacer(minLength: 40) }
+                if !isSentByMe {
+                    if showAvatar {
+                        CircularAvatarView(senderAlias: message.senderName, senderID: message.senderID, size: 32)
+                    } else {
+                        Spacer().frame(width: 32)
+                    }
+                } else {
+                    Spacer(minLength: 40)
+                }
                 
                 if message.type == .location, let lat = message.latitude, let lon = message.longitude {
                     LocationMessageCardView(
@@ -169,22 +186,25 @@ struct ChatView: View {
                             .background(
                                 isSentByMe ?
                                 AnyShapeStyle(AppTheme.primaryGradient) :
-                                AnyShapeStyle(Color(UIColor.systemGray5))
+                                AnyShapeStyle(Color(UIColor.secondarySystemBackground))
                             )
-                            .clipShape(
-                                CustomCornerShape(
-                                    radius: 18,
-                                    corners: isSentByMe
-                                        ? [.topLeft, .topRight, .bottomLeft]
-                                        : [.topLeft, .topRight, .bottomRight]
-                                )
-                            )
+                            .clipShape(UnevenRoundedRectangle(
+                                topLeadingRadius: 16,
+                                bottomLeadingRadius: (isSentByMe || !isLastInGroup) ? 16 : 4,
+                                bottomTrailingRadius: (!isSentByMe || !isLastInGroup) ? 16 : 4,
+                                topTrailingRadius: 16
+                            ))
                         
-                        if isSentByMe {
+                        if isSentByMe && isLastInGroup {
                             Text("Delivered via P2P")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(.secondary)
                                 .padding(.trailing, 4)
+                        } else if !isSentByMe && isLastInGroup {
+                            Text(message.timestamp.logTimeString)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 4)
                         }
                     }
                 }

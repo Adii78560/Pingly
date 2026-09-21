@@ -46,7 +46,6 @@ final class BreadcrumbTrackingService: ObservableObject {
             self.totalDistanceMeters = active.totalDistanceMeters
             self.recordedPoints = fetchPoints(for: active.id)
             startDurationTimer()
-            AppLogger.location.info("[Breadcrumb] Restored active track '\(active.name)' with \(self.recordedPoints.count) points")
         }
     }
     
@@ -92,7 +91,6 @@ final class BreadcrumbTrackingService: ObservableObject {
         do {
             try context.save()
         } catch {
-            AppLogger.location.error("[Breadcrumb] Failed to save new track: \(error.localizedDescription)")
         }
         
         self.activeTrack = newTrack
@@ -112,7 +110,6 @@ final class BreadcrumbTrackingService: ObservableObject {
             evaluateLocationSample(coord: currentLoc, heading: LocationService.shared.continuousHeading, forceRecord: true)
         }
         
-        AppLogger.location.info("[Breadcrumb] Started new tracking session '\(newTrack.name)' (ID: \(newTrack.id))")
     }
     
     /// Stop and finalize current breadcrumb recording session
@@ -128,14 +125,12 @@ final class BreadcrumbTrackingService: ObservableObject {
         do {
             try context.save()
         } catch {
-            AppLogger.location.error("[Breadcrumb] Failed to finalize track: \(error.localizedDescription)")
         }
         
         self.activeTrack = nil
         self.isTracking = false
         stopDurationTimer()
         
-        AppLogger.location.info("[Breadcrumb] Finalized track '\(track.name)' (\(self.recordedPoints.count) points, \(self.totalDistanceMeters)m)")
     }
     
     /// Delete a recorded track and its points
@@ -157,7 +152,6 @@ final class BreadcrumbTrackingService: ObservableObject {
         do {
             try context.save()
         } catch {
-            AppLogger.location.error("[Breadcrumb] Failed to delete track: \(error.localizedDescription)")
         }
     }
     
@@ -188,6 +182,10 @@ final class BreadcrumbTrackingService: ObservableObject {
         guard let lastPoint = lastRecordedPoint else { return }
         
         let distanceMoved = currentLocation.distance(from: lastPoint)
+        
+        // Apply 3-meter deadband filter to prevent stationary GPS drift
+        guard distanceMoved >= 3.0 else { return }
+        
         let timeElapsed = now.timeIntervalSince(lastRecordedTimestamp)
         
         var shouldRecord = false
@@ -234,18 +232,23 @@ final class BreadcrumbTrackingService: ObservableObject {
         
         let context = SwiftDataService.shared.context
         context.insert(point)
+        self.recordedPoints.append(point)
+        
+        // Cap track buffer at 500 entries (FIFO)
+        if self.recordedPoints.count > 500 {
+            let oldest = self.recordedPoints.removeFirst()
+            context.delete(oldest)
+        }
+        
         do {
             try context.save()
         } catch {
-            AppLogger.location.error("[Breadcrumb] Failed to save breadcrumb point: \(error.localizedDescription)")
         }
         
-        self.recordedPoints.append(point)
         self.lastRecordedPoint = currentLocation
         self.lastRecordedHeading = heading
         self.lastRecordedTimestamp = Date()
         
-        AppLogger.location.info("[Breadcrumb] Recorded point #\(sequenceIndex) lat=\(point.latitude), lon=\(point.longitude), dist=\(self.totalDistanceMeters)m")
     }
     
     // MARK: - "Return to Start" Backtracking Target Generator

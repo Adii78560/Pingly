@@ -15,7 +15,6 @@ struct MessagesView: View {
     @StateObject private var featureAccessManager = FeatureAccessManager.shared
     
     @State private var searchText = ""
-    @State private var showSOSDialog = false
     @State private var showActivitySheet = false
     @State private var navigationPath = NavigationPath()
     
@@ -30,7 +29,10 @@ struct MessagesView: View {
     }
     
     var authorizedConversations: [Conversation] {
-        filteredConversations.filter { DirectChatGate.shared.canSendDirectMessage(to: $0.recipientNodeID) }
+        filteredConversations.filter { conv in
+            let isChannel = conv.recipientNodeID == "BROADCAST" || conv.displayName.hasPrefix("CH-")
+            return !isChannel && DirectChatGate.shared.canSendDirectMessage(to: conv.recipientNodeID)
+        }
     }
     
     var pendingRequests: [SDFriend] {
@@ -73,18 +75,6 @@ struct MessagesView: View {
                         }
                     }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        showSOSDialog = true
-                    }) {
-                        Image(systemName: "sos.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundColor(.red)
-                    }
-                }
-            }
-            .sheet(isPresented: $showSOSDialog) {
-                sosSheetView
             }
             .sheet(isPresented: $showActivitySheet) {
                 activitySheetView
@@ -344,51 +334,7 @@ struct MessagesView: View {
         }
     }
     
-    // MARK: - SOS Trigger Sheet
-    private var sosSheetView: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    ForEach(EmergencyStatus.allCases.filter({ $0 != .normal })) { status in
-                        Button(action: {
-                            viewModel.triggerEmergencySOS(status: status)
-                            showSOSDialog = false
-                        }) {
-                            HStack(spacing: 12) {
-                                Image(systemName: status.iconName)
-                                    .font(.title3)
-                                    .foregroundColor(status.themeColor)
-                                    .frame(width: 28)
-                                
-                                Text(status.rawValue)
-                                    .font(.body.weight(.medium))
-                                    .foregroundColor(.primary)
-                                
-                                Spacer()
-                                
-                                Image(systemName: "antenna.radiowaves.left.and.right")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Emergency Distress Alert")
-                } footer: {
-                    Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Relyvo mesh nodes.")
-                }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Distress Beacon")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        showSOSDialog = false
-                    }
-                }
-            }
-        }
-    }
+    
     
 }
 

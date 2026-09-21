@@ -140,7 +140,6 @@ final class OfflineRegionInstallerViewModel: ObservableObject {
                 }
             } catch {
                 // In a production app, we would surface this error
-                AppLogger.general.error("Failed to remove region: \(error.localizedDescription)")
             }
         }
     }

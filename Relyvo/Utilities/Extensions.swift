@@ -161,4 +161,5 @@ extension Notification.Name {
     static let didReceiveChatMessage = Notification.Name("didReceiveChatMessage")
     static let didReceiveEmergencySOS = Notification.Name("didReceiveEmergencySOS")
     static let didUpdateFriends = Notification.Name("didUpdateFriends")
+    static let didPurgeChannelKeys = Notification.Name("didPurgeChannelKeys")
 }

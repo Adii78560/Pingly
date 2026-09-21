@@ -19,7 +19,6 @@ final class OfflineRegionManagerTests {
     }
     
     static func runAllTests() async throws {
-        print("\n--- Starting Offline Region Manager Tests ---")
         let tests = OfflineRegionManagerTests()
         var passed = 0
         
@@ -27,39 +26,32 @@ final class OfflineRegionManagerTests {
             try tests.setUp()
             try await tests.testDirectoryCreation()
             passed += 1
-            print("✅ testDirectoryCreation passed")
             
             try tests.tearDown()
             try tests.setUp()
             try await tests.testRegionDiscoveryAndValidation()
             passed += 1
-            print("✅ testRegionDiscoveryAndValidation passed")
             
             try tests.tearDown()
             try tests.setUp()
             try await tests.testCoordinateResolution()
             passed += 1
-            print("✅ testCoordinateResolution passed")
             
             try tests.tearDown()
             try tests.setUp()
             try await tests.testDuplicateVersionCleanup()
             passed += 1
-            print("✅ testDuplicateVersionCleanup passed")
             
             try tests.tearDown()
             try tests.setUp()
             try await tests.testDeleteRegion()
             passed += 1
-            print("✅ testDeleteRegion passed")
             
             try tests.tearDown()
         } catch {
-            print("❌ Test failed with error: \(error)")
             try? tests.tearDown()
             throw error
         }
-        print("--- Offline Region Manager Tests Complete: \(passed)/5 passed ---\n")
     }
     
     func testDirectoryCreation() async throws {

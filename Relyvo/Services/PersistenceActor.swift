@@ -27,6 +27,8 @@ public final actor PersistenceActor {
         let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
         AppLogger.multipeer.info("\(tag)_START type=\(messageTypeRaw)")
         
+        guard messageTypeRaw == "CHAT", !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        
         let resolvedOriginID = originID ?? senderID
         let resolvedDestinationID = destinationID ?? channel
         
@@ -60,7 +62,6 @@ public final actor PersistenceActor {
         do {
             try modelContext.save()
             AppLogger.multipeer.info("\(tag)_SUCCESS type=\(messageTypeRaw)")
-            AppLogger.multipeer.info("[MESSAGE_PERSISTED] messageID=\(id.uuidString) type=\(messageTypeRaw) sender=\(senderID) destination=\(resolvedDestinationID) conversationID=\(conversationID?.uuidString ?? "nil")")
         } catch {
             AppLogger.multipeer.error("[MESSAGE_SAVE_FAILED] messageID=\(id.uuidString) reason=\(error.localizedDescription)")
         }
@@ -95,6 +96,17 @@ public final actor PersistenceActor {
         relayHistory: [String] = [],
         messageTypeRaw: String = "CHAT"
     ) {
+        if messageTypeRaw == "LOCATION_UPDATE" {
+            let locDescriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.destinationID == destinationID && $0.messageTypeRaw == "LOCATION_UPDATE" })
+            if let existingLoc = try? modelContext.fetch(locDescriptor).first {
+                existingLoc.text = text // Update the payload
+                existingLoc.timestamp = Date()
+                existingLoc.messageID = messageID
+                try? modelContext.save()
+                return
+            }
+        }
+        
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let existing = try? modelContext.fetch(descriptor).first {
             return
@@ -127,7 +139,6 @@ public final actor PersistenceActor {
         
         let pendingCount = (try? modelContext.fetchCount(FetchDescriptor<SDPendingMessage>())) ?? 0
         let priorityStr = (priorityRaw == 2) ? "HIGH" : (priorityRaw == 1 ? "NORMAL" : "LOW")
-        AppLogger.multipeer.info("[MESH_QUEUE] msg=\(messageID.uuidString) role=\(queueRoleRaw) priority=\(priorityStr) depth=\(pendingCount) status=\(statusRaw)")
     }
     
     public func markPendingMessageAsACKed(messageID: UUID) {
@@ -149,9 +160,11 @@ public final actor PersistenceActor {
         let pendingDescriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let pendingList = try? modelContext.fetch(pendingDescriptor) {
             for pending in pendingList {
-                pending.statusRaw = "ACKNOWLEDGED"
+                pending.statusRaw = "DELIVERED"
+                pending.deliveredAt = Date()
                 pending.lastAttemptTimestamp = Date()
             }
+            try? modelContext.save()
         }
         
         try? modelContext.save()
@@ -164,7 +177,7 @@ public final actor PersistenceActor {
             pending.statusRaw = statusRaw
             pending.lastAttemptTimestamp = Date()
             
-            if statusRaw == "FAILED" || statusRaw == "TRANSMITTING" || statusRaw == "SENDING" {
+            if statusRaw == "FAILED" {
                 pending.retryCount += 1
             }
             try? modelContext.save()
@@ -177,6 +190,16 @@ public final actor PersistenceActor {
             }
         }
     }
+    
+    public func deletePendingMessage(messageID: UUID) {
+        let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
+        if let pending = (try? modelContext.fetch(descriptor))?.first {
+            modelContext.delete(pending)
+            try? modelContext.save()
+            AppLogger.multipeer.info("\(AppLogger.messageTag(messageID)) DELETED from queue")
+        }
+    }
+    
     public func cleanupAcknowledgedPendingMessages() {
         let expirationDate = Date().addingTimeInterval(-86400) // 24 hours
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate {
@@ -188,7 +211,6 @@ public final actor PersistenceActor {
             }
             if !pendingList.isEmpty {
                 try? modelContext.save()
-                AppLogger.multipeer.info("[Persistence] Cleaned up \(pendingList.count) ACKNOWLEDGED pending messages older than 24h")
             }
         }
     }
@@ -199,7 +221,6 @@ public final actor PersistenceActor {
         if let failedItems = try? modelContext.fetch(descriptor), !failedItems.isEmpty {
             for item in failedItems {
                 item.statusRaw = "QUEUED"
-                item.retryCount = 0
                 item.lastAttemptTimestamp = nil
             }
             try? modelContext.save()
@@ -516,9 +537,63 @@ public final actor PersistenceActor {
             try? modelContext.save()
         }
     }
+    
+    // MARK: - Channel Protocols
+    
+    func handleChannelInvite(channelID: String, from nodeID: String) {
+        guard let channelUUID = UUID(uuidString: channelID) else { return }
+        
+        let localNodeID = NodeIdentity.shared.nodeID
+        let descriptor = FetchDescriptor<SDChannelMember>(
+            predicate: #Predicate { $0.channelID == channelUUID && $0.nodeID == localNodeID }
+        )
+        
+        if let existing = try? modelContext.fetch(descriptor).first {
+            if existing.statusRaw == "DECLINED" || existing.statusRaw == "REVOKED" {
+                existing.statusRaw = "INVITED"
+                try? modelContext.save()
+            }
+        } else {
+            let newMember = SDChannelMember(channelID: channelUUID, nodeID: localNodeID, statusRaw: "INVITED")
+            modelContext.insert(newMember)
+            try? modelContext.save()
+        }
+    }
+    
+    func handleChannelAccept(channelID: String, from nodeID: String) {
+        guard let channelUUID = UUID(uuidString: channelID) else { return }
+        
+        let descriptor = FetchDescriptor<SDChannelMember>(
+            predicate: #Predicate { $0.channelID == channelUUID && $0.nodeID == nodeID }
+        )
+        
+        if let existing = try? modelContext.fetch(descriptor).first {
+            existing.statusRaw = "ACCEPTED"
+            existing.joinedAt = Date()
+            try? modelContext.save()
+        } else {
+            // They accepted an invite we didn't know we sent? Or they are joining an open mesh?
+            // For now, insert as accepted.
+            let newMember = SDChannelMember(channelID: channelUUID, nodeID: nodeID, statusRaw: "ACCEPTED", joinedAt: Date())
+            modelContext.insert(newMember)
+            try? modelContext.save()
+        }
+    }
+    
+    func handleChannelDecline(channelID: String, from nodeID: String) {
+        guard let channelUUID = UUID(uuidString: channelID) else { return }
+        
+        let descriptor = FetchDescriptor<SDChannelMember>(
+            predicate: #Predicate { $0.channelID == channelUUID && $0.nodeID == nodeID }
+        )
+        
+        if let existing = try? modelContext.fetch(descriptor).first {
+            existing.statusRaw = "DECLINED"
+            try? modelContext.save()
+        }
+    }
 
     public func performPersistenceReadWriteDiagnosticTest() -> (success: Bool, message: String) {
-        AppLogger.multipeer.info("[PersistenceTest] Test started")
         let testID = UUID()
         let testText = "[DIAGNOSTIC_TEST_\(testID.uuidString.prefix(6))]"
         
@@ -538,14 +613,11 @@ public final actor PersistenceActor {
         
         // 1. WRITE
         modelContext.insert(testMessage)
-        AppLogger.multipeer.info("[PersistenceTest] Test record created")
         
         // 2. SAVE
         do {
             try modelContext.save()
-            AppLogger.multipeer.info("[PersistenceTest] Save succeeded")
         } catch {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at SAVE stage: \(error.localizedDescription)")
             return (false, "SAVE failed: \(error.localizedDescription)")
         }
         
@@ -554,23 +626,18 @@ public final actor PersistenceActor {
             predicate: #Predicate { $0.id == testID }
         )
         guard let fetched = (try? modelContext.fetch(descriptor))?.first else {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at FETCH stage: Record not found")
             return (false, "FETCH failed: Record not found")
         }
-        AppLogger.multipeer.info("[PersistenceTest] Fetch succeeded")
         
         // 4. VERIFY
         guard fetched.text == testText && fetched.senderName == "DiagnosticSystem" else {
-            AppLogger.multipeer.error("[PersistenceTest][ERROR] TEST FAILED at VERIFY stage: Data mismatch")
             return (false, "VERIFY failed: Record content mismatch")
         }
-        AppLogger.multipeer.info("[PersistenceTest] Record verification succeeded")
         
         // 5. DELETE & CLEANUP
         modelContext.delete(fetched)
         do {
             try modelContext.save()
-            AppLogger.multipeer.info("[PersistenceTest] Cleanup succeeded")
         } catch {
             return (false, "Cleanup failed: \(error.localizedDescription)")
         }

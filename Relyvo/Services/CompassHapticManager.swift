@@ -117,7 +117,6 @@ public final class CompassHapticManager: ObservableObject {
                 currentDirectionalState = .arrived
                 lastHapticTimestamp = now
                 triggerNotification(type: .success)
-                AppLogger.location.info("[CompassHaptic] Event ARRIVED at target")
             }
             return
         }
@@ -128,7 +127,6 @@ public final class CompassHapticManager: ObservableObject {
             currentProximityBand = newBand
             lastHapticTimestamp = now
             triggerHaptic(style: newBand == .close ? .medium : .light)
-            AppLogger.location.info("[CompassHaptic] Event PROXIMITY_BAND_CHANGE -> \(newBand.rawValue), distance=\(distanceMeters)m")
             return
         }
         
@@ -142,7 +140,6 @@ public final class CompassHapticManager: ObservableObject {
             if newState == .targetCenter {
                 lastHapticTimestamp = now
                 triggerHaptic(style: .medium)
-                AppLogger.location.info("[CompassHaptic] Event ALIGNED (TARGET_CENTER), rel=\(relativeBearing)°")
             } else if (previousState == .targetLeft && newState == .targetRight) || (previousState == .targetRight && newState == .targetLeft) {
                 lastHapticTimestamp = now
                 triggerHaptic(style: .light)
@@ -163,6 +160,7 @@ public final class CompassHapticManager: ObservableObject {
     }
     
     private func triggerHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        #if !targetEnvironment(simulator)
         DispatchQueue.main.async {
             switch style {
             case .light:
@@ -175,11 +173,23 @@ public final class CompassHapticManager: ObservableObject {
                 self.lightImpactGenerator.impactOccurred()
             }
         }
+        #endif
     }
     
     private func triggerNotification(type: UINotificationFeedbackGenerator.FeedbackType) {
+        #if !targetEnvironment(simulator)
         DispatchQueue.main.async {
             self.notificationGenerator.notificationOccurred(type)
         }
+        #endif
+    }
+    
+    /// Trigger a single distinct haptic detent for lock-on
+    public func playHeadingDetent() {
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            self.heavyImpactGenerator.impactOccurred()
+        }
+        #endif
     }
 }

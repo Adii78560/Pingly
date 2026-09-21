@@ -27,6 +27,11 @@ enum P2PMessageType: String, Codable {
     case friendRequest = "FRIEND_REQUEST"
     case friendAccept = "FRIEND_ACCEPT"
     case friendDecline = "FRIEND_DECLINE"
+    
+    // Channel Protocol
+    case channelInvite = "CHANNEL_INVITE"
+    case channelAccept = "CHANNEL_ACCEPT"
+    case channelDecline = "CHANNEL_DECLINE"
 }
 
 /// Discriminator for 1-hop link ACK vs end-to-end destination delivery ACK
@@ -58,7 +63,7 @@ struct Message: Identifiable, Codable, Hashable {
     var senderDeviceID: UUID?
     var previousHopID: String?
     let channelID: String?
-    let text: String
+    var text: String
     let timestamp: Date
     let latitude: Double?
     let longitude: Double?
@@ -75,6 +80,7 @@ struct Message: Identifiable, Codable, Hashable {
     let conversationID: UUID
     var relayHistory: [UUID]
     var isRead: Bool
+    var isEncrypted: Bool
     
     init(
         id: UUID = UUID(),
@@ -102,7 +108,8 @@ struct Message: Identifiable, Codable, Hashable {
         sessionID: UUID? = nil,
         conversationID: UUID? = nil,
         relayHistory: [UUID] = [],
-        isRead: Bool = false
+        isRead: Bool = false,
+        isEncrypted: Bool = false
     ) {
         let finalOrigin = originID ?? senderID
         self.id = id
@@ -135,6 +142,7 @@ struct Message: Identifiable, Codable, Hashable {
             text: text
         )
         self.sessionID = sessionID
+        self.isEncrypted = isEncrypted
         
         if let explicitConvID = conversationID {
             self.conversationID = explicitConvID

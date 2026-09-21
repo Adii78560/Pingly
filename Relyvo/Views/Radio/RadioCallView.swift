@@ -18,6 +18,10 @@ struct RadioCallView: View {
     @State private var newChannelInputText = ""
     @State private var breathingScale: CGFloat = 1.0
     @State private var breathingOpacity: Double = 0.6
+    @State private var selectedHistoryMode: Int = 0
+    @State private var showSOSDialog = false
+    @State private var showingQRShare = false
+    @State private var showingQRScanner = false
     
     var body: some View {
         NavigationStack {
@@ -45,13 +49,31 @@ struct RadioCallView: View {
                         Button(action: {
                             viewModel.shareActiveChannel()
                         }) {
-                            Label("Share \(viewModel.selectedChannel) with Peers", systemImage: "square.and.arrow.up")
+                            Label("Share \(viewModel.selectedChannel) Link", systemImage: "square.and.arrow.up")
+                        }
+                        
+                        Button(action: {
+                            DispatchQueue.main.async {
+                                showingQRShare = true
+                            }
+                        }) {
+                            Label("Share Channel via QR", systemImage: "qrcode")
+                        }
+                        
+                        Button(action: {
+                            DispatchQueue.main.async {
+                                showingQRScanner = true
+                            }
+                        }) {
+                            Label("Scan QR to Join", systemImage: "qrcode.viewfinder")
                         }
                         
                         Button(action: {
                             featureAccessManager.requireAccess(to: .createChannel) {
-                                newChannelInputText = ""
-                                showingAddChannelAlert = true
+                                DispatchQueue.main.async {
+                                    newChannelInputText = ""
+                                    showingAddChannelAlert = true
+                                }
                             }
                         }) {
                             Label(
@@ -60,6 +82,14 @@ struct RadioCallView: View {
                             )
                         }
 
+                        Button(action: {
+                            DispatchQueue.main.async {
+                                showSOSDialog = true
+                            }
+                        }) {
+                            Label("Emergency SOS Beacon", systemImage: "sos.circle.fill")
+                        }
+                        
                     } label: {
                         HStack(spacing: 6) {
                             Circle()
@@ -90,8 +120,10 @@ struct RadioCallView: View {
                     
                     Button(action: {
                         featureAccessManager.requireAccess(to: .createChannel) {
-                            newChannelInputText = ""
-                            showingAddChannelAlert = true
+                            DispatchQueue.main.async {
+                                newChannelInputText = ""
+                                showingAddChannelAlert = true
+                            }
                         }
                     }) {
                         HStack(spacing: 4) {
@@ -365,19 +397,28 @@ struct RadioCallView: View {
                 }
                 .frame(height: 28)
                 
-                // Channel Voice Notes History Stream (Replacing Text Transcripts)
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "waveform.badge.mic")
-                            .foregroundColor(AppTheme.tintColor)
-                            .font(.system(size: 13, weight: .bold))
-                        
-                        Text("VOICE NOTES • \(viewModel.selectedChannel)")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                        
-                        Spacer()
+                // Channel History Toggle
+                Picker("Channel History", selection: $selectedHistoryMode) {
+                    Text("Voice Notes").tag(0)
+                    Text("Text Chat").tag(1)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding(.horizontal, 16)
+                
+                if selectedHistoryMode == 0 {
+                    // Channel Voice Notes History Stream
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "waveform.badge.mic")
+                                .foregroundColor(AppTheme.tintColor)
+                                .font(.system(size: 13, weight: .bold))
+                            
+                            Text("VOICE NOTES • \(viewModel.selectedChannel)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                            
+                            Spacer()
                         
                         Text("\(viewModel.voiceMessages.count) notes")
                             .font(.system(size: 10, weight: .semibold))
@@ -410,20 +451,143 @@ struct RadioCallView: View {
                             }
                             .padding(.vertical, 4)
                         }
-                        .onChange(of: viewModel.voiceMessages.count) {
+                        .onChange(of: viewModel.voiceMessages.count) { _ in
                             if let last = viewModel.voiceMessages.last {
                                 withAnimation {
                                     proxy.scrollTo(last.id, anchor: .bottom)
                                 }
                             }
                         }
+                        }
                     }
+                    .padding(12)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                } else {
+                    // Text Chat Stream
+                    VStack(spacing: 8) {
+                        ScrollViewReader { proxy in
+                            ScrollView(.vertical, showsIndicators: false) {
+                                LazyVStack(spacing: 12) {
+                                    if viewModel.chatMessages.isEmpty {
+                                        VStack(spacing: 6) {
+                                            Image(systemName: "bubble.left.and.bubble.right")
+                                                .font(.system(size: 28))
+                                                .foregroundColor(.secondary.opacity(0.6))
+                                            Text("No text messages on \(viewModel.selectedChannel).")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 24)
+                                    } else {
+                                        ForEach(Array(viewModel.chatMessages.enumerated()), id: \.element.id) { index, msg in
+                                            let isMe = (msg.senderID == NodeIdentity.shared.nodeID || msg.originID == NodeIdentity.shared.nodeID)
+                                            
+                                            let isLastInGroup: Bool = {
+                                                guard index < viewModel.chatMessages.count - 1 else { return true }
+                                                let nextMsg = viewModel.chatMessages[index + 1]
+                                                let sameSender = nextMsg.senderID == msg.senderID
+                                                let timeDiff = abs(nextMsg.timestamp.timeIntervalSince(msg.timestamp))
+                                                return !(sameSender && timeDiff < 60)
+                                            }()
+                                            
+                                            let showAvatar = !isMe && isLastInGroup
+                                            
+                                            HStack(alignment: .bottom, spacing: 8) {
+                                                if !isMe {
+                                                    if showAvatar {
+                                                        CircularAvatarView(senderAlias: msg.senderName, senderID: msg.senderID, size: 32)
+                                                    } else {
+                                                        Spacer().frame(width: 32)
+                                                    }
+                                                } else {
+                                                    Spacer(minLength: 40)
+                                                }
+                                                
+                                                VStack(alignment: isMe ? .trailing : .leading, spacing: 4) {
+                                                    Text(msg.text)
+                                                        .font(.system(size: 15))
+                                                        .foregroundColor(isMe ? .white : .primary)
+                                                        .padding(.horizontal, 14)
+                                                        .padding(.vertical, 9)
+                                                        .background(isMe ? AppTheme.tintColor : Color(UIColor.secondarySystemBackground))
+                                                        .clipShape(UnevenRoundedRectangle(
+                                                            topLeadingRadius: 16,
+                                                            bottomLeadingRadius: (isMe || !isLastInGroup) ? 16 : 4,
+                                                            bottomTrailingRadius: (!isMe || !isLastInGroup) ? 16 : 4,
+                                                            topTrailingRadius: 16
+                                                        ))
+                                                    
+                                                    if !isMe && isLastInGroup {
+                                                        HStack(spacing: 4) {
+                                                            Text(msg.timestamp.logTimeString)
+                                                                .font(.system(size: 10, weight: .medium))
+                                                            
+                                                            if let lat = msg.latitude, let lon = msg.longitude,
+                                                               let info = LocationService.shared.distanceAndBearingFromUser(toLat: lat, lon: lon) {
+                                                                Text("• 📍 \(info.distanceFormatted) • \(info.bearingDirection)")
+                                                                    .font(.system(size: 10, weight: .medium))
+                                                            }
+                                                        }
+                                                        .foregroundColor(.secondary)
+                                                        .padding(.leading, 4)
+                                                    }
+                                                }
+                                                
+                                                if !isMe { Spacer(minLength: 40) }
+                                            }
+                                            .id(msg.id)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .onChange(of: viewModel.chatMessages.count) { _ in
+                                if let last = viewModel.chatMessages.last {
+                                    withAnimation {
+                                        proxy.scrollTo(last.id, anchor: .bottom)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Text Input Area
+                        HStack(spacing: 8) {
+                            TextField("Message \(viewModel.selectedChannel)...", text: $viewModel.messageText)
+                                .font(.system(size: 14))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(UIColor.systemBackground))
+                                .cornerRadius(18)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18)
+                                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                                )
+                                .submitLabel(.send)
+                                .onSubmit {
+                                    viewModel.sendChannelTextMessage(viewModel.messageText)
+                                }
+                            
+                            Button(action: {
+                                viewModel.sendChannelTextMessage(viewModel.messageText)
+                            }) {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(viewModel.messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.gray.opacity(0.5) : AppTheme.tintColor)
+                            }
+                            .disabled(viewModel.messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                    }
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
                 }
-                .padding(12)
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                .cornerRadius(16)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
             }
             .navigationTitle(subscriptionManager.isPro ? "Walkie-Talkie" : "Walkie-Talkie 🔒")
             .alert("Create Custom Channel", isPresented: $showingAddChannelAlert) {
@@ -434,6 +598,58 @@ struct RadioCallView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Enter a unique channel name to broadcast with your mesh team.")
+            }
+            .sheet(isPresented: $showSOSDialog) {
+                NavigationStack {
+                    Form {
+                        Section {
+                            ForEach(EmergencyStatus.allCases.filter({ $0 != .normal })) { status in
+                                Button(action: {
+                                    viewModel.triggerEmergencySOS(status: status)
+                                    showSOSDialog = false
+                                }) {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: status.iconName)
+                                            .font(.title3)
+                                            .foregroundColor(status.themeColor)
+                                            .frame(width: 28)
+                                        
+                                        Text(status.rawValue)
+                                            .font(.body.weight(.medium))
+                                            .foregroundColor(.primary)
+                                        
+                                        Spacer()
+                                        
+                                        Image(systemName: "antenna.radiowaves.left.and.right")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        } header: {
+                            Text("Emergency Distress Alert")
+                        } footer: {
+                            Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Relyvo mesh nodes.")
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .navigationTitle("Distress Beacon")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") {
+                                showSOSDialog = false
+                            }
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showingQRShare) {
+                ChannelQRShareView(channelID: viewModel.selectedChannel)
+            }
+            .sheet(isPresented: $showingQRScanner) {
+                ChannelQRScannerView { scannedChannel in
+                    viewModel.selectedChannel = scannedChannel
+                }
             }
         }
     }

@@ -100,7 +100,9 @@ struct RelativeLocationView: View {
                     VStack(spacing: 2) {
                         Image(systemName: "location.north.circle.fill")
                             .font(.system(size: 32))
-                            .foregroundStyle(AppTheme.primaryGradient)
+                            .foregroundStyle(isLockedOn ? AnyShapeStyle(Color.green) : AnyShapeStyle(AppTheme.primaryGradient))
+                            .rotationEffect(.degrees(continuousRelativeBearing))
+                            .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.8), value: continuousRelativeBearing)
                         Text("YOU")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.primary)
@@ -111,9 +113,9 @@ struct RelativeLocationView: View {
                         ZStack {
                             VStack(spacing: 4) {
                                 Circle()
-                                    .fill(AppTheme.tintColor)
+                                    .fill(isLockedOn ? Color.green : AppTheme.tintColor)
                                     .frame(width: 16, height: 16)
-                                    .shadow(color: AppTheme.tintColor, radius: 8)
+                                    .shadow(color: isLockedOn ? Color.green : AppTheme.tintColor, radius: 8)
                                 
                                 Text(remoteDisplayName.cleanBaseName)
                                     .font(.system(size: 11, weight: .bold))
@@ -232,8 +234,21 @@ struct RelativeLocationView: View {
         let rawRel = relInfo.relativeBearing
         let delta = CircularAngleHelper.shortestAngularDifference(from: previousRawRelBearing, to: rawRel)
         previousRawRelBearing = rawRel
+        
+        let wasLockedOn = isLockedOn
         continuousRelativeBearing += delta
+        
+        if !wasLockedOn && isLockedOn {
+            CompassHapticManager.shared.playHeadingDetent()
+        }
+        
         CompassHapticManager.shared.evaluateCompassState(relativeBearing: relInfo.relativeBearing, distanceMeters: relInfo.distanceMeters)
+    }
+    
+    private var isLockedOn: Bool {
+        let normalized = continuousRelativeBearing.truncatingRemainder(dividingBy: 360)
+        let positiveNormalized = normalized >= 0 ? normalized : normalized + 360
+        return positiveNormalized <= 5.0 || positiveNormalized >= 355.0
     }
     
     // MARK: - Computed State Helpers

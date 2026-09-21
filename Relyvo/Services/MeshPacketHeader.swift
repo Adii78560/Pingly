@@ -49,6 +49,11 @@ enum MeshPacketType: UInt8 {
     case friendAccept   = 0x09
     case friendDecline  = 0x0A
     
+    // Channel Protocol
+    case channelInvite  = 0x0B
+    case channelAccept  = 0x0C
+    case channelDecline = 0x0D
+    
     /// Maps from the semantic P2PMessageType used by the Message model.
     static func from(_ type: P2PMessageType) -> MeshPacketType {
         switch type {
@@ -67,6 +72,9 @@ enum MeshPacketType: UInt8 {
         case .friendRequest:           return .friendRequest
         case .friendAccept:            return .friendAccept
         case .friendDecline:           return .friendDecline
+        case .channelInvite:           return .channelInvite
+        case .channelAccept:           return .channelAccept
+        case .channelDecline:          return .channelDecline
         }
     }
     
@@ -83,6 +91,9 @@ enum MeshPacketType: UInt8 {
         case .friendRequest:  return .friendRequest
         case .friendAccept:   return .friendAccept
         case .friendDecline:  return .friendDecline
+        case .channelInvite:  return .channelInvite
+        case .channelAccept:  return .channelAccept
+        case .channelDecline: return .channelDecline
         }
     }
 }
@@ -131,6 +142,7 @@ struct MeshPacketFlags {
     var isChannelBroadcast: Bool
     var isRelayHop: Bool
     var isEOT: Bool  // Bit 3: End of Transmission signal
+    var isEncrypted: Bool // Bit 4: AES-GCM Encrypted payload
     
     var rawValue: UInt8 {
         var v: UInt8 = 0
@@ -138,6 +150,7 @@ struct MeshPacketFlags {
         if isChannelBroadcast { v |= 0x02 }
         if isRelayHop         { v |= 0x04 }
         if isEOT              { v |= 0x08 }
+        if isEncrypted        { v |= 0x10 }
         return v
     }
     
@@ -146,13 +159,15 @@ struct MeshPacketFlags {
         isChannelBroadcast = (raw & 0x02) != 0
         isRelayHop         = (raw & 0x04) != 0
         isEOT              = (raw & 0x08) != 0
+        isEncrypted        = (raw & 0x10) != 0
     }
     
-    init(isSOS: Bool = false, isChannelBroadcast: Bool = false, isRelayHop: Bool = false, isEOT: Bool = false) {
+    init(isSOS: Bool = false, isChannelBroadcast: Bool = false, isRelayHop: Bool = false, isEOT: Bool = false, isEncrypted: Bool = false) {
         self.isSOS              = isSOS
         self.isChannelBroadcast = isChannelBroadcast
         self.isRelayHop         = isRelayHop
         self.isEOT              = isEOT
+        self.isEncrypted        = isEncrypted
     }
 }
 
@@ -204,15 +219,20 @@ struct MeshPacket {
     let sequenceNumber: UInt16    // Monotonic packet sequence counter
     let flags: MeshPacketFlags
     let relayHistory: [UUID]      // v3: bounded relay traversal
-    let textPayload: String       // UTF-8 decoded payload (empty for channelPing)
+    let textPayload: String       // UTF-8 decoded payload (empty for channelPing, or raw ciphertext if encrypted)
+    let isEncrypted: Bool         // Derived from flags for convenience
     
     // Convenience: raw wire size this packet represents
     var wireSize: Int { 
+        let baseSize: Int
         if version >= 0x03 {
-            return MeshPacketHeader.fixedHeaderSizeV3 + (relayHistory.count * 16) + textPayload.utf8.count
+            baseSize = MeshPacketHeader.fixedHeaderSizeV3 + (relayHistory.count * 16) + textPayload.utf8.count
         } else {
-            return MeshPacketHeader.fixedHeaderSizeV2 + textPayload.utf8.count
+            baseSize = MeshPacketHeader.fixedHeaderSizeV2 + textPayload.utf8.count
         }
+        // Account for AES-GCM overhead: 12-byte nonce + 16-byte tag (already included if textPayload holds raw bytes via String proxy)
+        // Actually, textPayload contains the raw bytes during silent relay, so we don't strictly need to add +28 here if it's already counted in textPayload.count.
+        return baseSize
     }
     
     static let broadcastUUID = UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
@@ -237,7 +257,7 @@ enum MeshPacketHeader {
     ///   Binary: 62 bytes header + payload (payload = text.utf8.count, no field name overhead)
     ///
     /// Reduction: ~70-80% for short text messages, up to ~50% for longer transcript payloads.
-    static func encode(_ message: Message, sequenceNumber: UInt16 = 0, isEOT: Bool = false, relayHistory: [UUID] = []) throws -> Data {
+    static func encode(_ message: Message, sequenceNumber: UInt16 = 0, isEOT: Bool = false, relayHistory: [UUID] = [], isEncrypted: Bool = false, encryptedPayload: Data? = nil) throws -> Data {
         let channelByte = MeshChannelByte.from(channelID: message.channelID)
         let isChannelBroadcast = message.channelID != nil && !message.channelID!.isEmpty
         let isRelayHop = message.hopsCount > 0
@@ -245,7 +265,8 @@ enum MeshPacketHeader {
             isSOS: message.isSOS,
             isChannelBroadcast: isChannelBroadcast,
             isRelayHop: isRelayHop,
-            isEOT: isEOT
+            isEOT: isEOT,
+            isEncrypted: isEncrypted
         )
         
         // Build payload: for custom channels, prefix payload with 1-byte length + channel name UTF-8
@@ -259,8 +280,13 @@ enum MeshPacketHeader {
             payloadData.append(&cidLen, count: 1)
             payloadData.append(cidBytes)
         }
-        let textBytes = message.text.data(using: .utf8) ?? Data()
-        payloadData.append(textBytes)
+        
+        if let encryptedPayload = encryptedPayload, isEncrypted {
+            payloadData.append(encryptedPayload)
+        } else {
+            let textBytes = message.text.data(using: .utf8) ?? Data()
+            payloadData.append(textBytes)
+        }
         
         let boundedHistory = Array(relayHistory.prefix(Int(Constants.Emergency.broadcastTTL)))
         let expectedTotalSize = fixedHeaderSizeV3 + (boundedHistory.count * 16) + payloadData.count
@@ -414,8 +440,17 @@ enum MeshPacketHeader {
             payload = payload.subdata(in: (1 + cidLen)..<payload.count)
         }
         
-        guard let textPayload = String(data: payload, encoding: .utf8) else {
-            throw MeshPacketError.invalidUTF8Payload
+        let flags = MeshPacketFlags(raw: flagsByte)
+        
+        let textPayload: String
+        if flags.isEncrypted {
+            // Ciphertext is binary, safely store it as a base64 string in textPayload
+            textPayload = payload.base64EncodedString()
+        } else {
+            guard let decodedText = String(data: payload, encoding: .utf8) else {
+                throw MeshPacketError.invalidUTF8Payload
+            }
+            textPayload = decodedText
         }
         
         return MeshPacket(
@@ -430,9 +465,10 @@ enum MeshPacketHeader {
             messageID: messageUUID ?? UUID(),
             conversationID: conversationID,
             sequenceNumber: sequenceNumber,
-            flags: MeshPacketFlags(raw: flagsByte),
+            flags: flags,
             relayHistory: relayHistory,
-            textPayload: textPayload
+            textPayload: textPayload,
+            isEncrypted: flags.isEncrypted
         )
     }
     

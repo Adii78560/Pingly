@@ -168,7 +168,6 @@ final class LocationShareManager: ObservableObject {
             senderName: localName
         )
         
-        AppLogger.location.info("[LocationRequest] Transmitted LOCATION_REQUEST to '\(displayName)' (\(remotePeerID))")
     }
     
     /// 2. Respond to Location Request (Accept/Deny)
@@ -226,7 +225,6 @@ final class LocationShareManager: ObservableObject {
                 senderName: localName
             )
         }
-        AppLogger.location.info("[LocationResponse] Transmitted LOCATION_RESPONSE accept=\(accept) to '\(displayName)'")
     }
     
     /// 3. Share My Location: Enables continuous location sharing for local user with target peer
@@ -253,7 +251,6 @@ final class LocationShareManager: ObservableObject {
         
         // Immediate single coordinate broadcast snapshot
         broadcastCurrentLocationSnapshot(to: remotePeerID)
-        AppLogger.location.info("[LocationShare] Started continuous location sharing with '\(displayName)' (\(remotePeerID))")
     }
     
     /// 4. Stop Sharing Location: Halts location updates and transmits LOCATION_SHARING_STOPPED packet
@@ -301,7 +298,6 @@ final class LocationShareManager: ObservableObject {
         if !activeSessions.values.contains(where: { $0.isSharingLocal && $0.isActive }) {
             LocationService.shared.stopSharingLocation()
         }
-        AppLogger.location.info("[LocationShare] Stopped location sharing with '\(displayName)'")
     }
     
     /// 5. Privacy-Preserving Relative Position Mode: Transmits ONLY relative vector data (zero raw GPS coordinates)
@@ -313,7 +309,6 @@ final class LocationShareManager: ObservableObject {
               let lat = session.lastRemoteLatitude,
               let lon = session.lastRemoteLongitude,
               let relInfo = LocationService.shared.relativeBearing(toLat: lat, lon: lon) else {
-            AppLogger.location.warning("[RelativePosition] Cannot compute relative vector without target location for \(displayName)")
             return
         }
         
@@ -346,7 +341,6 @@ final class LocationShareManager: ObservableObject {
             senderID: localNodeID,
             senderName: localName
         )
-        AppLogger.location.info("[RelativePosition] Transmitted privacy-preserving relative vector to '\(displayName)'")
     }
     
     /// 6. Permission Revocation Hygiene: Halts all local sharing sessions when CoreLocation permission is revoked
@@ -356,7 +350,6 @@ final class LocationShareManager: ObservableObject {
             stopSharingLocation(with: session.remotePeerID, displayName: session.remoteDisplayName)
         }
         LocationService.shared.stopSharingLocation()
-        AppLogger.location.warning("[LocationShare] Revoked all local location sharing sessions: \(reason)")
     }
     
     // MARK: - Incoming Mesh Protocol Packet Processing
@@ -367,7 +360,6 @@ final class LocationShareManager: ObservableObject {
             return
         }
         
-        AppLogger.location.info("[LocationPacket] Received '\(packet.type)' from '\(packet.senderName)' (\(packet.senderID))")
         
         let localNodeID = NodeIdentity.shared.nodeID
         
@@ -419,7 +411,6 @@ final class LocationShareManager: ObservableObject {
         case "LOCATION_UPDATE":
             guard let lat = packet.latitude, let lon = packet.longitude,
                   lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 else {
-                AppLogger.location.error("[LocationPacket] Rejected invalid coordinate values lat=\(packet.latitude ?? 0), lon=\(packet.longitude ?? 0)")
                 return
             }
             
@@ -428,7 +419,6 @@ final class LocationShareManager: ObservableObject {
             if let seq = packet.sequenceNumber {
                 if let lastSeq = session?.lastRemoteSequenceNumber {
                     if seq <= lastSeq {
-                        AppLogger.location.warning("[LocationPacket] Rejected out-of-order LOCATION_UPDATE seq=\(seq) <= lastRemoteSeq=\(lastSeq)")
                         return
                     }
                 }
@@ -556,7 +546,6 @@ final class LocationShareManager: ObservableObject {
                 senderID: localNodeID,
                 senderName: localName
             )
-            AppLogger.location.info("[LocationRequest] Request to '\(session.remoteDisplayName)' expired")
         }
         if expiredAny {
             flushDirtySessions()
@@ -592,8 +581,18 @@ final class LocationShareManager: ObservableObject {
         }
     }
     
+    public func evaluateBroadcastTimer() {
+        if !MultipeerService.shared.connectedPeers.isEmpty && broadcastTimer == nil {
+            startPeriodicBroadcastTimer(interval: currentBroadcastInterval)
+        }
+    }
+    
     private func startPeriodicBroadcastTimer(interval: TimeInterval = 10.0) {
         broadcastTimer?.invalidate()
+        if MultipeerService.shared.connectedPeers.isEmpty {
+            broadcastTimer = nil
+            return
+        }
         currentBroadcastInterval = interval
         broadcastTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             self?.broadcastLocationToActiveSessions()
@@ -605,7 +604,6 @@ final class LocationShareManager: ObservableObject {
         if let lastCoord = lastBroadcastCoordinate {
             let dist = OfflineNavigationService.shared.calculateDistance(from: lastCoord, to: newCoord)
             if dist >= 15.0 {
-                AppLogger.location.info("[AdaptiveBroadcast] Movement threshold exceeded (\(dist)m >= 15m), triggering instant broadcast")
                 broadcastLocationToActiveSessions()
                 return
             }
@@ -614,7 +612,6 @@ final class LocationShareManager: ObservableObject {
         if let lastHead = lastBroadcastHeading, let currentHead = newHeading, let spd = speed, spd > 0.5 {
             let angleDiff = abs(CircularAngleHelper.shortestAngularDifference(from: lastHead, to: currentHead))
             if angleDiff >= 30.0 {
-                AppLogger.location.info("[AdaptiveBroadcast] Heading shift threshold exceeded (\(angleDiff)° >= 30°), triggering instant broadcast")
                 broadcastLocationToActiveSessions()
                 return
             }
@@ -754,7 +751,6 @@ final class LocationShareManager: ObservableObject {
             MultipeerService.shared.broadcast(message: msg)
         } else {
             if packet.type == "LOCATION_UPDATE" {
-                AppLogger.location.info("[LocationShare] Discarding ephemeral LOCATION_UPDATE for offline peer \(destinationID)")
                 return
             }
             // Queue control event for durable offline delivery
@@ -774,10 +770,9 @@ final class LocationShareManager: ObservableObject {
                     queueRoleRaw: "ORIGIN",
                     hopsCount: 0,
                     ttl: Constants.Mesh.maxMeshHops,
-                    messageTypeRaw: P2PMessageType.location.rawValue
+                    messageTypeRaw: packet.type == "LOCATION_UPDATE" ? "LOCATION_UPDATE" : P2PMessageType.location.rawValue
                 )
             }
-            AppLogger.location.info("[LocationShare] Queued control event '\(packet.type)' for offline peer \(destinationID)")
         }
     }
     

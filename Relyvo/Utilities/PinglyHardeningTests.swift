@@ -28,10 +28,8 @@ final class RelaynHardeningTests {
         func assert(_ condition: Bool, _ message: String) {
             if condition {
                 passed += 1
-                AppLogger.multipeer.info("TEST PASSED: \(message)")
             } else {
                 failed += 1
-                AppLogger.multipeer.error("TEST FAILED: \(message)")
             }
         }
         

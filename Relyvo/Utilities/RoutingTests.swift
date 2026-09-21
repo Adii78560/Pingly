@@ -15,15 +15,12 @@ final class RoutingTests {
     private func assert(_ condition: Bool, _ message: String) {
         if condition {
             passed += 1
-            print("✅ PASS: \(message)")
         } else {
             failed += 1
-            print("❌ FAIL: \(message)")
         }
     }
     
     func runAllTests() async -> (passed: Int, failed: Int) {
-        print("=== STARTING ROUTING ENGINE VERIFICATION ===")
         passed = 0
         failed = 0
         
@@ -47,12 +44,9 @@ final class RoutingTests {
             try tearDown()
             
         } catch {
-            print("❌ FATAL: Test harness failed to set up: \\(error)")
             failed += 1
         }
         
-        print("=== ROUTING ENGINE VERIFICATION COMPLETE ===")
-        print("Passed: \(passed), Failed: \(failed)")
         return (passed, failed)
     }
     
@@ -309,7 +303,6 @@ final class RoutingTests {
     func testMonacoSmokeTest() async {
         let monacoURL = URL(fileURLWithPath: "/Users/adityarai/Desktop/Pingly/RoutingPipeline/monaco.rgraph.sqlite")
         guard FileManager.default.fileExists(atPath: monacoURL.path) else {
-            print("⚠️ SKIP: Monaco test DB not found locally.")
             return
         }
         

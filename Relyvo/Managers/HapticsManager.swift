@@ -16,67 +16,86 @@ final class HapticsManager {
     // MARK: - Impact Feedback Generators
     
     func lightImpact() {
+        #if !targetEnvironment(simulator)
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.prepare()
         generator.impactOccurred()
+        #endif
     }
     
     func mediumImpact() {
+        #if !targetEnvironment(simulator)
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.prepare()
         generator.impactOccurred()
+        #endif
     }
     
     func heavyImpact() {
+        #if !targetEnvironment(simulator)
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.prepare()
         generator.impactOccurred()
+        #endif
     }
     
     func rigidImpact() {
+        #if !targetEnvironment(simulator)
         let generator = UIImpactFeedbackGenerator(style: .rigid)
         generator.prepare()
         generator.impactOccurred()
+        #endif
     }
     
     func softImpact() {
+        #if !targetEnvironment(simulator)
         let generator = UIImpactFeedbackGenerator(style: .soft)
         generator.prepare()
         generator.impactOccurred()
+        #endif
     }
     
     // MARK: - Selection Feedback
     
     func selectionFeedback() {
+        #if !targetEnvironment(simulator)
         let generator = UISelectionFeedbackGenerator()
         generator.prepare()
         generator.selectionChanged()
+        #endif
     }
     
     // MARK: - Notification Feedback
     
     func successFeedback() {
+        #if !targetEnvironment(simulator)
         let generator = UINotificationFeedbackGenerator()
         generator.prepare()
         generator.notificationOccurred(.success)
+        #endif
     }
     
     func warningFeedback() {
+        #if !targetEnvironment(simulator)
         let generator = UINotificationFeedbackGenerator()
         generator.prepare()
         generator.notificationOccurred(.warning)
+        #endif
     }
     
     func errorFeedback() {
+        #if !targetEnvironment(simulator)
         let generator = UINotificationFeedbackGenerator()
         generator.prepare()
         generator.notificationOccurred(.error)
+        #endif
     }
     
     // MARK: - Tactical Heartbeat Pulse Pattern (Lub-Dub)
     
     /// Triggers a double-pulse heartbeat pattern (light tap followed by medium tap)
     func heartbeatPulse() {
+        #if !targetEnvironment(simulator)
         let generator1 = UIImpactFeedbackGenerator(style: .light)
         generator1.prepare()
         generator1.impactOccurred()
@@ -86,6 +105,7 @@ final class HapticsManager {
             generator2.prepare()
             generator2.impactOccurred()
         }
+        #endif
     }
 }
 

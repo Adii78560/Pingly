@@ -12,17 +12,14 @@ public final class RouteProgressTests {
     private func assert(_ condition: Bool, _ message: String) {
         if condition {
             passed += 1
-            print("✅ PASS: \(message)")
         } else {
             failed += 1
-            print("❌ FAIL: \(message)")
         }
     }
     
     public func runAllTests() async -> (passed: Int, failed: Int) {
         passed = 0
         failed = 0
-        print("=== STARTING ROUTE PROGRESS VERIFICATION ===")
         
         await testProjectionMidpoint()
         await testProjectionEndpoint()
@@ -34,8 +31,6 @@ public final class RouteProgressTests {
         await testArrivalDetection()
         await testMonacoSmokeTest()
         
-        print("=== ROUTE PROGRESS VERIFICATION COMPLETE ===")
-        print("Passed: \(passed), Failed: \(failed)")
         return (passed, failed)
     }
     
@@ -217,7 +212,6 @@ public final class RouteProgressTests {
     private func testMonacoSmokeTest() async {
         let monacoURL = URL(fileURLWithPath: "/Users/adityarai/Desktop/Pingly/RoutingPipeline/monaco.rgraph.sqlite")
         guard FileManager.default.fileExists(atPath: monacoURL.path) else {
-            print("⚠️ SKIP: Monaco test DB not found locally.")
             return
         }
         
@@ -243,7 +237,6 @@ public final class RouteProgressTests {
                 assert(m.type != .start, "MonacoProgress: Extracted a valid upcoming maneuver")
             }
         } catch RoutingError.noRouteFound {
-            print("⚠️ MonacoProgress: noRouteFound for selected coordinates, engine correctly returned error.")
         } catch {
             assert(false, "MonacoProgress: Failed \(error)")
         }

@@ -19,10 +19,8 @@ final class FriendProtocolTests {
         for (name, test) in tests {
             let result = test()
             if result {
-                print("✅ \(name) passed")
                 passed += 1
             } else {
-                print("❌ \(name) failed")
                 failed += 1
             }
         }
