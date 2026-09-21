@@ -19,9 +19,11 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var currentCoordinate: CLLocationCoordinate2D?
     @Published private(set) var currentAltitude: Double?
     @Published private(set) var currentAccuracy: Double?
+    @Published private(set) var currentSpeed: Double?
+    @Published private(set) var currentCourse: Double?
     @Published private(set) var currentHeading: Double?
-    @Published private(set) var rawHeading: Double?
-    @Published private(set) var continuousHeading: Double = 0.0
+    @Published private(set) var previousRawHeading: Double?
+    @Published private(set) var smoothedHeading: Double = 0.0
     @Published private(set) var headingAccuracy: Double = 0.0
     @Published private(set) var lastLocationTimestamp: Date?
     @Published private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
@@ -39,9 +41,34 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 5 // Update every 5 meters for relative location screen
-        locationManager.headingFilter = 2 // Update every 2 degrees for smooth compass rotation
-        self.authorizationStatus = locationManager.authorizationStatus
+        locationManager.distanceFilter = 5 // Update every 5 meters for relative location & navigation
+        locationManager.headingFilter = kCLHeadingFilterNone // Real-time hardware stream
+        locationManager.headingOrientation = .portrait
+        locationManager.pausesLocationUpdatesAutomatically = false
+        
+        // Configure background location updates if bundle declares location background mode
+        let backgroundModes = Bundle.main.infoDictionary?["UIBackgroundModes"] as? [String] ?? []
+        if backgroundModes.contains("location") {
+            locationManager.allowsBackgroundLocationUpdates = true
+            locationManager.showsBackgroundLocationIndicator = true
+        }
+        
+        // authorizationStatus is evaluated via delegate callbacks to prevent main thread warnings
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+    
+    @objc private func appDidEnterBackground() {
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = 50.0
+        AppLogger.location.info("[LOCATION_POWER] Throttled GPS accuracy for background battery conservation.")
+    }
+    
+    @objc private func appWillEnterForeground() {
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 5.0
+        AppLogger.location.info("[LOCATION_POWER] Restored high-precision GPS tracking in foreground.")
     }
     
     // MARK: - Permission Handling
@@ -70,17 +97,22 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     // MARK: - Location & Compass Heading Lifecycle
     
     func startUpdatingHeading() {
+#if targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            self.currentHeading = 0.0
+            self.previousRawHeading = nil
+            self.smoothedHeading = 0.0
+            self.headingAccuracy = 5.0
+        }
+#endif
         guard CLLocationManager.headingAvailable() else {
-            AppLogger.location.warning("Compass CLHeading unavailable on device.")
             return
         }
         locationManager.startUpdatingHeading()
-        AppLogger.location.info("[Compass] Started CLHeading compass updates.")
     }
     
     func stopUpdatingHeading() {
         locationManager.stopUpdatingHeading()
-        AppLogger.location.info("[Compass] Stopped CLHeading compass updates.")
     }
     
     func startSharingLocation() {
@@ -98,7 +130,6 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             self.isSharingLocation = true
             locationManager.startUpdatingLocation()
             startUpdatingHeading()
-            AppLogger.location.info("Started offline GPS location & heading updates.")
         } else {
             requestLocationPermission()
         }
@@ -109,11 +140,23 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         self.isSharingLocation = false
         locationManager.stopUpdatingLocation()
         stopUpdatingHeading()
-        AppLogger.location.info("Stopped location & heading updates.")
     }
     
     /// One-shot offline GPS coordinate snapshot for immediate location sharing
     func getCurrentLocationSnapshot(completion: @escaping (CLLocation?) -> Void) {
+#if targetEnvironment(simulator)
+        if locationManager.location == nil {
+            let mockLoc = CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                altitude: 10.0,
+                horizontalAccuracy: 5.0,
+                verticalAccuracy: 5.0,
+                timestamp: Date()
+            )
+            completion(mockLoc)
+            return
+        }
+#endif
         if let location = locationManager.location, Date().timeIntervalSince(location.timestamp) < 30 {
             completion(location)
             return
@@ -138,7 +181,6 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         peerLocationsLock.lock()
         peerLocations[nodeID] = location
         peerLocationsLock.unlock()
-        AppLogger.location.info("[PEER_LOCATION_UPDATE] nodeID=\(nodeID.uuidString) lat=\(location.coordinate.latitude) lon=\(location.coordinate.longitude)")
     }
     
     /// Retrieves cached coordinate for a remote peer node.
@@ -203,7 +245,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         return (distanceFormatted, bearingDirection)
     }
     
-    private func calculateBearing(from source: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) -> Double {
+    public func calculateBearing(from source: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) -> Double {
         let lat1 = source.latitude * .pi / 180.0
         let lon1 = source.longitude * .pi / 180.0
         let lat2 = destination.latitude * .pi / 180.0
@@ -230,13 +272,6 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             self.authorizationStatus = manager.authorizationStatus
             let isAuthorized = (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways)
             let accuracyAuth = manager.accuracyAuthorization.rawValue
-            AppLogger.location.info("""
-            [DIAG_LOC_AUTH]
-            status=\(manager.authorizationStatus.rawValue)
-            isAuthorized=\(isAuthorized)
-            accuracyAuth=\(accuracyAuth)
-            """)
-            AppLogger.location.info("Location authorization changed: \(manager.authorizationStatus.rawValue)")
             if isAuthorized {
                 if self.isSharingLocation {
                     manager.startUpdatingLocation()
@@ -255,55 +290,52 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         let accuracy = newHeading.headingAccuracy
         
         DispatchQueue.main.async {
-            let previousRaw = self.rawHeading ?? raw
-            self.rawHeading = raw
-            self.currentHeading = raw
+            if self.previousRawHeading == nil {
+                self.previousRawHeading = raw
+                self.smoothedHeading = raw
+            }
+            
             self.headingAccuracy = accuracy
             
-            let delta = CircularAngleHelper.shortestAngularDifference(from: previousRaw, to: raw)
+            // Calculate shortest delta between [-180, 180]
+            var delta = raw - (self.previousRawHeading ?? raw)
+            delta = (delta + 540).truncatingRemainder(dividingBy: 360) - 180
             
-            // Adaptive Accuracy Filtering Strategy:
-            // accuracy <= 20°: Full update
-            // 20° < accuracy <= 35°: Damped update (0.4)
-            // accuracy > 35°: Heavily damped (0.1)
-            let dampingFactor: Double
-            if accuracy <= 20.0 {
-                dampingFactor = 1.0
-            } else if accuracy <= 35.0 {
-                dampingFactor = 0.4
+            // Dynamic Alpha: Instant tracking for intentional turns, gentle damping for micro-jitter
+            let absDelta = abs(delta)
+            let dynamicAlpha: Double
+            if absDelta > 15.0 {
+                dynamicAlpha = 0.90 // Fast flick/turn: snap instantly with 0 lag
+            } else if absDelta > 5.0 {
+                dynamicAlpha = 0.65 // Normal body turning: responsive and smooth
             } else {
-                dampingFactor = 0.1
+                dynamicAlpha = 0.25 // Holding still: damp sensor jitter & noise
             }
             
-            let applyDelta = delta * dampingFactor
-            self.continuousHeading += applyDelta
+            self.smoothedHeading = (self.smoothedHeading + (delta * dynamicAlpha)).truncatingRemainder(dividingBy: 360)
+            if self.smoothedHeading < 0 { self.smoothedHeading += 360 }
             
-            // Throttled logging: Only log on North boundary crossing or delta >= 2.0°
-            let crossedNorth = (previousRaw >= 350.0 && raw <= 10.0) || (previousRaw <= 10.0 && raw >= 350.0)
-            if crossedNorth {
-                AppLogger.location.info("[Compass] North boundary crossing handled: raw=\(raw)°, previousRaw=\(previousRaw)°, delta=\(delta)°, continuous=\(self.continuousHeading)°")
-            } else if abs(delta) >= 2.0 {
-                AppLogger.location.info("[Compass] Heading update: raw=\(raw)°, continuous=\(self.continuousHeading)°, accuracy=\(accuracy)°, delta=\(delta)°")
-            }
+            self.previousRawHeading = raw
+            self.currentHeading = self.smoothedHeading
         }
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         let age = Date().timeIntervalSince(location.timestamp)
-        AppLogger.location.info("""
-        [DIAG_LOC_UPDATE]
-        lat=\(location.coordinate.latitude)
-        lon=\(location.coordinate.longitude)
-        alt=\(location.altitude)
-        accuracy=\(location.horizontalAccuracy)
-        age=\(age)s
-        """)
         DispatchQueue.main.async {
             self.currentCoordinate = location.coordinate
             self.currentAltitude = location.altitude
             self.currentAccuracy = location.horizontalAccuracy
+            self.currentSpeed = location.speed >= 0 ? location.speed : nil
+            self.currentCourse = location.course >= 0 ? location.course : nil
             self.lastLocationTimestamp = location.timestamp
+            
+            LocationShareManager.shared.checkUrgentMovementTrigger(
+                newCoord: location.coordinate,
+                newHeading: self.currentHeading,
+                speed: self.currentSpeed
+            )
             
             if let completion = self.oneShotCompletion {
                 completion(location)
@@ -313,8 +345,6 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        AppLogger.location.error("[DIAG_LOC_ERROR] error=\(error.localizedDescription)")
-        AppLogger.location.error("Location manager didFailWithError: \(error.localizedDescription)")
         if let completion = self.oneShotCompletion {
             completion(locationManager.location)
             self.oneShotCompletion = nil

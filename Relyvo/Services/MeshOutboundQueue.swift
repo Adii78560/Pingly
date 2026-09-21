@@ -15,8 +15,11 @@ import os
 // MARK: - Packet Priority
 
 enum MeshPacketPriority: Int, Comparable {
-    case low = 0       // Chat text, voice transcripts, heartbeats, channel sync announcements
-    case high = 1      // PTT audio frames, PTT floor control signals, SOS emergency alerts
+    case bulk = 0
+    case normal = 1
+    case realtime = 2
+    case high = 3
+    case critical = 4
     
     static func < (lhs: MeshPacketPriority, rhs: MeshPacketPriority) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -78,41 +81,33 @@ final class MeshOutboundQueue {
             
             // Flow Control / Backpressure Check
             if queue.count >= Self.maxQueuePerPeer {
-                // Drop policy: drop oldest low-priority packet first; if none, drop oldest voice/item
-                if let lowPriorityIndex = queue.firstIndex(where: { $0.priority == .low }) {
-                    let dropped = queue.remove(at: lowPriorityIndex)
-                    AppLogger.multipeer.warning("""
-                    [BACKPRESSURE_DROP]
-                    peer=\(peer.displayName)
-                    droppedID=\(dropped.id.uuidString)
-                    priority=LOW
-                    tag=\(dropped.descriptionTag)
-                    queueSize=\(queue.count)/\(Self.maxQueuePerPeer)
-                    reason=QUEUE_SATURATION_DROP_LOW_PRIORITY
-                    """)
+                // Drop policy: drop bulk -> realtime -> normal -> high -> critical
+                if let bulkIndex = queue.firstIndex(where: { $0.priority == .bulk }) {
+                    let dropped = queue.remove(at: bulkIndex)
+                    AppLogger.multipeer.warning("Drop: BULK \(dropped.id.uuidString)")
+                    RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+                } else if let realtimeIndex = queue.firstIndex(where: { $0.priority == .realtime }) {
+                    let dropped = queue.remove(at: realtimeIndex)
+                    AppLogger.multipeer.warning("Drop: REALTIME \(dropped.id.uuidString)")
+                    RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+                } else if let normalIndex = queue.firstIndex(where: { $0.priority == .normal }) {
+                    let dropped = queue.remove(at: normalIndex)
+                    AppLogger.multipeer.warning("Drop: NORMAL \(dropped.id.uuidString)")
+                    RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
+                } else if let highIndex = queue.firstIndex(where: { $0.priority == .high }) {
+                    let dropped = queue.remove(at: highIndex)
+                    AppLogger.multipeer.warning("Drop: HIGH \(dropped.id.uuidString)")
                     RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
                 } else {
                     let dropped = queue.removeFirst()
-                    AppLogger.multipeer.warning("""
-                    [BACKPRESSURE_DROP]
-                    peer=\(peer.displayName)
-                    droppedID=\(dropped.id.uuidString)
-                    priority=HIGH
-                    tag=\(dropped.descriptionTag)
-                    queueSize=\(queue.count)/\(Self.maxQueuePerPeer)
-                    reason=QUEUE_SATURATION_DROP_OLDEST
-                    """)
+                    AppLogger.multipeer.warning("Drop: CRITICAL \(dropped.id.uuidString)")
                     RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
                 }
             }
             
-            // High priority items are inserted ahead of low priority items
-            if priority == .high {
-                if let firstLowIndex = queue.firstIndex(where: { $0.priority == .low }) {
-                    queue.insert(item, at: firstLowIndex)
-                } else {
-                    queue.append(item)
-                }
+            // High priority items are inserted ahead of lower priority items
+            if let insertIndex = queue.firstIndex(where: { $0.priority < priority }) {
+                queue.insert(item, at: insertIndex)
             } else {
                 queue.append(item)
             }
@@ -122,7 +117,7 @@ final class MeshOutboundQueue {
             AppLogger.multipeer.info("""
             [DIAG_QUEUE_ENQUEUE]
             packetID=\(packetID.uuidString.prefix(8))
-            priority=\(priority == .high ? "HIGH" : "LOW")
+            priority=\(priority.rawValue)
             targetPeer=\(peer.displayName)
             queueDepth=\(queue.count)
             isReliable=\(isReliable)

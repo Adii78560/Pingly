@@ -42,6 +42,17 @@ enum MeshPacketType: UInt8 {
     case text           = 0x04   // Chat or transcript text payload
     case ack            = 0x05   // Delivery acknowledgement
     case location       = 0x06   // Location sharing payload
+    case sessionReady   = 0x07   // Handshake completion signal
+    
+    // Friend Protocol
+    case friendRequest  = 0x08
+    case friendAccept   = 0x09
+    case friendDecline  = 0x0A
+    
+    // Channel Protocol
+    case channelInvite  = 0x0B
+    case channelAccept  = 0x0C
+    case channelDecline = 0x0D
     
     /// Maps from the semantic P2PMessageType used by the Message model.
     static func from(_ type: P2PMessageType) -> MeshPacketType {
@@ -57,6 +68,13 @@ enum MeshPacketType: UInt8 {
         case .locationExpired:         return .location
         case .relativePosition:        return .location
         case .channelSync:             return .channelPing
+        case .sessionReady:            return .sessionReady
+        case .friendRequest:           return .friendRequest
+        case .friendAccept:            return .friendAccept
+        case .friendDecline:           return .friendDecline
+        case .channelInvite:           return .channelInvite
+        case .channelAccept:           return .channelAccept
+        case .channelDecline:          return .channelDecline
         }
     }
     
@@ -69,6 +87,13 @@ enum MeshPacketType: UInt8 {
         case .text:           return .chat
         case .ack:            return .ack
         case .location:       return .location
+        case .sessionReady:   return .sessionReady
+        case .friendRequest:  return .friendRequest
+        case .friendAccept:   return .friendAccept
+        case .friendDecline:  return .friendDecline
+        case .channelInvite:  return .channelInvite
+        case .channelAccept:  return .channelAccept
+        case .channelDecline: return .channelDecline
         }
     }
 }
@@ -117,6 +142,7 @@ struct MeshPacketFlags {
     var isChannelBroadcast: Bool
     var isRelayHop: Bool
     var isEOT: Bool  // Bit 3: End of Transmission signal
+    var isEncrypted: Bool // Bit 4: AES-GCM Encrypted payload
     
     var rawValue: UInt8 {
         var v: UInt8 = 0
@@ -124,6 +150,7 @@ struct MeshPacketFlags {
         if isChannelBroadcast { v |= 0x02 }
         if isRelayHop         { v |= 0x04 }
         if isEOT              { v |= 0x08 }
+        if isEncrypted        { v |= 0x10 }
         return v
     }
     
@@ -132,19 +159,21 @@ struct MeshPacketFlags {
         isChannelBroadcast = (raw & 0x02) != 0
         isRelayHop         = (raw & 0x04) != 0
         isEOT              = (raw & 0x08) != 0
+        isEncrypted        = (raw & 0x10) != 0
     }
     
-    init(isSOS: Bool = false, isChannelBroadcast: Bool = false, isRelayHop: Bool = false, isEOT: Bool = false) {
+    init(isSOS: Bool = false, isChannelBroadcast: Bool = false, isRelayHop: Bool = false, isEOT: Bool = false, isEncrypted: Bool = false) {
         self.isSOS              = isSOS
         self.isChannelBroadcast = isChannelBroadcast
         self.isRelayHop         = isRelayHop
         self.isEOT              = isEOT
+        self.isEncrypted        = isEncrypted
     }
 }
 
 // MARK: - Decode Error
 
-enum MeshPacketDecodeError: Error, LocalizedError {
+enum MeshPacketError: Error, LocalizedError {
     case tooShort(got: Int, need: Int)
     case badMagicBytes(byte0: UInt8, byte1: UInt8)
     case unknownPacketType(UInt8)
@@ -186,12 +215,25 @@ struct MeshPacket {
     let originUUID: UUID
     let destinationUUID: UUID?    // nil means BROADCAST
     let messageID: UUID
-    let sequenceNumber: UInt16    // Monotonic packet sequence counter (bytes 60..61)
+    let conversationID: UUID?     // v3: conversationID
+    let sequenceNumber: UInt16    // Monotonic packet sequence counter
     let flags: MeshPacketFlags
-    let textPayload: String       // UTF-8 decoded payload (empty for channelPing)
+    let relayHistory: [UUID]      // v3: bounded relay traversal
+    let textPayload: String       // UTF-8 decoded payload (empty for channelPing, or raw ciphertext if encrypted)
+    let isEncrypted: Bool         // Derived from flags for convenience
     
     // Convenience: raw wire size this packet represents
-    var wireSize: Int { MeshPacketHeader.headerSize + textPayload.utf8.count }
+    var wireSize: Int { 
+        let baseSize: Int
+        if version >= 0x03 {
+            baseSize = MeshPacketHeader.fixedHeaderSizeV3 + (relayHistory.count * 16) + textPayload.utf8.count
+        } else {
+            baseSize = MeshPacketHeader.fixedHeaderSizeV2 + textPayload.utf8.count
+        }
+        // Account for AES-GCM overhead: 12-byte nonce + 16-byte tag (already included if textPayload holds raw bytes via String proxy)
+        // Actually, textPayload contains the raw bytes during silent relay, so we don't strictly need to add +28 here if it's already counted in textPayload.count.
+        return baseSize
+    }
     
     static let broadcastUUID = UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
 }
@@ -202,7 +244,8 @@ enum MeshPacketHeader {
     
     static let magicByte0: UInt8 = 0x52   // 'R'
     static let magicByte1: UInt8 = 0x45   // 'E'
-    static let headerSize: Int = 62
+    static let fixedHeaderSizeV2: Int = 62
+    static let fixedHeaderSizeV3: Int = 79
     static let maxCustomChannelPrefixBytes: Int = 32
     
     // MARK: Encode: Message → Data
@@ -214,7 +257,7 @@ enum MeshPacketHeader {
     ///   Binary: 62 bytes header + payload (payload = text.utf8.count, no field name overhead)
     ///
     /// Reduction: ~70-80% for short text messages, up to ~50% for longer transcript payloads.
-    static func encode(_ message: Message, sequenceNumber: UInt16 = 0, isEOT: Bool = false) -> Data {
+    static func encode(_ message: Message, sequenceNumber: UInt16 = 0, isEOT: Bool = false, relayHistory: [UUID] = [], isEncrypted: Bool = false, encryptedPayload: Data? = nil) throws -> Data {
         let channelByte = MeshChannelByte.from(channelID: message.channelID)
         let isChannelBroadcast = message.channelID != nil && !message.channelID!.isEmpty
         let isRelayHop = message.hopsCount > 0
@@ -222,27 +265,38 @@ enum MeshPacketHeader {
             isSOS: message.isSOS,
             isChannelBroadcast: isChannelBroadcast,
             isRelayHop: isRelayHop,
-            isEOT: isEOT
+            isEOT: isEOT,
+            isEncrypted: isEncrypted
         )
         
         // Build payload: for custom channels, prefix payload with 1-byte length + channel name UTF-8
         var payloadData = Data()
         if channelByte == .custom, let cid = message.channelID,
-           let cidBytes = cid.data(using: .utf8), cidBytes.count <= maxCustomChannelPrefixBytes {
+           let cidBytes = cid.data(using: .utf8) {
+            guard cidBytes.count <= maxCustomChannelPrefixBytes else {
+                throw MeshPacketError.customChannelPrefixOverflow(got: cidBytes.count, max: maxCustomChannelPrefixBytes)
+            }
             var cidLen = UInt8(cidBytes.count)
             payloadData.append(&cidLen, count: 1)
             payloadData.append(cidBytes)
         }
-        let textBytes = message.text.data(using: .utf8) ?? Data()
-        payloadData.append(textBytes)
         
-        var data = Data(capacity: headerSize + payloadData.count)
+        if let encryptedPayload = encryptedPayload, isEncrypted {
+            payloadData.append(encryptedPayload)
+        } else {
+            let textBytes = message.text.data(using: .utf8) ?? Data()
+            payloadData.append(textBytes)
+        }
+        
+        let boundedHistory = Array(relayHistory.prefix(Int(Constants.Emergency.broadcastTTL)))
+        let expectedTotalSize = fixedHeaderSizeV3 + (boundedHistory.count * 16) + payloadData.count
+        var data = Data(capacity: expectedTotalSize)
         
         // Magic bytes (0..1)
         data.append(magicByte0)
         data.append(magicByte1)
         // Protocol version (2)
-        data.append(UInt8(message.protocolVersion))
+        data.append(0x03) // Force v3 for outgoing
         // Packet type (3)
         data.append(MeshPacketType.from(message.type).rawValue)
         // Channel byte (4)
@@ -250,48 +304,58 @@ enum MeshPacketHeader {
         // Hop count & TTL (5..6)
         data.append(UInt8(min(message.hopsCount, 255)))
         data.append(UInt8(min(message.ttl, 255)))
-        // Origin UUID (7..22, 16 raw bytes)
+        // Origin UUID (7..22)
         data.append(uuidToData(UUID(uuidString: message.originID) ?? UUID()))
-        // Destination UUID (23..38, 16 raw bytes; all-zero = BROADCAST)
+        // Destination UUID (23..38)
         if message.destinationID == "BROADCAST" {
             data.append(Data(count: 16))
         } else {
             data.append(uuidToData(UUID(uuidString: message.destinationID) ?? UUID()))
         }
-        // Message ID UUID (39..54, 16 raw bytes)
+        // Message ID (39..54)
         data.append(uuidToData(message.id))
-        // Payload length (55..58, UInt32 big-endian)
+        // Conversation ID (55..70)
+        data.append(uuidToData(message.conversationID))
+        // Payload length (71..74)
         let payloadLen = UInt32(payloadData.count).bigEndian
         withUnsafeBytes(of: payloadLen) { data.append(contentsOf: $0) }
-        // Flags byte (59)
+        // Flags byte (75)
         data.append(flags.rawValue)
-        // Monotonic sequence counter (60..61, UInt16 big-endian)
+        // Sequence counter (76..77)
         let seqBE = sequenceNumber.bigEndian
         withUnsafeBytes(of: seqBE) { data.append(contentsOf: $0) }
+        // Relay history count (78)
+        data.append(UInt8(boundedHistory.count))
+        // Relay history UUIDs (79...)
+        for nodeUUID in boundedHistory {
+            data.append(uuidToData(nodeUUID))
+        }
+        
         // Payload
         data.append(payloadData)
         
-        assert(data.count == headerSize + payloadData.count,
-               "MeshPacketHeader encode size mismatch: \(data.count) vs \(headerSize + payloadData.count)")
+        assert(data.count == expectedTotalSize,
+               "MeshPacketHeader encode size mismatch: \(data.count) vs \(expectedTotalSize)")
         return data
     }
     
     // MARK: Decode: Data → MeshPacket
     
     /// Decodes compact binary wire format back to a `MeshPacket`.
-    /// Throws `MeshPacketDecodeError` on any structural violation.
+    /// Throws `MeshPacketError` on any structural violation.
     static func decode(from data: Data) throws -> MeshPacket {
-        guard data.count >= headerSize else {
-            throw MeshPacketDecodeError.tooShort(got: data.count, need: headerSize)
+        guard data.count >= fixedHeaderSizeV2 else {
+            throw MeshPacketError.tooShort(got: data.count, need: fixedHeaderSizeV2)
         }
         guard data[0] == magicByte0, data[1] == magicByte1 else {
-            throw MeshPacketDecodeError.badMagicBytes(byte0: data[0], byte1: data[1])
+            throw MeshPacketError.badMagicBytes(byte0: data[0], byte1: data[1])
         }
         
         let version = data[2]
+        
         let typeRaw = data[3]
         guard let packetType = MeshPacketType(rawValue: typeRaw) else {
-            throw MeshPacketDecodeError.unknownPacketType(typeRaw)
+            throw MeshPacketError.unknownPacketType(typeRaw)
         }
         let channelByteRaw = data[4]
         let channelByte = MeshChannelByte(rawValue: channelByteRaw) ?? .custom
@@ -302,21 +366,54 @@ enum MeshPacketHeader {
         let destRaw     = data.subdata(in: 23..<39)
         let messageUUID = dataToUUID(data.subdata(in: 39..<55))
         
-        let payloadLenBE = data.subdata(in: 55..<59).withUnsafeBytes { $0.load(as: UInt32.self) }
-        let payloadLen = Int(UInt32(bigEndian: payloadLenBE))
-        let flagsByte = data[59]
+        // Handle version differences
+        let conversationID: UUID?
+        let payloadLen: Int
+        let flagsByte: UInt8
+        let sequenceNumber: UInt16
+        var relayHistory: [UUID] = []
+        var payloadOffset: Int
         
-        // Sequence number in bytes 60..61 (UInt16 big-endian)
-        let seqBE = data.subdata(in: 60..<62).withUnsafeBytes { $0.load(as: UInt16.self) }
-        let sequenceNumber = UInt16(bigEndian: seqBE)
-        
-        // Validate payload bounds
-        let expectedTotal = headerSize + payloadLen
-        guard data.count >= expectedTotal else {
-            throw MeshPacketDecodeError.payloadLengthMismatch(declared: payloadLen, available: data.count - headerSize)
+        if version >= 0x03 {
+            guard data.count >= fixedHeaderSizeV3 else {
+                throw MeshPacketError.tooShort(got: data.count, need: fixedHeaderSizeV3)
+            }
+            conversationID = dataToUUID(data.subdata(in: 55..<71))
+            let payloadLenBE = data.subdata(in: 71..<75).withUnsafeBytes { $0.load(as: UInt32.self) }
+            payloadLen = Int(UInt32(bigEndian: payloadLenBE))
+            flagsByte = data[75]
+            let seqBE = data.subdata(in: 76..<78).withUnsafeBytes { $0.load(as: UInt16.self) }
+            sequenceNumber = UInt16(bigEndian: seqBE)
+            
+            let historyCount = Int(data[78])
+            payloadOffset = fixedHeaderSizeV3 + (historyCount * 16)
+            
+            guard data.count >= payloadOffset + payloadLen else {
+                throw MeshPacketError.payloadLengthMismatch(declared: payloadLen, available: data.count - payloadOffset)
+            }
+            
+            for i in 0..<historyCount {
+                let offset = fixedHeaderSizeV3 + (i * 16)
+                if let historyUUID = dataToUUID(data.subdata(in: offset..<offset+16)) {
+                    relayHistory.append(historyUUID)
+                }
+            }
+        } else {
+            // Version 2 fallback
+            conversationID = nil
+            let payloadLenBE = data.subdata(in: 55..<59).withUnsafeBytes { $0.load(as: UInt32.self) }
+            payloadLen = Int(UInt32(bigEndian: payloadLenBE))
+            flagsByte = data[59]
+            let seqBE = data.subdata(in: 60..<62).withUnsafeBytes { $0.load(as: UInt16.self) }
+            sequenceNumber = UInt16(bigEndian: seqBE)
+            payloadOffset = fixedHeaderSizeV2
+            
+            guard data.count >= payloadOffset + payloadLen else {
+                throw MeshPacketError.payloadLengthMismatch(declared: payloadLen, available: data.count - payloadOffset)
+            }
         }
         
-        var payload = data.subdata(in: headerSize..<(headerSize + payloadLen))
+        var payload = data.subdata(in: payloadOffset..<(payloadOffset + payloadLen))
         
         // Decode destination (all-zero UUID = BROADCAST)
         let isAllZero = destRaw.allSatisfy { $0 == 0 }
@@ -326,25 +423,34 @@ enum MeshPacketHeader {
         var resolvedChannelID = channelByte.toChannelIDString()
         if channelByte == .custom {
             guard !payload.isEmpty else {
-                throw MeshPacketDecodeError.malformedCustomChannelPrefix
+                throw MeshPacketError.malformedCustomChannelPrefix
             }
             let cidLen = Int(payload[0])
             guard cidLen <= maxCustomChannelPrefixBytes else {
-                throw MeshPacketDecodeError.customChannelPrefixOverflow(got: cidLen, max: maxCustomChannelPrefixBytes)
+                throw MeshPacketError.customChannelPrefixOverflow(got: cidLen, max: maxCustomChannelPrefixBytes)
             }
             guard payload.count >= 1 + cidLen else {
-                throw MeshPacketDecodeError.malformedCustomChannelPrefix
+                throw MeshPacketError.malformedCustomChannelPrefix
             }
             let cidData = payload.subdata(in: 1..<(1 + cidLen))
             guard let cidString = String(data: cidData, encoding: .utf8) else {
-                throw MeshPacketDecodeError.malformedCustomChannelPrefix
+                throw MeshPacketError.malformedCustomChannelPrefix
             }
             resolvedChannelID = cidString
             payload = payload.subdata(in: (1 + cidLen)..<payload.count)
         }
         
-        guard let textPayload = String(data: payload, encoding: .utf8) else {
-            throw MeshPacketDecodeError.invalidUTF8Payload
+        let flags = MeshPacketFlags(raw: flagsByte)
+        
+        let textPayload: String
+        if flags.isEncrypted {
+            // Ciphertext is binary, safely store it as a base64 string in textPayload
+            textPayload = payload.base64EncodedString()
+        } else {
+            guard let decodedText = String(data: payload, encoding: .utf8) else {
+                throw MeshPacketError.invalidUTF8Payload
+            }
+            textPayload = decodedText
         }
         
         return MeshPacket(
@@ -357,9 +463,12 @@ enum MeshPacketHeader {
             originUUID: originUUID ?? UUID(),
             destinationUUID: destinationUUID,
             messageID: messageUUID ?? UUID(),
+            conversationID: conversationID,
             sequenceNumber: sequenceNumber,
-            flags: MeshPacketFlags(raw: flagsByte),
-            textPayload: textPayload
+            flags: flags,
+            relayHistory: relayHistory,
+            textPayload: textPayload,
+            isEncrypted: flags.isEncrypted
         )
     }
     
@@ -419,7 +528,9 @@ extension MeshPacket {
             hopsCount: Int(hopCount),
             ttl: Int(ttl),
             type: msgType,
-            protocolVersion: Int(version)
+            protocolVersion: Int(version),
+            conversationID: conversationID,
+            relayHistory: relayHistory
         )
     }
 }

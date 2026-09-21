@@ -16,14 +16,21 @@ struct ContentView: View {
         ZStack {
             switch signInManager.authState {
             case .checking:
-                // While checking credential state, display AnimatedSplashScreenView
                 AnimatedSplashScreenView(isFinished: $isSplashFinished)
-                    .transition(.opacity)
+                    .transition(.asymmetric(
+                        insertion: .identity,
+                        removal: .scale(scale: 1.08).combined(with: .opacity)
+                    ))
+                    .zIndex(1)
                 
             case .authenticated:
                 if !isSplashFinished {
                     AnimatedSplashScreenView(isFinished: $isSplashFinished)
-                        .transition(.opacity)
+                        .transition(.asymmetric(
+                            insertion: .identity,
+                            removal: .scale(scale: 1.08).combined(with: .opacity)
+                        ))
+                        .zIndex(1)
                 } else {
                     MainTabView()
                         .transition(.opacity)
@@ -32,12 +39,18 @@ struct ContentView: View {
             case .unauthenticated:
                 if !isSplashFinished {
                     AnimatedSplashScreenView(isFinished: $isSplashFinished)
-                        .transition(.opacity)
+                        .transition(.asymmetric(
+                            insertion: .identity,
+                            removal: .scale(scale: 1.08).combined(with: .opacity)
+                        ))
+                        .zIndex(1)
                 } else {
                     AppleSignInScreen()
                         .transition(.opacity)
                 }
             }
+            
+            InAppConsoleOverlay()
         }
         .animation(.easeInOut(duration: 0.35), value: signInManager.authState)
         .animation(.easeInOut(duration: 0.35), value: isSplashFinished)

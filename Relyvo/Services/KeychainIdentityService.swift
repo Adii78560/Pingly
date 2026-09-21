@@ -31,8 +31,6 @@ final class KeychainIdentityService {
         }
         
         // Ensure thread-safe single initialization
-        AppLogger.general.info("[Identity] Device identity initialization started")
-        AppLogger.general.info("[Identity] Keychain lookup started")
         
         var existingFound = false
         var loadedUUID: UUID? = nil
@@ -50,18 +48,11 @@ final class KeychainIdentityService {
             loadedUUID = uuid
             // Migrate to primary key for future continuity
             saveKeychainItem(key: primaryDeviceIDKey, value: uuid.uuidString)
-            AppLogger.general.info("[Identity] Migrated legacy Keychain Device ID to primary key.")
         }
         
         let finalUUID: UUID
         if existingFound, let uuid = loadedUUID {
             let fingerprint = String(uuid.uuidString.prefix(6))
-            AppLogger.general.info("[Identity] Existing device identity found = true")
-            AppLogger.general.info("[Identity] Device identity loaded successfully")
-            AppLogger.general.info("[Identity] Device identity generated = false")
-            AppLogger.general.info("[Identity] Device identity persisted = true")
-            AppLogger.general.info("[Identity] Device ID fingerprint = \(fingerprint)")
-            AppLogger.general.info("[Identity] Device identity initialization completed")
             finalUUID = uuid
         } else {
             // 3. Generate NEW UUID if no existing identity found in Keychain
@@ -69,11 +60,6 @@ final class KeychainIdentityService {
             saveKeychainItem(key: primaryDeviceIDKey, value: newUUID.uuidString)
             let fingerprint = String(newUUID.uuidString.prefix(6))
             
-            AppLogger.general.info("[Identity] Existing device identity found = false")
-            AppLogger.general.info("[Identity] Device identity generated = true")
-            AppLogger.general.info("[Identity] Device identity persisted = true")
-            AppLogger.general.info("[Identity] Device ID fingerprint = \(fingerprint)")
-            AppLogger.general.info("[Identity] Device identity initialization completed")
             finalUUID = newUUID
         }
         
@@ -90,7 +76,6 @@ final class KeychainIdentityService {
         
         deleteKeychainItem(key: primaryDeviceIDKey)
         deleteKeychainItem(key: legacyDeviceIDKey)
-        AppLogger.general.info("Cleared Relayn Device ID from iOS Keychain.")
     }
     
     // MARK: - Private Apple Security Keychain Helpers
@@ -130,7 +115,6 @@ final class KeychainIdentityService {
         
         let status = SecItemAdd(query as CFDictionary, nil)
         if status != errSecSuccess {
-            AppLogger.general.error("Failed to save Keychain item for key '\(key)': status \(status)")
         }
     }
     

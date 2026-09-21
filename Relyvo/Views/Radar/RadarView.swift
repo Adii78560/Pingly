@@ -23,6 +23,8 @@ struct RadarView: View {
     @State private var isBreathing = false
     @State private var showEditNameAlert = false
     @State private var newBroadcastNameText = ""
+    @State private var showBreadcrumbs = false
+    @State private var activeNavTarget: NavigationTarget?
     
     var body: some View {
         NavigationStack {
@@ -52,6 +54,16 @@ struct RadarView: View {
             }
             .navigationTitle("Radar")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    HStack(spacing: 12) {
+                        Button(action: { showBreadcrumbs = true }) {
+                            Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         newBroadcastNameText = viewModel.broadcastName
@@ -76,6 +88,12 @@ struct RadarView: View {
             } message: {
                 Text("This name will be visible to nearby off-grid Relyvo devices.")
             }
+            .fullScreenCover(isPresented: $showBreadcrumbs) {
+                BreadcrumbTrailView()
+            }
+            .fullScreenCover(item: $activeNavTarget) { target in
+                OfflineNavigationView(target: target)
+            }
             .onAppear {
                 newBroadcastNameText = viewModel.broadcastName
                 withAnimation(Animation.easeInOut(duration: 2.0).repeatForever(autoreverses: false)) {
@@ -87,41 +105,80 @@ struct RadarView: View {
     
     // MARK: - Central AirDrop Radar Scanner
     private var airDropRadarScanner: some View {
-        ZStack {
-            // Concentric AirDrop Breathing Pulse Rings
+        let radarRadius: CGFloat = 110 // Overall radius of the radar (220 width/height)
+        
+        return ZStack {
+            // Concentric Radar Distance Rings
             Circle()
-                .stroke(AppTheme.ringStrokeGradient.opacity(0.6), lineWidth: 1.5)
-                .frame(width: 200, height: 200)
-                .scaleEffect(isBreathing ? 1.3 : 1.0)
-                .opacity(isBreathing ? 0.0 : 0.5)
+                .stroke(AppTheme.ringStrokeGradient.opacity(0.4), lineWidth: 1.5)
+                .frame(width: radarRadius * 2, height: radarRadius * 2)
             
             Circle()
-                .stroke(AppTheme.ringStrokeGradient.opacity(0.35), lineWidth: 1)
-                .frame(width: 150, height: 150)
-                .scaleEffect(isBreathing ? 1.18 : 0.95)
-                .opacity(isBreathing ? 0.1 : 0.4)
+                .stroke(AppTheme.ringStrokeGradient.opacity(0.25), lineWidth: 1)
+                .frame(width: radarRadius * 1.33, height: radarRadius * 1.33)
+                
+            Circle()
+                .stroke(AppTheme.ringStrokeGradient.opacity(0.15), lineWidth: 1)
+                .frame(width: radarRadius * 0.66, height: radarRadius * 0.66)
+            
+            // 360° Rotational Sweep
+            TimelineView(.animation) { timeline in
+                let now = timeline.date.timeIntervalSinceReferenceDate
+                // 2.5s cycle = 360 degrees
+                let angle = Angle.degrees((now.remainder(dividingBy: 2.5) / 2.5) * 360.0)
+                
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            gradient: Gradient(colors: [AppTheme.tintColor.opacity(0.0), AppTheme.tintColor.opacity(0.5)]),
+                            center: .center,
+                            startAngle: .degrees(0),
+                            endAngle: .degrees(90)
+                        )
+                    )
+                    .frame(width: radarRadius * 2, height: radarRadius * 2)
+                    .rotationEffect(angle)
+            }
+            
+            // Render Radar Contacts
+            let contacts = viewModel.radarContacts(deviceHeading: LocationService.shared.smoothedHeading)
+            ForEach(contacts) { contact in
+                ZStack {
+                    // Outer pulsating freshness ring
+                    Circle()
+                        .stroke(AppTheme.tintColor, lineWidth: 1)
+                        .frame(width: 36, height: 36)
+                        .scaleEffect(isBreathing ? 1.2 : 0.8)
+                        .opacity(isBreathing ? 0.0 : 0.8)
+                    
+                    CircularAvatarView(senderAlias: contact.peer.displayName, senderID: contact.peer.id, size: 28)
+                }
+                .position(
+                    x: radarRadius + CGFloat(cos(contact.angle.radians)) * (radarRadius * contact.radiusFraction),
+                    y: radarRadius + CGFloat(sin(contact.angle.radians)) * (radarRadius * contact.radiusFraction)
+                )
+            }
             
             // Center Node ("YOU")
             ZStack {
                 Circle()
                     .fill(Color(UIColor.secondarySystemGroupedBackground))
-                    .frame(width: 96, height: 96)
+                    .frame(width: 64, height: 64)
                     .shadow(color: AppTheme.hotMagenta.opacity(0.2), radius: 10, x: 0, y: 4)
                 
-                VStack(spacing: 4) {
+                VStack(spacing: 2) {
                     Image(systemName: "wifi")
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(AppTheme.tintColor)
                     
                     Text("YOU")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundColor(.primary)
                 }
             }
         }
-        .frame(height: 220)
+        .frame(width: radarRadius * 2, height: radarRadius * 2)
     }
-    
     // MARK: - Discovered Devices AirDrop Tray
     private var discoveredPeersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -187,6 +244,25 @@ struct RadarView: View {
                     Circle()
                         .stroke(peer.isConnected ? Color.green : AppTheme.hotMagenta, lineWidth: 2)
                         .frame(width: 66, height: 66)
+                    
+                    let status = viewModel.friendStatus(for: peer.id)
+                    if status != .none {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Image(systemName: statusIcon(for: status))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .background(statusColor(for: status))
+                                    .clipShape(Circle())
+                                    .shadow(radius: 2)
+                            }
+                        }
+                        .frame(width: 66, height: 66)
+                        .offset(x: 4, y: 4)
+                    }
                 }
                 
                 VStack(spacing: 2) {
@@ -199,6 +275,10 @@ struct RadarView: View {
                     Text("\(peer.rssi) dBm")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
+                        
+                    Text(peer.isConnected ? "Connected" : "Discovered")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(peer.isConnected ? .green : AppTheme.hotMagenta)
                 }
             }
             .padding(12)
@@ -206,8 +286,77 @@ struct RadarView: View {
             .cornerRadius(16)
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            let status = viewModel.friendStatus(for: peer.id)
+            if status == .accepted {
+                Button(role: .destructive, action: {
+                    viewModel.removeFriend(peer)
+                }) {
+                    Label("Remove Friend", systemImage: "person.badge.minus")
+                }
+            } else if status == .requestSent {
+                Button(role: .destructive, action: {
+                    viewModel.removeFriend(peer)
+                }) {
+                    Label("Cancel Request", systemImage: "xmark.circle")
+                }
+            } else if status == .requestReceived {
+                Button(action: {
+                    viewModel.acceptFriendRequest(peer.id)
+                }) {
+                    Label("Accept Request", systemImage: "checkmark.circle")
+                }
+                Button(role: .destructive, action: {
+                    viewModel.declineFriendRequest(peer.id)
+                }) {
+                    Label("Decline Request", systemImage: "xmark.circle")
+                }
+            } else if status == .declined {
+                Button(action: {
+                    viewModel.addFriend(peer)
+                }) {
+                    Label("Add Again", systemImage: "person.badge.plus")
+                }
+            } else {
+                Button(action: {
+                    viewModel.addFriend(peer)
+                }) {
+                    Label("Add Friend", systemImage: "person.badge.plus")
+                }
+            }
+            
+            if status == .accepted {
+                Button(action: {
+                    // Direct message action
+                    let convID = DirectConversationID.make(nodeA: NodeIdentity.shared.nodeID, nodeB: peer.id).uuidString
+                    NotificationCenter.default.post(name: NSNotification.Name("NavigateToDirectMessage"), object: nil, userInfo: ["conversationID": convID, "peerID": peer.id, "displayName": peer.displayName])
+                }) {
+                    Label("Message", systemImage: "message")
+                }
+            }
+        }
     }
-
+    
+    // MARK: - Helper Methods
+    private func statusIcon(for status: FriendStatus) -> String {
+        switch status {
+        case .accepted: return "person.2.fill"
+        case .requestSent: return "arrow.up.right"
+        case .requestReceived: return "arrow.down.left"
+        case .declined: return "xmark.octagon.fill"
+        default: return ""
+        }
+    }
+    
+    private func statusColor(for status: FriendStatus) -> Color {
+        switch status {
+        case .accepted: return .green
+        case .requestSent: return .orange
+        case .requestReceived: return .blue
+        case .declined: return .red
+        default: return .clear
+        }
+    }
 }
 
 

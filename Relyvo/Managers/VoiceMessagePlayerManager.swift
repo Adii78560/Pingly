@@ -50,7 +50,6 @@ final class VoiceMessagePlayerManager: NSObject, ObservableObject, AVAudioPlayer
         
         let fileURL = URL(fileURLWithPath: message.audioFilePath)
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            AppLogger.audio.error("[VOICE_PLAYER] Voice file not found at path: \(fileURL.path)")
             return
         }
         
@@ -58,9 +57,9 @@ final class VoiceMessagePlayerManager: NSObject, ObservableObject, AVAudioPlayer
             guard let self = self else { return }
             do {
                 let session = AVAudioSession.sharedInstance()
-                // Category .playback ONLY supports [.duckOthers] or [.mixWithOthers].
+                // Category .playback ONLY supports [.duckOthers, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers].
                 // Passing .defaultToSpeaker with .playback triggers OSStatus -50 (kAudio_ParamError).
-                try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+                try session.setCategory(.playback, mode: .default, options: [.duckOthers, .allowBluetoothHFP, .allowBluetoothA2DP])
                 try session.setActive(true)
                 
                 let player = try AVAudioPlayer(contentsOf: fileURL)
@@ -76,12 +75,12 @@ final class VoiceMessagePlayerManager: NSObject, ObservableObject, AVAudioPlayer
                     self.playbackProgress = 0.0
                     self.currentTime = 0.0
                     
-                    SwiftDataService.shared.markVoiceMessageAsPlayed(id: message.id)
+                    Task {
+                        await SwiftDataService.shared.persistenceActor.markVoiceMessageAsPlayed(id: message.id)
+                    }
                     self.startProgressTimer()
-                    AppLogger.audio.info("[VOICE_PLAYER] Playing voice note cleanly: \(fileURL.lastPathComponent)")
                 }
             } catch {
-                AppLogger.audio.error("[VOICE_PLAYER] Failed to configure session or play audio file: \(error.localizedDescription)")
             }
         }
     }
@@ -121,14 +120,12 @@ final class VoiceMessagePlayerManager: NSObject, ObservableObject, AVAudioPlayer
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         DispatchQueue.main.async {
             self.stop()
-            AppLogger.audio.info("[VOICE_PLAYER] Playback finished successfully.")
         }
     }
     
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         DispatchQueue.main.async {
             self.stop()
-            AppLogger.audio.error("[VOICE_PLAYER] Decode error occurred: \(error?.localizedDescription ?? "unknown")")
         }
     }
     

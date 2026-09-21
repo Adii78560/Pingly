@@ -41,6 +41,60 @@ final class SDVoiceTranscript {
     }
 }
 
+/// SwiftData persistent model for a Channel (Public or Private)
+@Model
+final class SDChannel {
+    @Attribute(.unique) var id: UUID
+    var displayName: String
+    var typeRaw: String // "PUBLIC" or "PRIVATE"
+    var ownerNodeID: String
+    var createdAt: Date
+    var updatedAt: Date
+    
+    init(
+        id: UUID = UUID(),
+        displayName: String,
+        typeRaw: String = "PUBLIC",
+        ownerNodeID: String = NodeIdentity.shared.nodeID,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.typeRaw = typeRaw
+        self.ownerNodeID = ownerNodeID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+/// SwiftData persistent model for Channel Membership
+@Model
+final class SDChannelMember {
+    @Attribute(.unique) var id: UUID
+    var channelID: UUID
+    var nodeID: String
+    var statusRaw: String // "INVITED", "ACCEPTED", "DECLINED", "REVOKED"
+    var joinedAt: Date?
+    var keyVersion: Int
+    
+    init(
+        id: UUID = UUID(),
+        channelID: UUID,
+        nodeID: String,
+        statusRaw: String = "INVITED",
+        joinedAt: Date? = nil,
+        keyVersion: Int = 1
+    ) {
+        self.id = id
+        self.channelID = channelID
+        self.nodeID = nodeID
+        self.statusRaw = statusRaw
+        self.joinedAt = joinedAt
+        self.keyVersion = keyVersion
+    }
+}
+
 /// SwiftData persistent model for P2P off-grid text & location messages partitioned by channel.
 @Model
 final class SDChatMessage {
@@ -54,11 +108,14 @@ final class SDChatMessage {
     var timestamp: Date
     var isSynced: Bool
     var isDelivered: Bool = false
+    var isRead: Bool = false
     var messageTypeRaw: String = P2PMessageType.chat.rawValue
     var latitude: Double?
     var longitude: Double?
     var altitude: Double?
     var accuracy: Double?
+    var conversationID: UUID = UUID()
+    var relayHistory: [String] = []
     
     var type: P2PMessageType {
         get { P2PMessageType(rawValue: messageTypeRaw) ?? .chat }
@@ -80,7 +137,9 @@ final class SDChatMessage {
         latitude: Double? = nil,
         longitude: Double? = nil,
         altitude: Double? = nil,
-        accuracy: Double? = nil
+        accuracy: Double? = nil,
+        conversationID: UUID? = nil,
+        relayHistory: [String] = []
     ) {
         self.id = id
         self.senderID = senderID
@@ -92,11 +151,25 @@ final class SDChatMessage {
         self.timestamp = timestamp
         self.isSynced = isSynced
         self.isDelivered = isDelivered
+        self.isRead = false
         self.messageTypeRaw = messageType.rawValue
         self.latitude = latitude
         self.longitude = longitude
         self.altitude = altitude
         self.accuracy = accuracy
+        self.relayHistory = relayHistory
+        
+        let finalOrigin = originID ?? senderID
+        let finalDest = destinationID ?? channel
+        if let explicitConv = conversationID {
+            self.conversationID = explicitConv
+        } else if finalDest == "BROADCAST" || channel == "BROADCAST" {
+            self.conversationID = DirectConversationID.make(channelName: "BROADCAST")
+        } else if channel.hasPrefix("CH-") {
+            self.conversationID = DirectConversationID.make(channelName: channel)
+        } else {
+            self.conversationID = DirectConversationID.make(nodeA: finalOrigin, nodeB: finalDest)
+        }
     }
 }
 
@@ -140,8 +213,10 @@ final class SDPendingMessage {
     var recipientName: String
     var senderName: String
     var previousHopID: String?
+    var relayHistory: [String] = []
     var text: String
     var channel: String
+    var conversationID: UUID = UUID()
     var timestamp: Date
     var expiresAt: Date = Date().addingTimeInterval(TimeInterval(Constants.Mesh.queueExpirationDays * 86400))
     var isSOS: Bool = false
@@ -153,6 +228,7 @@ final class SDPendingMessage {
     var maxRetries: Int = 5
     var hopsCount: Int = 0
     var ttl: Int = Constants.Emergency.broadcastTTL
+    var messageTypeRaw: String = P2PMessageType.chat.rawValue
     
     // Delivery Lifecycle Timestamps & Receipts
     var queuedAt: Date?
@@ -188,8 +264,10 @@ final class SDPendingMessage {
         recipientName: String,
         senderName: String,
         previousHopID: String? = nil,
+        relayHistory: [String] = [],
         text: String,
         channel: String = "CH-1 EMERGENCY",
+        conversationID: UUID? = nil,
         timestamp: Date = Date(),
         expiresAt: Date? = nil,
         isSOS: Bool = false,
@@ -216,8 +294,21 @@ final class SDPendingMessage {
         self.recipientName = recipientName
         self.senderName = senderName
         self.previousHopID = previousHopID
+        self.relayHistory = relayHistory
         self.text = text
         self.channel = channel
+        
+        let finalOrigin = originID ?? senderName
+        if let explicitConv = conversationID {
+            self.conversationID = explicitConv
+        } else if destinationID == "BROADCAST" || channel == "BROADCAST" {
+            self.conversationID = DirectConversationID.make(channelName: "BROADCAST")
+        } else if channel.hasPrefix("CH-") {
+            self.conversationID = DirectConversationID.make(channelName: channel)
+        } else {
+            self.conversationID = DirectConversationID.make(nodeA: finalOrigin, nodeB: destinationID)
+        }
+        
         self.timestamp = timestamp
         self.expiresAt = expiresAt ?? timestamp.addingTimeInterval(TimeInterval(Constants.Mesh.queueExpirationDays * 86400))
         self.isSOS = isSOS
@@ -386,8 +477,167 @@ final class SDLocationShareSession {
     }
 }
 
+/// SwiftData persistent model for user GPS breadcrumb tracking sessions
+@Model
+final class SDBreadcrumbTrack {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var startedAt: Date
+    var endedAt: Date?
+    var isActive: Bool
+    var totalDistanceMeters: Double
+    var pointsCount: Int
+    var startLatitude: Double?
+    var startLongitude: Double?
+    var startAltitude: Double?
+    
+    init(
+        id: UUID = UUID(),
+        name: String = "Track \(Date().formatted(date: .abbreviated, time: .shortened))",
+        startedAt: Date = Date(),
+        endedAt: Date? = nil,
+        isActive: Bool = true,
+        totalDistanceMeters: Double = 0.0,
+        pointsCount: Int = 0,
+        startLatitude: Double? = nil,
+        startLongitude: Double? = nil,
+        startAltitude: Double? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.isActive = isActive
+        self.totalDistanceMeters = totalDistanceMeters
+        self.pointsCount = pointsCount
+        self.startLatitude = startLatitude
+        self.startLongitude = startLongitude
+        self.startAltitude = startAltitude
+    }
+}
 
+/// SwiftData persistent model for individual GPS breadcrumb points along a track
+@Model
+final class SDBreadcrumbPoint {
+    @Attribute(.unique) var id: UUID
+    var trackID: UUID
+    var latitude: Double
+    var longitude: Double
+    var altitude: Double?
+    var accuracy: Double
+    var speed: Double?
+    var course: Double?
+    var heading: Double?
+    var timestamp: Date
+    var sequenceIndex: Int
+    
+    init(
+        id: UUID = UUID(),
+        trackID: UUID,
+        latitude: Double,
+        longitude: Double,
+        altitude: Double? = nil,
+        accuracy: Double = 5.0,
+        speed: Double? = nil,
+        course: Double? = nil,
+        heading: Double? = nil,
+        timestamp: Date = Date(),
+        sequenceIndex: Int = 0
+    ) {
+        self.id = id
+        self.trackID = trackID
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
+        self.accuracy = accuracy
+        self.speed = speed
+        self.course = course
+        self.heading = heading
+        self.timestamp = timestamp
+        self.sequenceIndex = sequenceIndex
+    }
+}
 
+/// SwiftData persistent model tracking downloaded or bundled offline vector/topological map regions
+@Model
+final class SDOfflineMapRegion {
+    @Attribute(.unique) var id: String
+    var name: String
+    var version: String? = "1.0"
+    var stateOrRegion: String
+    var minLatitude: Double
+    var minLongitude: Double
+    var maxLatitude: Double
+    var maxLongitude: Double
+    var minZoom: Int
+    var maxZoom: Int
+    var fileSizeBytes: Int64
+    var isDownloaded: Bool
+    var downloadedAt: Date?
+    var localFilePath: String?
+    
+    init(
+        id: String,
+        name: String,
+        version: String? = "1.0",
+        stateOrRegion: String,
+        minLatitude: Double,
+        minLongitude: Double,
+        maxLatitude: Double,
+        maxLongitude: Double,
+        minZoom: Int = 0,
+        maxZoom: Int = 16,
+        fileSizeBytes: Int64 = 0,
+        isDownloaded: Bool = false,
+        downloadedAt: Date? = nil,
+        localFilePath: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.version = version
+        self.stateOrRegion = stateOrRegion
+        self.minLatitude = minLatitude
+        self.minLongitude = minLongitude
+        self.maxLatitude = maxLatitude
+        self.maxLongitude = maxLongitude
+        self.minZoom = minZoom
+        self.maxZoom = maxZoom
+        self.fileSizeBytes = fileSizeBytes
+        self.isDownloaded = isDownloaded
+        self.downloadedAt = downloadedAt
+        self.localFilePath = localFilePath
+    }
+}
 
+enum FriendStatus: String, Codable {
+    case none
+    case requestSent
+    case requestReceived
+    case accepted
+    case declined
+}
 
-
+/// SwiftData persistent model tracking a persistent friend on the radar
+@Model
+final class SDFriend {
+    @Attribute(.unique) var nodeID: String
+    var handle: String
+    var dateAdded: Date
+    
+    // Friend protocol properties (Optional for safe lightweight migration)
+    var statusRaw: String? = FriendStatus.none.rawValue
+    var requestID: UUID? = nil
+    
+    var status: FriendStatus {
+        get { FriendStatus(rawValue: statusRaw ?? "none") ?? .none }
+        set { statusRaw = newValue.rawValue }
+    }
+    
+    init(nodeID: String, handle: String, dateAdded: Date = Date(), status: FriendStatus = .none, requestID: UUID? = nil) {
+        self.nodeID = nodeID
+        self.handle = handle
+        self.dateAdded = dateAdded
+        self.statusRaw = status.rawValue
+        self.requestID = requestID
+    }
+}

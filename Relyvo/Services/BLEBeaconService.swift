@@ -41,7 +41,6 @@ final class BLEBeaconService: NSObject, ObservableObject {
                 withServices: [Constants.BLE.serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
             )
-            AppLogger.ble.info("Started Low-Power BLE RSSI Scanning (AllowDuplicates: \(allowDuplicates))")
         }
         
         if peripheralManager.state == .poweredOn {
@@ -50,7 +49,6 @@ final class BLEBeaconService: NSObject, ObservableObject {
                 CBAdvertisementDataLocalNameKey: userHandle
             ]
             peripheralManager.startAdvertising(advertisementData)
-            AppLogger.ble.info("Started BLE Beacon Advertising as \(userHandle)")
         }
     }
     
@@ -59,7 +57,6 @@ final class BLEBeaconService: NSObject, ObservableObject {
         guard !isHighFrequencyRadarActive else { return }
         isHighFrequencyRadarActive = true
         startScanningAndAdvertising(userHandle: userHandle, allowDuplicates: true)
-        AppLogger.ble.info("Enabled high-frequency BLE RSSI scanning for active Radar view")
     }
     
     /// Reverts to low-power BLE scanning when leaving Radar view
@@ -67,13 +64,11 @@ final class BLEBeaconService: NSObject, ObservableObject {
         guard isHighFrequencyRadarActive else { return }
         isHighFrequencyRadarActive = false
         startScanningAndAdvertising(userHandle: userHandle, allowDuplicates: false)
-        AppLogger.ble.info("Reverted to low-power BLE scanning")
     }
     
     /// Pauses scanning during app background transitions to preserve battery
     func pauseScanningForBackground() {
         centralManager.stopScan()
-        AppLogger.ble.info("Paused BLE scanning for background state")
     }
     
     /// Resumes scanning when app returns to foreground

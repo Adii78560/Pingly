@@ -1,10 +1,3 @@
-//
-//  RadioCallView.swift
-//  Relayn
-//
-//  Created by Senior iOS Developer on 09/08/26.
-//
-
 import SwiftUI
 
 /// watchOS Walkie-Talkie & FaceTime Audio inspired View with Channel-Wise Chat Bubbles
@@ -14,100 +7,40 @@ struct RadioCallView: View {
     @StateObject private var featureAccessManager = FeatureAccessManager.shared
     
     @State private var isPttPressedVisual = false
+    @State private var isHandsFreeLocked = false
     @State private var showingAddChannelAlert = false
     @State private var newChannelInputText = ""
-    @State private var breathingScale: CGFloat = 1.0
-    @State private var breathingOpacity: Double = 0.6
-    
+    @State private var showSOSDialog = false
+    @State private var showingQRShare = false
+    @State private var showingQRScanner = false
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                // Active Channel Menu Bar
-                HStack {
-                    Menu {
-                        Section("Walkie-Talkie Channels") {
-                            ForEach(viewModel.availableChannels, id: \.self) { ch in
-                                Button(action: {
-                                    viewModel.selectedChannel = ch
-                                }) {
-                                    HStack {
-                                        Text(ch)
-                                        if ch == viewModel.selectedChannel {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        Divider()
-                        
-                        Button(action: {
-                            viewModel.shareActiveChannel()
-                        }) {
-                            Label("Share \(viewModel.selectedChannel) with Peers", systemImage: "square.and.arrow.up")
-                        }
-                        
-                        Button(action: {
-                            featureAccessManager.requireAccess(to: .createChannel) {
-                                newChannelInputText = ""
-                                showingAddChannelAlert = true
-                            }
-                        }) {
-                            Label(
-                                subscriptionManager.isPro ? "Create Custom Channel..." : "Create Custom Channel... (Pro 🔒)",
-                                systemImage: subscriptionManager.isPro ? "plus.circle" : "lock.fill"
-                            )
-                        }
-
-                    } label: {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(viewModel.isConnected ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(viewModel.selectedChannel)
-                                .font(.system(size: 14, weight: .semibold))
-                            if !viewModel.activeChannelMembers.isEmpty {
-                                Text("\(viewModel.activeChannelMembers.count)")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.green.opacity(0.85))
-                                    .clipShape(Capsule())
-                            }
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 11, weight: .bold))
-                        }
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
-                        .cornerRadius(20)
-                    }
+            VStack(spacing: 0) {
+                // 1. Top Channel Presence Card
+                HStack(spacing: 8) {
+                    Image(systemName: "person.2.fill")
+                        .foregroundColor(AppTheme.tintColor)
+                    
+                    Text("\(viewModel.activeChannelMembers.count) Online on \(viewModel.selectedChannel)")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     
                     Spacer()
                     
-                    Button(action: {
-                        featureAccessManager.requireAccess(to: .createChannel) {
-                            newChannelInputText = ""
-                            showingAddChannelAlert = true
-                        }
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: subscriptionManager.isPro ? "plus" : "lock.fill")
-                            Text("New Channel")
-                        }
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(AppTheme.tintColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(AppTheme.glassTint)
-                        .cornerRadius(16)
-                    }
+                    Circle()
+                        .fill(viewModel.activeChannelMembers.count > 0 ? AppTheme.tintColor : Color.gray)
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(viewModel.activeChannelMembers.count > 0 ? 1.2 : 1.0)
+                        .animation(viewModel.activeChannelMembers.count > 0 ? Animation.easeInOut(duration: 1.0).repeatForever(autoreverses: true) : .default, value: viewModel.activeChannelMembers.count)
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 4)
+                .padding(.vertical, 12)
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+                .cornerRadius(16)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
                 
                 // High-Visibility Emergency SOS Beacon Banner
                 if let sos = viewModel.activeSOSAlert {
@@ -167,7 +100,6 @@ struct RadioCallView: View {
                                 .background(Color.white)
                                 .cornerRadius(12)
                             }
-                            
                             Spacer()
                         }
                         .padding(.top, 2)
@@ -184,139 +116,92 @@ struct RadioCallView: View {
                     .shadow(color: Color.red.opacity(0.5), radius: 10, x: 0, y: 4)
                     .padding(.horizontal, 16)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.bottom, 20)
                 }
 
-                // Live Transmitting Banner
-                if viewModel.isPTTPressed {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(AppTheme.hotMagenta)
-                            .frame(width: 8, height: 8)
-                            .scaleEffect(breathingScale)
-                        Text("🎙️ Transmitting live on \(viewModel.selectedChannel)...")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(AppTheme.hotMagenta)
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "waveform.and.mic")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(AppTheme.hotMagenta)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(AppTheme.hotMagenta.opacity(0.12))
-                    .cornerRadius(12)
-                    .padding(.horizontal, 16)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                // Live Active Speaker Banner
-                if viewModel.session.isReceivingAudio, let speaker = viewModel.liveActiveSpeaker {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-                            .scaleEffect(breathingScale)
-                        Text("🔴 \(speaker) speaking live on \(viewModel.selectedChannel)...")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.red)
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "waveform.and.mic")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.red)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.red.opacity(0.12))
-                    .cornerRadius(12)
-                    .padding(.horizontal, 16)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-                
-                // Central watchOS Walkie-Talkie Sunset PTT Dial with Dynamic AirDrop Peer Orbit Ring & Breathing Radar Pulse
+                // 2. Hero Squircle PTT Transmit Card
                 ZStack {
-                    let peers = viewModel.channelPeers
-                    let peerCount = peers.count
-                    let hasPeers = !peers.isEmpty
-                    let orbitRadius: CGFloat = 110.0
-                    let bubbleSize: CGFloat = peerCount <= 4 ? 44.0 : (peerCount <= 8 ? 34.0 : 26.0)
-                    
-                    // Animated Breathing Radar Pulse Ring (pulses when no peers on channel, locks static when peers connect)
-                    Circle()
-                        .stroke(AppTheme.ringStrokeGradient.opacity(hasPeers ? 0.4 : breathingOpacity), lineWidth: hasPeers ? 2 : 3)
-                        .frame(width: 135, height: 135)
-                        .scaleEffect(hasPeers ? 1.0 : breathingScale)
-                        .onAppear {
-                            withAnimation(
-                                Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true)
-                            ) {
-                                breathingScale = 1.35
-                                breathingOpacity = 0.05
-                            }
-                        }
-                    
-                    // AirDrop Peer Orbit Bubbles floating dynamically around PTT button
-                    ForEach(Array(peers.enumerated()), id: \.element.id) { index, peer in
-                        let angle = (2.0 * .pi * Double(index)) / Double(max(1, peerCount)) - (.pi / 2.0)
-                        let offsetX = orbitRadius * CGFloat(cos(angle))
-                        let offsetY = orbitRadius * CGFloat(sin(angle))
-                        
-                        Button {
-                            viewModel.addUserToMessages(peer: peer)
-                        } label: {
-                            VStack(spacing: 2) {
-                                ZStack {
-                                    Circle()
-                                        .fill(AppTheme.primaryGradient)
-                                        .frame(width: bubbleSize, height: bubbleSize)
-                                        .shadow(color: AppTheme.hotMagenta.opacity(0.4), radius: 6, x: 0, y: 3)
-                                    
-                                    Text(peer.displayName.prefix(2).uppercased())
-                                        .font(.system(size: max(8, bubbleSize * 0.38), weight: .black))
-                                        .foregroundColor(.white)
+                    let isActiveLocal = viewModel.isPTTPressed || isPttPressedVisual
+                    let isRemoteSpeaking = viewModel.session.isReceivingAudio || viewModel.liveActiveSpeaker != nil
+                    let idleGradient = LinearGradient(colors: [AppTheme.tintColor, AppTheme.tintColor.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    let lockColor = Color.red.opacity(0.8)
+                    let remoteColor = Color.red.opacity(0.6)
+                    let transmittingGradient = AppTheme.primaryGradient
+
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(isHandsFreeLocked ? AnyShapeStyle(lockColor) : (isActiveLocal ? AnyShapeStyle(transmittingGradient) : (isRemoteSpeaking ? AnyShapeStyle(remoteColor) : AnyShapeStyle(idleGradient))))
+                        .frame(height: 195)
+                        .shadow(color: isActiveLocal ? AppTheme.hotMagenta.opacity(0.6) : AppTheme.tintColor.opacity(0.35), radius: isActiveLocal ? 16 : 8, x: 0, y: isActiveLocal ? 8 : 4)
+
+                    VStack(spacing: 8) {
+                        if isRemoteSpeaking {
+                            Text("🔴 \(viewModel.liveActiveSpeaker ?? "Peer") speaking live...")
+                                .font(.title3.bold())
+                                .foregroundColor(.white)
+                                .onTapGesture {
+                                    if isHandsFreeLocked {
+                                        isHandsFreeLocked = false
+                                        isPttPressedVisual = false
+                                        viewModel.stopTransmittingVoice()
+                                        HapticsManager.shared.lightImpact()
+                                    }
                                 }
-                                
-                                Text(peer.displayName)
-                                    .font(.system(size: 9, weight: .bold))
-                                    .lineLimit(1)
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                        .offset(x: offsetX, y: offsetY)
-                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: peerCount)
-                    }
-                    
-                    Circle()
-                        .fill(AppTheme.glassTint)
-                        .frame(width: 135, height: 135)
-                    
-                    Circle()
-                        .fill(AppTheme.primaryGradient)
-                        .frame(width: 105, height: 105)
-                        .shadow(color: AppTheme.hotMagenta.opacity(viewModel.isPTTPressed ? 0.7 : 0.3), radius: viewModel.isPTTPressed ? 16 : 8, x: 0, y: 4)
-                    
-                    VStack(spacing: 3) {
-                        if !subscriptionManager.isPro {
+                        } else if isHandsFreeLocked {
                             Image(systemName: "lock.fill")
-                                .font(.system(size: 28, weight: .bold))
-                            Text("UNLOCK PRO")
-                                .font(.system(size: 11, weight: .black))
+                                .font(.system(size: 44))
+                                .foregroundColor(.white)
+                            Text("TRANSMITTING (LOCKED)")
+                                .font(.title3.bold())
+                                .foregroundColor(.white)
+                            Text("Tap anywhere to stop")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.8))
+                        } else if isActiveLocal {
+                            Text("Transmitting...")
+                                .font(.title3.bold())
+                                .foregroundColor(.white)
+                            // Audio Waveform
+                            TimelineView(.periodic(from: .now, by: 0.04)) { context in
+                                HStack(spacing: 4) {
+                                    ForEach(0..<12, id: \.self) { index in
+                                        let rawLevel = CGFloat(viewModel.session.audioLevel)
+                                        let time = context.date.timeIntervalSinceReferenceDate
+                                        let wave = sin(time * 14.0 + Double(index) * 0.65) * 0.35 + 0.65
+                                        let h = 4.0 + (30.0 * (rawLevel > 0.02 ? rawLevel : 0.2) * CGFloat(wave))
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(Color.white)
+                                            .frame(width: 4, height: max(4, h))
+                                    }
+                                }
+                            }
+                            .frame(height: 40)
                         } else {
-                            Image(systemName: viewModel.isPTTPressed ? "waveform.and.mic" : "mic.fill")
-                                .font(.system(size: 30, weight: .bold))
-                            Text(viewModel.isPTTPressed ? "TRANSMITTING" : (viewModel.session.isReceivingAudio ? "LISTENING" : "HOLD TO TALK"))
-                                .font(.system(size: 11, weight: .black))
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 44))
+                                .foregroundColor(.white)
+                            Text("Hold to talk")
+                                .font(.title3.bold())
+                                .foregroundColor(.white)
+                            Text("▲ Slide up to lock")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.6))
                         }
                     }
-                    .foregroundColor(.white)
                 }
-                .frame(height: 240)
-                .scaleEffect(isPttPressedVisual || viewModel.isPTTPressed ? 0.94 : 1.0)
-                .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isPttPressedVisual || viewModel.isPTTPressed)
+                .padding(.horizontal, 16)
+                .highPriorityGesture(
+                    TapGesture().onEnded {
+                        if isHandsFreeLocked {
+                            isHandsFreeLocked = false
+                            isPttPressedVisual = false
+                            viewModel.stopTransmittingVoice()
+                            HapticsManager.shared.lightImpact()
+                        }
+                    }
+                )
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
+                        .onChanged { value in
                             guard featureAccessManager.canAccess(.walkieTalkie) else {
                                 if !isPttPressedVisual {
                                     isPttPressedVisual = true
@@ -324,106 +209,174 @@ struct RadioCallView: View {
                                 }
                                 return
                             }
-                            if !viewModel.isPTTPressed {
+                            let isRemoteSpeaking = viewModel.session.isReceivingAudio || viewModel.liveActiveSpeaker != nil
+                            if isRemoteSpeaking { return }
+
+                            if !viewModel.isPTTPressed && !isHandsFreeLocked {
                                 isPttPressedVisual = true
                                 viewModel.startTransmittingVoice()
                             }
+
+                            if value.translation.height < -60 && !isHandsFreeLocked {
+                                isHandsFreeLocked = true
+                                HapticsManager.shared.heavyImpact()
+                            }
                         }
                         .onEnded { _ in
-                            isPttPressedVisual = false
-                            if featureAccessManager.canAccess(.walkieTalkie) {
-                                viewModel.stopTransmittingVoice()
+                            if isHandsFreeLocked {
+                                // Do nothing, remain transmitting
+                            } else {
+                                isPttPressedVisual = false
+                                if featureAccessManager.canAccess(.walkieTalkie) {
+                                    viewModel.stopTransmittingVoice()
+                                }
                             }
                         }
                 )
 
-                
-                // Audio Waveform Indicator
-                TimelineView(.periodic(from: .now, by: 0.04)) { context in
-                    HStack(spacing: 4) {
-                        ForEach(0..<16, id: \.self) { index in
-                            let isActive = viewModel.isPTTPressed || viewModel.session.isReceivingAudio
-                            let rawLevel = CGFloat(viewModel.session.audioLevel)
-                            let minHeight: CGFloat = 4.0
-                            
-                            let center: CGFloat = 7.5
-                            let distance = abs(CGFloat(index) - center)
-                            let bellFactor = max(0.25, 1.0 - (distance / 8.5))
-                            
-                            let time = context.date.timeIntervalSinceReferenceDate
-                            let waveOscillation = sin(time * 14.0 + Double(index) * 0.65) * 0.35 + 0.65
-                            let effectiveLevel = rawLevel > 0.02 ? rawLevel : (isActive ? 0.35 : 0.0)
-                            
-                            let amplifiedHeight = minHeight + (26.0 * effectiveLevel * bellFactor * CGFloat(waveOscillation))
-                            let finalHeight: CGFloat = isActive ? max(minHeight, amplifiedHeight) : minHeight
-                            
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(isActive ? (effectiveLevel > 0.05 ? AppTheme.hotMagenta : AppTheme.hotMagenta.opacity(0.5)) : Color.gray.opacity(0.3))
-                                .frame(width: 4, height: finalHeight)
+                // 3. Middle Tactical Console
+                HStack(spacing: 12) {
+                    // Left Column: Channel Selector Button
+                    Menu {
+                        Section("Walkie-Talkie Channels") {
+                            ForEach(viewModel.availableChannels, id: \.self) { ch in
+                                Button(action: {
+                                    viewModel.selectedChannel = ch
+                                }) {
+                                    HStack {
+                                        Text(ch)
+                                        if ch == viewModel.selectedChannel {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
                         }
+                        Divider()
+                        Button(action: {
+                            viewModel.shareActiveChannel()
+                        }) {
+                            Label("Share \(viewModel.selectedChannel) Link", systemImage: "square.and.arrow.up")
+                        }
+                        Button(action: {
+                            DispatchQueue.main.async { showingQRShare = true }
+                        }) {
+                            Label("Share Channel via QR", systemImage: "qrcode")
+                        }
+                        Button(action: {
+                            DispatchQueue.main.async { showingQRScanner = true }
+                        }) {
+                            Label("Scan QR to Join", systemImage: "qrcode.viewfinder")
+                        }
+                        Button(action: {
+                            featureAccessManager.requireAccess(to: .createChannel) {
+                                DispatchQueue.main.async {
+                                    newChannelInputText = ""
+                                    showingAddChannelAlert = true
+                                }
+                            }
+                        }) {
+                            Label(
+                                subscriptionManager.isPro ? "Create Custom Channel..." : "Create Custom Channel... (Pro 🔒)",
+                                systemImage: subscriptionManager.isPro ? "plus.circle" : "lock.fill"
+                            )
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .foregroundColor(AppTheme.tintColor)
+                            Text(viewModel.selectedChannel)
+                                .lineLimit(1)
+                                .font(.system(size: 14, weight: .semibold))
+                            if ChannelKeyStore.shared.key(for: viewModel.selectedChannel) != nil {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(AppTheme.tintColor)
+                            }
+                            Spacer()
+                            Text("\(viewModel.activeChannelMembers.count)")
+                                .font(.system(size: 12, weight: .bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(AppTheme.tintColor.opacity(0.15))
+                                .foregroundColor(AppTheme.tintColor)
+                                .clipShape(Capsule())
+                        }
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 16)
+                        .frame(height: 54)
+                        .frame(maxWidth: .infinity)
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                        )
+                        .cornerRadius(18)
+                    }
+
+                    // Right Column: Emergency SOS Button
+                    Button {
+                        DispatchQueue.main.async {
+                            showSOSDialog = true
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text("SOS")
+                                .font(.headline.weight(.black))
+                        }
+                        .foregroundColor(.white)
+                        .frame(height: 54)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.red)
+                        .cornerRadius(18)
+                        .shadow(color: Color.red.opacity(0.4), radius: 6, x: 0, y: 4)
                     }
                 }
-                .frame(height: 28)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+
+                Spacer()
                 
-                // Channel Voice Notes History Stream (Replacing Text Transcripts)
-                VStack(alignment: .leading, spacing: 8) {
+                // 4. Bottom Channel Messages Drawer Preview
+                Button {
+                    viewModel.showingChatDrawer = true
+                } label: {
                     HStack {
-                        Image(systemName: "waveform.badge.mic")
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
                             .foregroundColor(AppTheme.tintColor)
-                            .font(.system(size: 13, weight: .bold))
+                        Text("Channel Messages")
+                            .font(.system(size: 14, weight: .semibold))
                         
-                        Text("VOICE NOTES • \(viewModel.selectedChannel)")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        if viewModel.hasUnreadChannelMessages {
+                            Circle()
+                                .fill(AppTheme.hotMagenta)
+                                .frame(width: 8, height: 8)
+                                .scaleEffect(1.2)
+                                .animation(Animation.easeInOut(duration: 1.0).repeatForever(), value: viewModel.hasUnreadChannelMessages)
+                        }
                         
                         Spacer()
-                        
-                        Text("\(viewModel.voiceMessages.count) notes")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.secondary)
+                        Image(systemName: "chevron.up")
                     }
-                    
-                    ScrollViewReader { proxy in
-                        ScrollView(.vertical, showsIndicators: false) {
-                            LazyVStack(spacing: 8) {
-                                if viewModel.voiceMessages.isEmpty {
-                                    VStack(spacing: 6) {
-                                        Image(systemName: "waveform.circle")
-                                            .font(.system(size: 28))
-                                            .foregroundColor(.secondary.opacity(0.6))
-                                        Text("No voice notes on \(viewModel.selectedChannel) yet.")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundColor(.secondary)
-                                        Text("Press & hold TALK to broadcast live audio.")
-                                            .font(.system(size: 11, weight: .regular))
-                                            .foregroundColor(.secondary.opacity(0.8))
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 24)
-                                } else {
-                                    ForEach(viewModel.voiceMessages) { item in
-                                        VoiceMessageBubbleView(message: item)
-                                            .id(item.id)
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        .onChange(of: viewModel.voiceMessages.count) {
-                            if let last = viewModel.voiceMessages.last {
-                                withAnimation {
-                                    proxy.scrollTo(last.id, anchor: .bottom)
-                                }
-                            }
-                        }
-                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(24)
+                    .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
                 }
-                .padding(12)
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                .cornerRadius(16)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isHandsFreeLocked {
+                    isHandsFreeLocked = false
+                    isPttPressedVisual = false
+                    viewModel.stopTransmittingVoice()
+                    HapticsManager.shared.lightImpact()
+                }
             }
             .navigationTitle(subscriptionManager.isPro ? "Walkie-Talkie" : "Walkie-Talkie 🔒")
             .alert("Create Custom Channel", isPresented: $showingAddChannelAlert) {
@@ -434,6 +387,66 @@ struct RadioCallView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Enter a unique channel name to broadcast with your mesh team.")
+            }
+            .sheet(isPresented: $showSOSDialog) {
+                NavigationStack {
+                    Form {
+                        Section {
+                            ForEach(EmergencyStatus.allCases.filter({ $0 != .normal })) { status in
+                                Button(action: {
+                                    viewModel.triggerEmergencySOS(status: status)
+                                    viewModel.triggerEmergencySOSBeacon()
+                                    showSOSDialog = false
+                                }) {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: status.iconName)
+                                            .font(.title3)
+                                            .foregroundColor(status.themeColor)
+                                            .frame(width: 28)
+                                        
+                                        Text(status.rawValue)
+                                            .font(.body.weight(.medium))
+                                            .foregroundColor(.primary)
+                                        
+                                        Spacer()
+                                        
+                                        Image(systemName: "antenna.radiowaves.left.and.right")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        } header: {
+                            Text("Emergency Distress Alert")
+                        } footer: {
+                            Text("Broadcasting an emergency beacon sends high-priority pings to all nearby Relyvo mesh nodes and triggers an acoustic alarm.")
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .navigationTitle("Distress Beacon")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") {
+                                showSOSDialog = false
+                            }
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showingQRShare) {
+                ChannelQRShareView(channelID: viewModel.selectedChannel)
+            }
+            .sheet(isPresented: $showingQRScanner) {
+                ChannelQRScannerView { scannedChannel in
+                    viewModel.selectedChannel = scannedChannel
+                }
+            }
+            .sheet(isPresented: $viewModel.showingChatDrawer, onDismiss: {
+                viewModel.hasUnreadChannelMessages = false
+            }) {
+                ChannelChatModalView(viewModel: viewModel)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }

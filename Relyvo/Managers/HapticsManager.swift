@@ -16,76 +16,138 @@ final class HapticsManager {
     // MARK: - Impact Feedback Generators
     
     func lightImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        generator.impactOccurred()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.prepare()
+            generator.impactOccurred()
+        }
+        #endif
     }
     
     func mediumImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.prepare()
-        generator.impactOccurred()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.prepare()
+            generator.impactOccurred()
+        }
+        #endif
     }
     
     func heavyImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.prepare()
-        generator.impactOccurred()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .heavy)
+            generator.prepare()
+            generator.impactOccurred()
+        }
+        #endif
     }
     
     func rigidImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .rigid)
-        generator.prepare()
-        generator.impactOccurred()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .rigid)
+            generator.prepare()
+            generator.impactOccurred()
+        }
+        #endif
     }
     
     func softImpact() {
-        let generator = UIImpactFeedbackGenerator(style: .soft)
-        generator.prepare()
-        generator.impactOccurred()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .soft)
+            generator.prepare()
+            generator.impactOccurred()
+        }
+        #endif
     }
     
     // MARK: - Selection Feedback
     
     func selectionFeedback() {
-        let generator = UISelectionFeedbackGenerator()
-        generator.prepare()
-        generator.selectionChanged()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UISelectionFeedbackGenerator()
+            generator.prepare()
+            generator.selectionChanged()
+        }
+        #endif
     }
     
     // MARK: - Notification Feedback
     
     func successFeedback() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.success)
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UINotificationFeedbackGenerator()
+            generator.prepare()
+            generator.notificationOccurred(.success)
+        }
+        #endif
     }
     
     func warningFeedback() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.warning)
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UINotificationFeedbackGenerator()
+            generator.prepare()
+            generator.notificationOccurred(.warning)
+        }
+        #endif
     }
     
     func errorFeedback() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.error)
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator = UINotificationFeedbackGenerator()
+            generator.prepare()
+            generator.notificationOccurred(.error)
+        }
+        #endif
+    }
+    
+    // MARK: - Tactical Emergency SOS Pattern
+    
+    /// Triggers a heavy, repeated tactical vibration pattern for emergency SOS alerts
+    func playSOSTacticalPattern() {
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let heavy = UIImpactFeedbackGenerator(style: .heavy)
+            let error = UINotificationFeedbackGenerator()
+            heavy.prepare()
+            error.prepare()
+            
+            heavy.impactOccurred()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                error.notificationOccurred(.error)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                heavy.impactOccurred()
+            }
+        }
+        #endif
     }
     
     // MARK: - Tactical Heartbeat Pulse Pattern (Lub-Dub)
     
     /// Triggers a double-pulse heartbeat pattern (light tap followed by medium tap)
     func heartbeatPulse() {
-        let generator1 = UIImpactFeedbackGenerator(style: .light)
-        generator1.prepare()
-        generator1.impactOccurred()
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            let generator2 = UIImpactFeedbackGenerator(style: .medium)
-            generator2.prepare()
-            generator2.impactOccurred()
+        #if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            let generator1 = UIImpactFeedbackGenerator(style: .light)
+            generator1.prepare()
+            generator1.impactOccurred()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                let generator2 = UIImpactFeedbackGenerator(style: .medium)
+                generator2.prepare()
+                generator2.impactOccurred()
+            }
         }
+        #endif
     }
 }
 

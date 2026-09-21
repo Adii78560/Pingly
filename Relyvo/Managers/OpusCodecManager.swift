@@ -115,7 +115,6 @@ final class OpusCodecManager {
         }
         
         self.lastDecodedSamples = plcSamples
-        AppLogger.audio.info("Opus PLC Synthesized 20ms Packet Loss Concealment Frame.")
         return plcSamples.withUnsafeBytes { Data($0) }
     }
 }

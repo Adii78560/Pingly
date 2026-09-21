@@ -35,6 +35,10 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     private(set) var isRecording = false
     private let audioQueue = DispatchQueue(label: "com.pingly.audiostream", qos: .userInteractive)
     
+    #if targetEnvironment(simulator)
+    private var simulatorTimer: DispatchSourceTimer?
+    #endif
+    
     private override init() {
         super.init()
         setupEngineNodes()
@@ -46,9 +50,7 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         // Enable Voice Processing (Voice Isolation, Acoustic Echo Cancellation, Noise Suppression)
         do {
             try audioEngine.inputNode.setVoiceProcessingEnabled(true)
-            AppLogger.audio.info("Hardware Voice Processing & Noise Suppression enabled")
         } catch {
-            AppLogger.audio.warning("Could not enable Voice Processing: \(error.localizedDescription)")
         }
         
         // Attach player node to engine
@@ -61,13 +63,14 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     
     /// Prepares player and engine nodes following an interruption recovery.
     func preparePlaybackEngine() {
+        #if !targetEnvironment(simulator)
         if !audioEngine.isRunning {
             try? audioEngine.start()
         }
+        #endif
         if !playerNode.isPlaying {
             playerNode.play()
         }
-        AppLogger.audio.info("[AUDIO_ENGINE_READY] Playback engine primed after interruption")
     }
     
     /// Completely tears down and reconstructs the AVAudioEngine upon media server reset.
@@ -79,13 +82,13 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         
         setupEngineNodes()
         
+        #if !targetEnvironment(simulator)
         do {
             try audioEngine.start()
             playerNode.play()
-            AppLogger.audio.info("[AUDIO_MEDIA_SERVER_RESET] AVAudioEngine successfully reconstructed and restarted")
         } catch {
-            AppLogger.audio.error("[AUDIO_MEDIA_SERVER_RESET_ERR] Failed to restart reconstructed engine: \(error.localizedDescription)")
         }
+        #endif
     }
     
     // MARK: - Public Recording Engine
@@ -94,6 +97,22 @@ final class AudioStreamEngine: NSObject, ObservableObject {
     func startCapture() -> Bool {
         BackgroundAudioSessionManager.shared.configureAudioSession()
         
+        #if targetEnvironment(simulator)
+        isRecording = true
+        simulatorTimer?.cancel()
+        simulatorTimer = DispatchSource.makeTimerSource(queue: audioQueue)
+        simulatorTimer?.schedule(deadline: .now(), repeating: .milliseconds(20))
+        simulatorTimer?.setEventHandler { [weak self] in
+            guard let self = self, self.isRecording else { return }
+            let emptyData = Data(count: 640)
+            self.delegate?.audioStreamEngine(self, didCaptureAudioChunk: emptyData)
+            DispatchQueue.main.async {
+                self.currentAudioLevel = 0.5
+            }
+        }
+        simulatorTimer?.resume()
+        return true
+        #else
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
         
@@ -155,26 +174,29 @@ final class AudioStreamEngine: NSObject, ObservableObject {
                 try audioEngine.start()
             }
             isRecording = true
-            AppLogger.audio.info("AudioStreamEngine recording started successfully")
             return true
         } catch {
-            AppLogger.audio.error("Failed to start AudioStreamEngine: \(error.localizedDescription)")
             return false
         }
+        #endif
     }
     
     /// Stops microphone tap and engine recording idempotently to conserve battery power.
     func stopCapture() {
         isRecording = false
+        #if targetEnvironment(simulator)
+        simulatorTimer?.cancel()
+        simulatorTimer = nil
+        #else
         audioEngine.inputNode.removeTap(onBus: 0)
         if audioEngine.isRunning && !playerNode.isPlaying {
             audioEngine.stop()
         }
+        #endif
         DispatchQueue.main.async {
             self.currentAudioLevel = 0.0
         }
         BackgroundAudioSessionManager.shared.deactivateAudioSession()
-        AppLogger.audio.info("AudioStreamEngine recording stopped & audio session deactivated")
     }
 
     
@@ -197,7 +219,6 @@ final class AudioStreamEngine: NSObject, ObservableObject {
             if let highestSeq = highestPlayedSequenceNo {
                 let diff = Int16(bitPattern: incomingSeq &- highestSeq)
                 if diff <= 0 {
-                    AppLogger.audio.warning("[AUDIO_JITTER_DROP] seq=\(incomingSeq) expected>=\(highestSeq)")
                     return
                 }
             }
@@ -215,14 +236,15 @@ final class AudioStreamEngine: NSObject, ObservableObject {
         let mixerFormat = audioEngine.mainMixerNode.outputFormat(forBus: 0)
         guard let buffer = dataToPCMBuffer(data, targetFormat: mixerFormat) else { return }
         
+        #if !targetEnvironment(simulator)
         if !audioEngine.isRunning {
             do {
                 try audioEngine.start()
             } catch {
-                AppLogger.audio.error("Engine start failed for playback: \(error.localizedDescription)")
                 return
             }
         }
+        #endif
         
         if !playerNode.isPlaying {
             playerNode.play()
@@ -281,6 +303,22 @@ final class AudioStreamEngine: NSObject, ObservableObject {
             if let baseAddress = rawBuffer.baseAddress {
                 memcpy(sourceInt16, baseAddress, data.count)
             }
+        }
+        
+        // Apply soft knee limiting / clamping (-1.0 to 1.0)
+        for i in 0..<Int(sampleCount) {
+            var sampleFloat = Float(sourceInt16[i]) / 32768.0
+            
+            // Soft knee compression above 0.7
+            let threshold: Float = 0.7
+            if sampleFloat > threshold {
+                sampleFloat = threshold + (sampleFloat - threshold) / (1.0 + (sampleFloat - threshold) * 2.0)
+            } else if sampleFloat < -threshold {
+                sampleFloat = -threshold + (sampleFloat + threshold) / (1.0 - (sampleFloat + threshold) * 2.0)
+            }
+            
+            sampleFloat = max(-1.0, min(1.0, sampleFloat))
+            sourceInt16[i] = Int16(sampleFloat * 32767.0)
         }
         
         guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else { return nil }

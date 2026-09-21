@@ -64,9 +64,9 @@ final class SpeechTranscriberManager: ObservableObject {
         SFSpeechRecognizer.requestAuthorization { status in
             switch status {
             case .authorized:
-                AppLogger.audio.info("Speech recognition authorized")
+                break
             case .denied, .restricted, .notDetermined:
-                AppLogger.audio.warning("Speech recognition authorization status: \(status.rawValue)")
+                break
             @unknown default:
                 break
             }
@@ -93,7 +93,6 @@ final class SpeechTranscriberManager: ObservableObject {
         request.shouldReportPartialResults = true
         
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            AppLogger.audio.warning("SFSpeechRecognizer is NOT available. Active locale: \(self.speechRecognizer?.locale.identifier ?? "none")")
             self.isTranscribing = true
             return
         }
@@ -109,18 +108,15 @@ final class SpeechTranscriberManager: ObservableObject {
         self.recognitionRequest = request
 
         
-        AppLogger.audio.info("SFSpeechRecognizer available. supportsOnDevice: \(recognizer.supportsOnDeviceRecognition)")
         
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self = self else { return }
             
-            if let error = error {
-                AppLogger.audio.error("SFSpeechRecognitionTask error: \(error.localizedDescription)")
+            if error != nil {
             }
             
             if let result = result {
                 let latestString = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
-                AppLogger.audio.info("SFSpeechRecognitionTask text: \"\(latestString)\" (isFinal: \(result.isFinal))")
                 
                 DispatchQueue.main.async {
                     guard !latestString.isEmpty else { return }
@@ -146,7 +142,6 @@ final class SpeechTranscriberManager: ObservableObject {
 
         
         self.isTranscribing = true
-        AppLogger.audio.info("Speech transcription started for speaker: \(speakerName) on channel: \(channel)")
     }
     
     /// Appends incoming audio PCM buffer to the speech recognition pipeline.
@@ -184,7 +179,6 @@ final class SpeechTranscriberManager: ObservableObject {
             
             // Only save transcript if actual spoken text was recognized
             guard !textToSave.isEmpty else {
-                AppLogger.audio.info("No speech detected during PTT broadcast; ignoring empty transcript.")
                 return
             }
             
@@ -192,17 +186,20 @@ final class SpeechTranscriberManager: ObservableObject {
             
             let sessionIDToSave = self.currentSessionID
             
-            // Persist VoiceTranscript to SwiftData with initial delivery status indicator (Gray offline)
-            let sdTranscript = SwiftDataService.shared.saveVoiceTranscript(
-                speakerName: finalSpeaker,
-                text: textToSave,
-                channel: channel,
-                isDelivered: false,
-                sessionID: sessionIDToSave
-            )
+            let transcriptID = UUID()
+            Task {
+                await SwiftDataService.shared.persistenceActor.saveVoiceTranscript(
+                    id: transcriptID,
+                    speakerName: finalSpeaker,
+                    text: textToSave,
+                    channel: channel,
+                    isDelivered: false,
+                    sessionID: sessionIDToSave
+                )
+            }
             
             let transcript = VoiceTranscript(
-                id: sdTranscript.id,
+                id: transcriptID,
                 speakerName: finalSpeaker,
                 text: textToSave,
                 channel: channel,
@@ -214,19 +211,27 @@ final class SpeechTranscriberManager: ObservableObject {
             let localNodeID = NodeIdentity.shared.nodeID
             
             // Enqueue in persistent store-and-forward queue with WAITING_FOR_ACK / QUEUED state
-            _ = SwiftDataService.shared.enqueuePendingMessage(
-                messageID: sdTranscript.id,
-                originID: localNodeID,
-                destinationID: "BROADCAST",
-                recipientName: "Broadcast",
-                senderName: finalSpeaker,
-                text: "[\(channel)] \(textToSave)",
-                channel: channel
-            )
+            Task {
+                await SwiftDataService.shared.persistenceActor.enqueuePendingMessage(
+                    messageID: transcriptID,
+                    originID: localNodeID,
+                    destinationID: "BROADCAST",
+                    recipientName: "Broadcast",
+                    senderName: finalSpeaker,
+                    text: "[\(channel)] \(textToSave)",
+                    channel: channel,
+                    isSOS: false,
+                    priorityRaw: 0,
+                    statusRaw: "QUEUED",
+                    queueRoleRaw: "ORIGIN",
+                    hopsCount: 0,
+                    ttl: Constants.Emergency.broadcastTTL
+                )
+            }
             
             // Broadcast VoiceTranscript payload over P2P mesh network if connected
             let netMessage = Message(
-                id: sdTranscript.id,
+                id: transcriptID,
                 originID: localNodeID,
                 destinationID: "BROADCAST",
                 senderID: localNodeID,
@@ -243,23 +248,19 @@ final class SpeechTranscriberManager: ObservableObject {
 
 
             
-            let encodedBytes = (try? JSONEncoder().encode(netMessage))?.count ?? 0
-            AppLogger.audio.info("""
-            [PINGLY_VOICE_TX]
-            transcriptID=\(sdTranscript.id.uuidString)
-            channel=\(channel)
-            sender=\(finalSpeaker)
-            destination=\(channel)
-            textLength=\(textToSave.count)
-            encodedBytes=\(encodedBytes)
-            """)
+            _ = (try? JSONEncoder().encode(netMessage))?.count ?? 0
             
             if isConnected {
                 MultipeerService.shared.broadcast(message: netMessage)
-                SwiftDataService.shared.updatePendingMessageStatus(messageID: sdTranscript.id, status: .waitingForACK)
-                AppLogger.audio.info("Saved & broadcasted VoiceTranscript \(sdTranscript.id) on \(channel) (waiting for ACK).")
+                Task {
+                    let isBroadcastOrChannel = (netMessage.destinationID == "BROADCAST") || (netMessage.channelID?.hasPrefix("CH-") == true)
+                    if isBroadcastOrChannel {
+                        await SwiftDataService.shared.persistenceActor.deletePendingMessage(messageID: transcriptID)
+                    } else {
+                        await SwiftDataService.shared.persistenceActor.updatePendingMessageStatus(messageID: transcriptID, statusRaw: "WAITING_FOR_ACK")
+                    }
+                }
             } else {
-                AppLogger.audio.info("Saved offline VoiceTranscript \(sdTranscript.id) on \(channel) to pending store-and-forward queue.")
             }
             
             NotificationCenter.default.post(name: .didSaveVoiceTranscript, object: nil)
@@ -276,7 +277,16 @@ final class SpeechTranscriberManager: ObservableObject {
         DispatchQueue.main.async {
             let transcript = VoiceTranscript(speakerName: speakerName, text: text, channel: channel)
             self.transcriptHistory.append(transcript)
-            _ = SwiftDataService.shared.saveVoiceTranscript(speakerName: speakerName, text: text, channel: channel)
+            Task {
+                await SwiftDataService.shared.persistenceActor.saveVoiceTranscript(
+                    id: UUID(),
+                    speakerName: speakerName,
+                    text: text,
+                    channel: channel,
+                    isDelivered: false,
+                    sessionID: nil
+                )
+            }
         }
     }
 

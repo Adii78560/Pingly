@@ -24,17 +24,17 @@ final class LoopbackTransport {
     private let lock = NSLock()
     
     func register(node: SimulatedNode) {
-        lock.lock()
-        defer { lock.unlock() }
+        // lock.lock()
+        defer { /* lock.unlock() */ }
         nodes[node.nodeID] = node
         node.transport = self
     }
     
-    func send(data: Data, from originNodeID: String, to targetNodeID: String) {
-        lock.lock()
+    func send(data: Data, from originNodeID: String, to targetNodeID: String) async {
+        // lock.lock()
         let targetNode = nodes[targetNodeID]
         let currentMode = mode
-        lock.unlock()
+        // lock.unlock()
         
         guard let target = targetNode else { return }
         
@@ -49,27 +49,27 @@ final class LoopbackTransport {
         if isAckFrame {
             switch currentMode {
             case .normal:
-                target.receiveFrame(data: data, fromPeerID: originNodeID)
+                await target.receiveFrame(data: data, fromPeerID: originNodeID)
             case .dropACKs:
-                AppLogger.multipeer.info("[LoopbackTransport] Test mode DROP_ACKS: Dropping ACK frame from \(originNodeID) to \(targetNodeID)")
+                break
             case .delayACK(let seconds):
-                AppLogger.multipeer.info("[LoopbackTransport] Test mode DELAY_ACK: Delaying ACK frame by \(seconds)s from \(originNodeID) to \(targetNodeID)")
-                DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
-                    target.receiveFrame(data: data, fromPeerID: originNodeID)
-                }
+                Task {
+                    try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                    await target.receiveFrame(data: data, fromPeerID: originNodeID)
+                    }
             }
         } else {
-            target.receiveFrame(data: data, fromPeerID: originNodeID)
+            await target.receiveFrame(data: data, fromPeerID: originNodeID)
         }
     }
     
-    func broadcast(data: Data, from originNodeID: String) {
-        lock.lock()
+    func broadcast(data: Data, from originNodeID: String) async {
+        // lock.lock()
         let peerNodes = nodes.values.filter { $0.nodeID != originNodeID }
-        lock.unlock()
+        // lock.unlock()
         
         for peer in peerNodes {
-            send(data: data, from: originNodeID, to: peer.nodeID)
+            await send(data: data, from: originNodeID, to: peer.nodeID)
         }
     }
 }
@@ -89,9 +89,16 @@ final class SimulatedNode {
         self.nodeID = nodeID
         self.displayName = displayName
         self.swiftDataService = SwiftDataService(inMemory: true)
+        
+        // Insert test peers as accepted friends to pass direct message authorization
+        let context = swiftDataService.context
+        for peer in ["TEST-A", "TEST-B", "TEST-C", "TEST-OTHER"] {
+            context.insert(SDFriend(nodeID: peer, handle: peer, status: .accepted))
+        }
+        try? context.save()
     }
     
-    func sendChatMessage(to destinationID: String, text: String, messageID: UUID = UUID(), hopsCount: Int = 0, ttl: Int = Constants.Emergency.broadcastTTL) -> Message {
+    func sendChatMessage(to destinationID: String, text: String, messageID: UUID = UUID(), hopsCount: Int = 0, ttl: Int = 5) async -> Message {
         let msg = Message(
             id: messageID,
             originID: nodeID,
@@ -106,66 +113,56 @@ final class SimulatedNode {
             type: .chat
         )
         
-        _ = swiftDataService.saveChatMessage(
+        await swiftDataService.persistenceActor.saveChatMessage(
             id: msg.id,
+            originID: nodeID,
+            senderID: nodeID,
+            destinationID: destinationID,
             senderName: displayName,
             channel: destinationID,
-            text: text
-        )
-        
-        _ = swiftDataService.enqueuePendingMessage(
-            messageID: msg.id,
-            originID: nodeID,
-            destinationID: destinationID,
-            recipientName: destinationID,
-            senderName: displayName,
             text: text,
-            channel: destinationID
+            messageTypeRaw: "TEXT"
         )
         
-        swiftDataService.updatePendingMessageStatus(messageID: msg.id, status: .sending)
+        await swiftDataService.persistenceActor.enqueuePendingMessage(messageID: msg.id, originID: nodeID, destinationID: destinationID, recipientName: destinationID, senderName: displayName, text: text, channel: destinationID, isSOS: false, priorityRaw: 0, statusRaw: "QUEUED", queueRoleRaw: "ORIGIN", hopsCount: 0, ttl: 5)
+        
+        await swiftDataService.persistenceActor.updatePendingMessageStatus(messageID: msg.id, statusRaw: "SENDING")
         
         if let data = try? JSONEncoder().encode(msg) {
-            swiftDataService.updatePendingMessageStatus(messageID: msg.id, status: .waitingForACK)
-            transport?.broadcast(data: data, from: nodeID)
+            await swiftDataService.persistenceActor.updatePendingMessageStatus(messageID: msg.id, statusRaw: "WAITING_FOR_ACK")
+            await transport?.broadcast(data: data, from: nodeID)
         }
         
         return msg
     }
     
-    func receiveFrame(data: Data, fromPeerID: String) {
+    func receiveFrame(data: Data, fromPeerID: String) async {
         // Attempt decode as Message
         let message: Message
         do {
             message = try JSONDecoder().decode(Message.self, from: data)
         } catch {
-            let dataStr = String(data: data, encoding: .utf8) ?? data.map { String(format: "%02hhX", $0) }.joined()
-            AppLogger.multipeer.error("[LoopbackTest] JSON DECODE ERROR: \(error.localizedDescription) - Data: \(dataStr)")
-            AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=JSON_DECODE_FAILED node=\(self.nodeID)")
+            _ = String(data: data, encoding: .utf8) ?? data.map { String(format: "%02hhX", $0) }.joined()
             return
         }
         
         // 1. Protocol Version Validation
         guard message.protocolVersion <= Constants.Mesh.currentProtocolVersion else {
-            AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=UNSUPPORTED_PROTOCOL_VERSION actual=\(message.protocolVersion) node=\(self.nodeID)")
             return
         }
         
         // 2. CryptoKit HMAC Verification
         guard MeshSecurityManager.shared.verify(message: message) else {
-            AppLogger.multipeer.warning("[LoopbackTest] MALFORMED_FRAME_REJECTED reason=HMAC_VERIFICATION_FAILED node=\(self.nodeID)")
             return
         }
         
         // 3. Self-echo prevention
         guard message.senderID != nodeID && message.previousHopID != nodeID else {
-            AppLogger.multipeer.info("[LoopbackTest] LOOP_REJECTED reason=SELF_ECHO node=\(self.nodeID)")
             return
         }
         
         // 4. Origin local reject
         if message.type != .ack && message.originID == nodeID {
-            AppLogger.multipeer.info("[LoopbackTest] LOOP_REJECTED reason=LOCAL_ORIGIN node=\(self.nodeID)")
             return
         }
         
@@ -173,15 +170,15 @@ final class SimulatedNode {
         if message.type == .ack {
             let isForMe = (message.originID == nodeID || message.destinationID == nodeID)
             if isForMe {
-                swiftDataService.markPendingMessageAsACKed(messageID: message.id)
+                await swiftDataService.persistenceActor.markPendingMessageAsACKed(messageID: message.id)
             } else {
                 // Relay ACK back toward origin
-                swiftDataService.markPendingMessageAsACKed(messageID: message.id)
+                await swiftDataService.persistenceActor.markPendingMessageAsACKed(messageID: message.id)
                 var relayAck = message
                 relayAck.previousHopID = nodeID
                 relayAck.hopsCount += 1
                 if let ackData = try? JSONEncoder().encode(relayAck) {
-                    transport?.broadcast(data: ackData, from: nodeID)
+                    await transport?.broadcast(data: ackData, from: nodeID)
                 }
             }
             return
@@ -194,12 +191,16 @@ final class SimulatedNode {
             if !alreadyProcessed {
                 receivedMessages.append(message)
                 processedFrameIDs.insert(message.id)
-                _ = swiftDataService.saveChatMessage(
+                await swiftDataService.persistenceActor.saveChatMessage(
                     id: message.id,
+                    originID: message.originID,
+                    senderID: message.senderID,
+                    destinationID: message.destinationID,
                     senderName: message.senderName,
                     channel: message.destinationID,
                     text: message.text,
-                    isDelivered: true
+                    isDelivered: true,
+                    messageTypeRaw: "TEXT"
                 )
             }
             
@@ -219,7 +220,7 @@ final class SimulatedNode {
             )
             
             if let ackData = try? JSONEncoder().encode(deliveryAck) {
-                transport?.send(data: ackData, from: nodeID, to: fromPeerID)
+                await transport?.send(data: ackData, from: nodeID, to: fromPeerID)
             }
         } else {
             // Multi-hop relay
@@ -229,10 +230,9 @@ final class SimulatedNode {
             
             if relayMsg.hopsCount <= relayMsg.ttl {
                 if let relayData = try? JSONEncoder().encode(relayMsg) {
-                    transport?.broadcast(data: relayData, from: nodeID)
+                    await transport?.broadcast(data: relayData, from: nodeID)
                 }
             } else {
-                AppLogger.multipeer.warning("[LoopbackTest] TTL_EXHAUSTED messageID=\(message.id) hops=\(relayMsg.hopsCount)/\(relayMsg.ttl) node=\(self.nodeID)")
             }
         }
     }
@@ -245,7 +245,7 @@ final class LoopbackTestHarness {
     
     private init() {}
     
-    func runAllLoopbackTests() -> (passedCount: Int, failedCount: Int, reportSummary: String) {
+    func runAllLoopbackTests() async -> (passedCount: Int, failedCount: Int, reportSummary: String) {
         var passed = 0
         var failed = 0
         var results: [(testName: String, status: String, details: String)] = []
@@ -254,22 +254,18 @@ final class LoopbackTestHarness {
             let statusStr = success ? "PASS" : "FAIL"
             if success {
                 passed += 1
-                AppLogger.multipeer.info("[LoopbackTest] PASS name=\(name) details=\(details)")
             } else {
                 failed += 1
-                AppLogger.multipeer.error("[LoopbackTest] FAIL name=\(name) details=\(details)")
             }
             results.append((name, statusStr, details))
         }
         
         AppLogger.multipeer.info("==================================================")
-        AppLogger.multipeer.info("[LoopbackTest] STARTING SIMULATOR LOOPBACK TEST SUITE")
         AppLogger.multipeer.info("==================================================")
         
         // -------------------------------------------------------------
         // Test 1: Message Correlation ID Preservation
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=CorrelationIDPreservation")
         let transport1 = LoopbackTransport()
         let nodeA1 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB1 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -277,7 +273,7 @@ final class LoopbackTestHarness {
         transport1.register(node: nodeB1)
         
         let createdMsgID = UUID()
-        let createdMsg = nodeA1.sendChatMessage(to: "TEST-B", text: "Correlation Test", messageID: createdMsgID)
+        let createdMsg = await nodeA1.sendChatMessage(to: "TEST-B", text: "Correlation Test", messageID: createdMsgID)
         
         let persistedMsg = nodeA1.swiftDataService.fetchChatMessages(for: "TEST-B").first(where: { $0.id == createdMsgID })
         let pendingMsg = nodeA1.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == createdMsgID })
@@ -300,14 +296,13 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 2: Basic A -> B Delivery
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=BasicAtoBDelivery")
         let transport2 = LoopbackTransport()
         let nodeA2 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB2 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
         transport2.register(node: nodeA2)
         transport2.register(node: nodeB2)
         
-        let msg2 = nodeA2.sendChatMessage(to: "TEST-B", text: "Hello Node B")
+        let msg2 = await nodeA2.sendChatMessage(to: "TEST-B", text: "Hello Node B")
         let nodeA2Pending = nodeA2.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg2.id })
         let nodeA2Chat = nodeA2.swiftDataService.fetchChatMessages(for: "TEST-B").first(where: { $0.id == msg2.id })
         let nodeB2Chat = nodeB2.swiftDataService.fetchChatMessages(for: "TEST-B").first(where: { $0.id == msg2.id })
@@ -326,8 +321,7 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 3: Basic B -> A Delivery (Symmetry Test)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=BasicBtoADelivery")
-        let msg3 = nodeB2.sendChatMessage(to: "TEST-A", text: "Hello Node A (Reverse)")
+        let msg3 = await nodeB2.sendChatMessage(to: "TEST-A", text: "Hello Node A (Reverse)")
         let nodeB2Pending = nodeB2.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg3.id })
         let nodeA2Rx = nodeA2.receivedMessages.first(where: { $0.id == msg3.id })
         
@@ -341,7 +335,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 4: Duplicate Delivery Handling
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=DuplicateDeliveryHandling")
         let transport4 = LoopbackTransport()
         let nodeA4 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB4 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -361,11 +354,11 @@ final class LoopbackTestHarness {
         
         if let dupData = try? JSONEncoder().encode(dupMsg) {
             // First Delivery
-            nodeB4.receiveFrame(data: dupData, fromPeerID: "TEST-A")
+            await nodeB4.receiveFrame(data: dupData, fromPeerID: "TEST-A")
             let rxCount1 = nodeB4.receivedMessages.count
             
             // Second Delivery (Duplicate)
-            nodeB4.receiveFrame(data: dupData, fromPeerID: "TEST-A")
+            await nodeB4.receiveFrame(data: dupData, fromPeerID: "TEST-A")
             let rxCount2 = nodeB4.receivedMessages.count
             let b4ChatCount = nodeB4.swiftDataService.fetchChatMessages(for: "TEST-B").filter({ $0.id == dupMsgID }).count
             
@@ -382,7 +375,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 5: ACK Correlation & Mismatch Prevention
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=ACKCorrelation")
         let transport5 = LoopbackTransport()
         let nodeA5 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB5 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -390,7 +382,7 @@ final class LoopbackTestHarness {
         transport5.register(node: nodeB5)
         transport5.mode = .dropACKs // Prevent automatic ACK so we can test manual injection
         
-        let msg5 = nodeA5.sendChatMessage(to: "TEST-B", text: "ACK Correlation Test")
+        let msg5 = await nodeA5.sendChatMessage(to: "TEST-B", text: "ACK Correlation Test")
         let statusBeforeACK = nodeA5.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg5.id })?.status
         
         // Inject Mismatched ACK referencing UUID-2
@@ -405,7 +397,7 @@ final class LoopbackTestHarness {
             type: .ack
         )
         if let ackDataBad = try? JSONEncoder().encode(mismatchedACK) {
-            nodeA5.receiveFrame(data: ackDataBad, fromPeerID: "TEST-B")
+            await nodeA5.receiveFrame(data: ackDataBad, fromPeerID: "TEST-B")
         }
         let statusAfterBadACK = nodeA5.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg5.id })?.status
         
@@ -421,7 +413,7 @@ final class LoopbackTestHarness {
             type: .ack
         )
         if let ackDataGood = try? JSONEncoder().encode(validACK) {
-            nodeA5.receiveFrame(data: ackDataGood, fromPeerID: "TEST-B")
+            await nodeA5.receiveFrame(data: ackDataGood, fromPeerID: "TEST-B")
         }
         let statusAfterGoodACK = nodeA5.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg5.id })?.status
         
@@ -438,7 +430,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 6: Serialization Round Trip
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=SerializationRoundTrip")
         let roundTripID = UUID()
         let originalMsg = Message(
             id: roundTripID,
@@ -479,7 +470,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 7: Malformed Frames Handling
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=MalformedFramesHandling")
         let nodeA7 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         
         let emptyData = Data()
@@ -490,10 +480,10 @@ final class LoopbackTestHarness {
         forgedMsg.authTag = "FORGED_SIGNATURE"
         let forgedData = (try? JSONEncoder().encode(forgedMsg)) ?? Data()
         
-        nodeA7.receiveFrame(data: emptyData, fromPeerID: "TEST-X")
-        nodeA7.receiveFrame(data: randomBytes, fromPeerID: "TEST-X")
-        nodeA7.receiveFrame(data: truncatedJSON, fromPeerID: "TEST-X")
-        nodeA7.receiveFrame(data: forgedData, fromPeerID: "TEST-X")
+        await nodeA7.receiveFrame(data: emptyData, fromPeerID: "TEST-X")
+        await nodeA7.receiveFrame(data: randomBytes, fromPeerID: "TEST-X")
+        await nodeA7.receiveFrame(data: truncatedJSON, fromPeerID: "TEST-X")
+        await nodeA7.receiveFrame(data: forgedData, fromPeerID: "TEST-X")
         
         let t7Success = (nodeA7.receivedMessages.isEmpty) && (nodeA7.swiftDataService.fetchChatMessages(for: "TEST-A").isEmpty)
         logResult(
@@ -505,7 +495,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 8: ACK Timeout & Retry Identity
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=ACKTimeoutAndRetryIdentity")
         let transport8 = LoopbackTransport()
         transport8.mode = .dropACKs
         let nodeA8 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
@@ -513,16 +502,16 @@ final class LoopbackTestHarness {
         transport8.register(node: nodeA8)
         transport8.register(node: nodeB8)
         
-        let msg8 = nodeA8.sendChatMessage(to: "TEST-B", text: "Timeout Test")
+        let msg8 = await nodeA8.sendChatMessage(to: "TEST-B", text: "Timeout Test")
         let statusWaiting = nodeA8.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg8.id })?.status
         
         // Trigger simulated timeout
-        nodeA8.swiftDataService.updatePendingMessageStatus(messageID: msg8.id, status: PendingMessageStatus.failed, reason: "ACK_TIMEOUT")
+        await nodeA8.swiftDataService.persistenceActor.updatePendingMessageStatus(messageID: msg8.id, statusRaw: "FAILED", reason: "ACK_TIMEOUT")
         let statusFailed = nodeA8.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg8.id })?.status
         let failedPending = nodeA8.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg8.id })
         
         // Simulate retry flush
-        nodeA8.swiftDataService.resetFailedPendingMessages()
+        await nodeA8.swiftDataService.persistenceActor.resetFailedPendingMessages()
         let retryPending = nodeA8.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg8.id })
         
         let t8Success = (statusWaiting == .waitingForACK) &&
@@ -539,21 +528,20 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 9: Delayed ACK Race Condition Prevention
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=DelayedACKRaceCondition")
         let transport9 = LoopbackTransport()
         let nodeA9 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB9 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
         transport9.register(node: nodeA9)
         transport9.register(node: nodeB9)
         
-        let msg9 = nodeA9.sendChatMessage(to: "TEST-B", text: "Delayed ACK Test")
+        let msg9 = await nodeA9.sendChatMessage(to: "TEST-B", text: "Delayed ACK Test")
         // Node A receives ACK and marks message delivered
         let statusACKed = nodeA9.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg9.id })?.status
         
         // Simulate late timeout task executing AFTER ACK received
         let checkList = nodeA9.swiftDataService.fetchPendingMessages()
         if let item = checkList.first(where: { $0.messageID == msg9.id }), item.status == .waitingForACK {
-            nodeA9.swiftDataService.updatePendingMessageStatus(messageID: msg9.id, status: PendingMessageStatus.failed)
+            await nodeA9.swiftDataService.persistenceActor.updatePendingMessageStatus(messageID: msg9.id, statusRaw: "FAILED")
         }
         
         let statusFinal = nodeA9.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg9.id })?.status
@@ -568,42 +556,24 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 10: Duplicate Send Queue Handling
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=DuplicateSendQueueHandling")
         let nodeA10 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let msg10ID = UUID()
         
-        let enqueued1 = nodeA10.swiftDataService.enqueuePendingMessage(
-            messageID: msg10ID,
-            originID: "TEST-A",
-            destinationID: "TEST-B",
-            recipientName: "TEST-B",
-            senderName: "Node A",
-            text: "Duplicate Queue Payload",
-            channel: "TEST-B"
-        )
-        let enqueued2 = nodeA10.swiftDataService.enqueuePendingMessage(
-            messageID: msg10ID,
-            originID: "TEST-A",
-            destinationID: "TEST-B",
-            recipientName: "TEST-B",
-            senderName: "Node A",
-            text: "Duplicate Queue Payload",
-            channel: "TEST-B"
-        )
+        await nodeA10.swiftDataService.persistenceActor.enqueuePendingMessage(messageID: msg10ID, originID: "TEST-A", destinationID: "TEST-B", recipientName: "TEST-B", senderName: "Node A", text: "Duplicate Queue Payload", channel: "TEST-B", isSOS: false, priorityRaw: 0, statusRaw: "QUEUED", queueRoleRaw: "ORIGIN", hopsCount: 0, ttl: 5)
+        await nodeA10.swiftDataService.persistenceActor.enqueuePendingMessage(messageID: msg10ID, originID: "TEST-A", destinationID: "TEST-B", recipientName: "TEST-B", senderName: "Node A", text: "Duplicate Queue Payload", channel: "TEST-B", isSOS: false, priorityRaw: 0, statusRaw: "QUEUED", queueRoleRaw: "ORIGIN", hopsCount: 0, ttl: 5)
         
         let pendingCount = nodeA10.swiftDataService.fetchPendingMessages().filter({ $0.messageID == msg10ID }).count
-        let t10Success = (enqueued1 != nil) && (enqueued2 == nil) && (pendingCount == 1)
+        let t10Success = (pendingCount == 1)
         
         logResult(
             name: "Duplicate Send Queue Handling",
             success: t10Success,
-            details: "enqueued1=\(enqueued1 != nil) enqueued2=\(enqueued2 != nil) count=\(pendingCount)"
+            details: "count=\(pendingCount)"
         )
         
         // -------------------------------------------------------------
         // Test 11: Multi-Hop Routing in Memory (A -> B -> C)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=MultiHopRoutingAtoBtoC")
         let transport11 = LoopbackTransport()
         let nodeA11 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB11 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B") // Relay
@@ -613,7 +583,7 @@ final class LoopbackTestHarness {
         transport11.register(node: nodeB11)
         transport11.register(node: nodeC11)
         
-        let msg11 = nodeA11.sendChatMessage(to: "TEST-C", text: "Multi-Hop Message A->B->C", ttl: 3)
+        let msg11 = await nodeA11.sendChatMessage(to: "TEST-C", text: "Multi-Hop Message A->B->C", ttl: 3)
         
         let nodeC11Rx = nodeC11.receivedMessages.first(where: { $0.id == msg11.id })
         let nodeA11Status = nodeA11.swiftDataService.fetchPendingMessages().first(where: { $0.messageID == msg11.id })?.status
@@ -628,7 +598,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 12: TTL Handling & Forwarding Expiry
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=TTLHandlingAndForwardingExpiry")
         let transport12 = LoopbackTransport()
         let nodeA12 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         let nodeB12 = SimulatedNode(nodeID: "TEST-B", displayName: "Node B")
@@ -638,7 +607,7 @@ final class LoopbackTestHarness {
         transport12.register(node: nodeC12)
         
         // Send message with TTL = 1 (A -> B will make hop 1, B -> C would be hop 2 > TTL 1, so B drops)
-        let msg12 = nodeA12.sendChatMessage(to: "TEST-C", text: "TTL Expiry Test", ttl: 1)
+        let msg12 = await nodeA12.sendChatMessage(to: "TEST-C", text: "TTL Expiry Test", ttl: 1)
         let nodeCRx12 = nodeC12.receivedMessages.first(where: { $0.id == msg12.id })
         
         let t12Success = (nodeCRx12 == nil) // Correctly dropped due to TTL exhaustion
@@ -651,7 +620,6 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 13: Loop Prevention (Self-Echo / Local Loop Drop)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=LoopPrevention")
         let transport13 = LoopbackTransport()
         let nodeA13 = SimulatedNode(nodeID: "TEST-A", displayName: "Node A")
         transport13.register(node: nodeA13)
@@ -668,7 +636,7 @@ final class LoopbackTestHarness {
         )
         
         if let loopData = try? JSONEncoder().encode(loopMsg) {
-            nodeA13.receiveFrame(data: loopData, fromPeerID: "TEST-A")
+            await nodeA13.receiveFrame(data: loopData, fromPeerID: "TEST-A")
         }
         
         let t13Success = nodeA13.receivedMessages.isEmpty
@@ -681,12 +649,11 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 14: SwiftData Isolation (Production Store Protection)
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=SwiftDataIsolation")
         let prodChatCountBefore = (try? SwiftDataService.shared.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
         
         // Execute a simulated node transaction
         let isolatedNode = SimulatedNode(nodeID: "TEST-ISO", displayName: "Isolated Node")
-        _ = isolatedNode.sendChatMessage(to: "TEST-OTHER", text: "Isolated Message")
+        _ = await isolatedNode.sendChatMessage(to: "TEST-OTHER", text: "Isolated Message")
         
         let prodChatCountAfter = (try? SwiftDataService.shared.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
         let t14Success = (prodChatCountBefore == prodChatCountAfter)
@@ -700,16 +667,16 @@ final class LoopbackTestHarness {
         // -------------------------------------------------------------
         // Test 15: PTT Audio Session Persistence & Metadata Verification
         // -------------------------------------------------------------
-        AppLogger.multipeer.info("[LoopbackTest] TEST_START name=PTTAudioSessionPersistence")
         let testNode = SimulatedNode(nodeID: "TEST-PTT", displayName: "PTT Node")
         let testSessionID = UUID()
         let testFileURLString = "/tmp/test_session.wav"
         
-        let sdSegment = testNode.swiftDataService.saveAudioSegment(
+        await testNode.swiftDataService.persistenceActor.saveAudioSegment(id: UUID(), 
             sessionID: testSessionID,
             senderID: "TEST-PTT",
             senderName: "PTT Node",
             channelID: "CH-1 EMERGENCY",
+            timestamp: Date(),
             duration: 5.5,
             transcriptText: "Test PTT transcript",
             localFileURL: testFileURLString,
@@ -747,7 +714,6 @@ final class LoopbackTestHarness {
         let fullReport = summaryLines.joined(separator: "\n")
         
         AppLogger.multipeer.info("==================================================")
-        AppLogger.multipeer.info("[LoopbackTest] TEST SUITE COMPLETE: \(passed) Passed, \(failed) Failed")
         AppLogger.multipeer.info("\(fullReport)")
         AppLogger.multipeer.info("==================================================")
         
