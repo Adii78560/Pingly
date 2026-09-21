@@ -54,7 +54,7 @@ final class NavigationViewModel: ObservableObject {
     
     // Common State
     @Published var userHeading: Double = 0.0
-    @Published var continuousHeading: Double = 0.0
+    @Published var smoothedHeading: Double = 0.0
     @Published var currentCoordinate: CLLocationCoordinate2D?
     @Published var isNavigating: Bool = false
     @Published var isHapticsEnabled: Bool = true
@@ -123,7 +123,7 @@ final class NavigationViewModel: ObservableObject {
                 guard let self = self else { return }
                 self.currentCoordinate = coord
                 if self.navigationMode == .roadRoute, let coord = coord {
-                    self.updateRouteProgress(location: CLLocation(latitude: coord.latitude, longitude: coord.longitude), heading: self.continuousHeading)
+                    self.updateRouteProgress(location: CLLocation(latitude: coord.latitude, longitude: coord.longitude), heading: self.smoothedHeading)
                 }
             }
             .store(in: &cancellables)
@@ -137,9 +137,9 @@ final class NavigationViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        locationService.$continuousHeading
+        locationService.$smoothedHeading
             .receive(on: DispatchQueue.main)
-            .assign(to: \.continuousHeading, on: self)
+            .assign(to: \.smoothedHeading, on: self)
             .store(in: &cancellables)
         
         // Observe haptic preference

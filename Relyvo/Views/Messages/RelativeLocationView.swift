@@ -93,8 +93,9 @@ struct RelativeLocationView: View {
                             .foregroundColor(.secondary)
                             .offset(x: -125)
                     }
-                    .rotationEffect(.degrees(-locationService.continuousHeading))
-                    .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.8), value: locationService.continuousHeading)
+                    // Unwind rotation to keep map visually pointing north
+                    .rotationEffect(.degrees(-locationService.smoothedHeading))
+                    .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.8), value: locationService.smoothedHeading)
                     
                     // Central "YOU" User Node
                     VStack(spacing: 2) {
@@ -221,7 +222,7 @@ struct RelativeLocationView: View {
             locationShareManager.reloadActiveSessions()
             updateContinuousRelativeBearing()
         }
-        .onChange(of: locationService.continuousHeading) { _ in
+        .onChange(of: locationService.smoothedHeading) { _ in
             updateContinuousRelativeBearing()
         }
         .onChange(of: session?.lastRemoteTimestamp) { _ in

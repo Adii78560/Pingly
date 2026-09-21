@@ -14,7 +14,7 @@ struct ChatView: View {
     
     @State private var inputText: String = ""
     @State private var showLocationOptionsSheet: Bool = false
-    @State private var showRelativeLocationSheet: Bool = false
+    @State private var showOfflineNavigationView: Bool = false
     @ObservedObject private var locationShareManager = LocationShareManager.shared
     @Environment(\.dismiss) private var dismiss
     
@@ -23,24 +23,30 @@ struct ChatView: View {
     }
     
     private var conversationMessages: [Message] {
-        currentConversation.messages
+        currentConversation.messages.filter { msg in
+            !msg.text.contains("LOCATION_PROTOCOL") &&
+            !msg.text.contains("\"type\":\"LOCATION_") &&
+            msg.type != .location &&
+            msg.type != .locationRequest
+        }
+    }
+    
+    private var targetNodeID: String {
+        currentConversation.recipientNodeID
     }
     
     var body: some View {
         VStack(spacing: 0) {
+            // Live Location Banner
+            locationBanner
+            
             // Chat Messages List
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(Array(conversationMessages.enumerated()), id: \.element.id) { index, message in
                             let isMe = (message.senderID == NodeIdentity.shared.nodeID || message.originID == NodeIdentity.shared.nodeID)
-                            let isLastInGroup: Bool = {
-                                guard index < conversationMessages.count - 1 else { return true }
-                                let nextMsg = conversationMessages[index + 1]
-                                let sameSender = nextMsg.senderID == message.senderID
-                                let timeDiff = abs(nextMsg.timestamp.timeIntervalSince(message.timestamp))
-                                return !(sameSender && timeDiff < 60)
-                            }()
+                            let isLastInGroup = self.checkIfLastInGroup(index: index, messages: conversationMessages, currentMessage: message)
                             let showAvatar = !isMe && isLastInGroup
                             
                             iMessageBubbleRow(message: message, isSentByMe: isMe, isLastInGroup: isLastInGroup, showAvatar: showAvatar)
@@ -101,7 +107,7 @@ struct ChatView: View {
             
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
-                    showRelativeLocationSheet = true
+                    showOfflineNavigationView = true
                 }) {
                     Image(systemName: "location.north.circle.fill")
                         .font(.title3)
@@ -111,29 +117,189 @@ struct ChatView: View {
         }
         .confirmationDialog("Location Sharing Options", isPresented: $showLocationOptionsSheet, titleVisibility: .visible) {
             Button("Ask for Location") {
-                LocationShareManager.shared.requestLocation(from: currentConversation.id, displayName: currentConversation.displayName)
+                LocationShareManager.shared.requestLocation(from: targetNodeID, displayName: currentConversation.displayName)
             }
             Button("Share My Location") {
-                LocationShareManager.shared.startSharingLocation(with: currentConversation.id, displayName: currentConversation.displayName)
+                LocationShareManager.shared.startSharingLocation(with: targetNodeID, displayName: currentConversation.displayName)
             }
             Button("Share Relative Position") {
-                LocationShareManager.shared.shareRelativePosition(with: currentConversation.id, displayName: currentConversation.displayName)
+                LocationShareManager.shared.shareRelativePosition(with: targetNodeID, displayName: currentConversation.displayName)
             }
-            Button("Show Relative Location") {
-                showRelativeLocationSheet = true
+            Button("Open Precision Finding") {
+                showOfflineNavigationView = true
             }
-            if locationShareManager.activeSessions[currentConversation.id]?.isSharingLocal == true {
+            if locationShareManager.activeSessions[targetNodeID]?.isSharingLocal == true {
                 Button("Stop Sharing Location", role: .destructive) {
-                    LocationShareManager.shared.stopSharingLocation(with: currentConversation.id, displayName: currentConversation.displayName)
+                    LocationShareManager.shared.stopSharingLocation(with: targetNodeID, displayName: currentConversation.displayName)
                 }
             }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $showRelativeLocationSheet) {
-            RelativeLocationView(
-                remotePeerID: currentConversation.id,
-                remoteDisplayName: currentConversation.displayName
-            )
+        .fullScreenCover(isPresented: $showOfflineNavigationView) {
+            if let session = locationShareManager.activeSessions[targetNodeID],
+               let lat = session.lastRemoteLatitude,
+               let lon = session.lastRemoteLongitude {
+                let target = NavigationTarget(
+                    id: targetNodeID,
+                    displayName: currentConversation.displayName,
+                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                    timestamp: session.lastRemoteTimestamp ?? Date()
+                )
+                OfflineNavigationView(target: target)
+            } else {
+                Text("Location unavailable")
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            showOfflineNavigationView = false
+                        }
+                    }
+            }
+        }
+    }
+    
+    // MARK: - Live Location Banner
+    @ViewBuilder
+    private var locationBanner: some View {
+        if let requestName = locationShareManager.pendingIncomingRequests[targetNodeID] {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color.blue.opacity(0.15)).frame(width: 32, height: 32)
+                    Image(systemName: "location.viewfinder").foregroundColor(.blue)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(requestName) requested your location")
+                        .font(.subheadline)
+                        .bold()
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    Button(action: { LocationShareManager.shared.respondToLocationRequest(from: targetNodeID, displayName: currentConversation.displayName, accept: false) }) {
+                        Text("Decline")
+                            .font(.caption).bold()
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Capsule().fill(Color(UIColor.tertiarySystemFill)))
+                    }
+                    Button(action: { LocationShareManager.shared.respondToLocationRequest(from: targetNodeID, displayName: currentConversation.displayName, accept: true) }) {
+                        Text("Share")
+                            .font(.caption).bold()
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Capsule().fill(Color.green))
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            
+            Divider()
+        } else if let session = locationShareManager.activeSessions[targetNodeID], session.stateRaw != "DENIED" {
+            
+            let isMutual = session.isSharingLocal && session.isSharingRemote
+            let isRequestPending = session.stateRaw == "REQUEST_PENDING"
+            
+            HStack(spacing: 12) {
+                // Left: Icon
+                ZStack {
+                    if isRequestPending {
+                        Circle()
+                            .fill(Color.orange.opacity(0.3))
+                            .frame(width: 24, height: 24)
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.orange)
+                    } else {
+                        Circle()
+                            .fill(Color.green.opacity(0.3))
+                            .frame(width: 24, height: 24)
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 8, height: 8)
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(AppTheme.tintColor)
+                            .offset(x: 12, y: -8)
+                    }
+                }
+                
+                // Center: Titles
+                VStack(alignment: .leading, spacing: 2) {
+                    if isRequestPending {
+                        Text("Location Requested")
+                            .font(.subheadline)
+                            .bold()
+                        Text("Waiting for \(session.remoteDisplayName)...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else if isMutual {
+                        Text("Mutual Location Sharing Active")
+                            .font(.subheadline)
+                            .bold()
+                    } else if session.isSharingLocal {
+                        Text("Sharing Your Location")
+                            .font(.subheadline)
+                            .bold()
+                    } else if session.isSharingRemote {
+                        Text("\(session.remoteDisplayName) is Sharing Location")
+                            .font(.subheadline)
+                            .bold()
+                    }
+                    
+                    if !isRequestPending, session.isSharingRemote, let lat = session.lastRemoteLatitude, let lon = session.lastRemoteLongitude, let userCoord = LocationService.shared.currentCoordinate {
+                        let distMeters = OfflineNavigationService.shared.calculateDistance(from: userCoord, to: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+                        let formattedDist = OfflineNavigationService.shared.formatDistance(meters: distMeters)
+                        Text("📍 \(formattedDist) away")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // Right: Actions
+                if !isRequestPending {
+                    HStack(spacing: 8) {
+                        if session.isSharingRemote {
+                            Button(action: {
+                                showOfflineNavigationView = true
+                            }) {
+                                Text("Find")
+                                    .font(.caption)
+                                    .bold()
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Capsule().fill(Color.green))
+                            }
+                        }
+                        
+                        if session.isSharingLocal {
+                            Button(action: {
+                                LocationShareManager.shared.stopSharingLocation(with: targetNodeID, displayName: currentConversation.displayName)
+                            }) {
+                                Text("Stop")
+                                    .font(.caption)
+                                    .bold()
+                                    .foregroundColor(.red)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Capsule().fill(Color.red.opacity(0.15)))
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .onTapGesture {
+                if session.isSharingRemote {
+                    showOfflineNavigationView = true
+                }
+            }
+            
+            Divider()
         }
     }
     
@@ -142,18 +308,57 @@ struct ChatView: View {
         HStack(alignment: .bottom, spacing: 8) {
             if isSystemLocationEvent(message.type) {
                 Spacer()
-                HStack(spacing: 6) {
-                    Image(systemName: systemLocationEventIcon(message.type))
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(AppTheme.tintColor)
-                    Text(message.text)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
+                if message.type == .locationRequest && !isSentByMe && locationShareManager.pendingIncomingRequests.keys.contains(message.senderID) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.orange)
+                            Text(message.text)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.primary)
+                        }
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                LocationShareManager.shared.respondToLocationRequest(from: message.senderID, displayName: message.senderName, accept: false)
+                            }) {
+                                Text("Decline")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.red)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Capsule().fill(Color.red.opacity(0.15)))
+                            }
+                            Button(action: {
+                                LocationShareManager.shared.respondToLocationRequest(from: message.senderID, displayName: message.senderName, accept: true)
+                            }) {
+                                Text("Share Location")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Capsule().fill(Color.green))
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+                    .frame(maxWidth: 300)
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: systemLocationEventIcon(message.type))
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(AppTheme.tintColor)
+                        Text(message.text)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(12)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                .cornerRadius(12)
                 Spacer()
             } else {
                 if !isSentByMe {
@@ -299,6 +504,16 @@ struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(UIColor.systemBackground))
+    }
+    
+    private func checkIfLastInGroup(index: Int, messages: [Message], currentMessage: Message) -> Bool {
+        if index >= messages.count - 1 {
+            return true
+        }
+        let nextMsg = messages[index + 1]
+        let sameSender = nextMsg.senderID == currentMessage.senderID
+        let timeDiff = abs(nextMsg.timestamp.timeIntervalSince(currentMessage.timestamp))
+        return !(sameSender && timeDiff < 60)
     }
 }
 

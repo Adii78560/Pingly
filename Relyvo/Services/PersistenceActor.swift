@@ -30,6 +30,12 @@ public final actor PersistenceActor {
         
         guard (messageTypeRaw == "CHAT" || messageTypeRaw == "TEXT"), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
+        guard !text.contains("LOCATION_PROTOCOL"),
+              !text.contains("\"type\":\"LOCATION_") else {
+            AppLogger.multipeer.debug("[STORAGE_DROP] Blocked location protocol payload from chat persistence.")
+            return
+        }
+        
         let resolvedOriginID = originID ?? senderID
         let resolvedDestinationID = destinationID ?? channel
         

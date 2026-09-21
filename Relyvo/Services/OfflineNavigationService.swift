@@ -36,7 +36,7 @@ final class OfflineNavigationService: ObservableObject {
         // Recalculate whenever GPS coordinate or continuous heading changes
         Publishers.CombineLatest(
             LocationService.shared.$currentCoordinate,
-            LocationService.shared.$continuousHeading
+            LocationService.shared.$smoothedHeading
         )
         .receive(on: DispatchQueue.main)
         .sink { [weak self] coord, heading in
@@ -61,7 +61,7 @@ final class OfflineNavigationService: ObservableObject {
         // Immediate calculation pass
         recalculateVector(
             userCoord: LocationService.shared.currentCoordinate,
-            userHeading: LocationService.shared.continuousHeading,
+            userHeading: LocationService.shared.smoothedHeading,
             target: target
         )
         
@@ -73,7 +73,7 @@ final class OfflineNavigationService: ObservableObject {
         self.activeTarget = target
         recalculateVector(
             userCoord: LocationService.shared.currentCoordinate,
-            userHeading: LocationService.shared.continuousHeading,
+            userHeading: LocationService.shared.smoothedHeading,
             target: target
         )
     }

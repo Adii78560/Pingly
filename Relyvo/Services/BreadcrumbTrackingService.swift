@@ -52,7 +52,7 @@ final class BreadcrumbTrackingService: ObservableObject {
     private func setupLocationObserver() {
         Publishers.CombineLatest(
             LocationService.shared.$currentCoordinate,
-            LocationService.shared.$continuousHeading
+            LocationService.shared.$smoothedHeading
         )
         .receive(on: DispatchQueue.main)
         .sink { [weak self] coord, heading in
@@ -107,7 +107,7 @@ final class BreadcrumbTrackingService: ObservableObject {
         
         // Record initial origin point immediately if GPS is available
         if let currentLoc = currentLoc {
-            evaluateLocationSample(coord: currentLoc, heading: LocationService.shared.continuousHeading, forceRecord: true)
+            evaluateLocationSample(coord: currentLoc, heading: LocationService.shared.smoothedHeading, forceRecord: true)
         }
         
     }

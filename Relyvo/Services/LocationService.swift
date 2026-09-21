@@ -22,8 +22,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var currentSpeed: Double?
     @Published private(set) var currentCourse: Double?
     @Published private(set) var currentHeading: Double?
-    @Published private(set) var rawHeading: Double?
-    @Published private(set) var continuousHeading: Double = 0.0
+    @Published private(set) var previousRawHeading: Double?
+    @Published private(set) var smoothedHeading: Double = 0.0
     @Published private(set) var headingAccuracy: Double = 0.0
     @Published private(set) var lastLocationTimestamp: Date?
     @Published private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
@@ -42,7 +42,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 5 // Update every 5 meters for relative location & navigation
-        locationManager.headingFilter = 2 // Update every 2 degrees for smooth compass rotation
+        locationManager.headingFilter = kCLHeadingFilterNone // Real-time hardware stream
+        locationManager.headingOrientation = .portrait
         locationManager.pausesLocationUpdatesAutomatically = false
         
         // Configure background location updates if bundle declares location background mode
@@ -52,7 +53,22 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             locationManager.showsBackgroundLocationIndicator = true
         }
         
-        self.authorizationStatus = locationManager.authorizationStatus
+        // authorizationStatus is evaluated via delegate callbacks to prevent main thread warnings
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+    
+    @objc private func appDidEnterBackground() {
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = 50.0
+        AppLogger.location.info("[LOCATION_POWER] Throttled GPS accuracy for background battery conservation.")
+    }
+    
+    @objc private func appWillEnterForeground() {
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 5.0
+        AppLogger.location.info("[LOCATION_POWER] Restored high-precision GPS tracking in foreground.")
     }
     
     // MARK: - Permission Handling
@@ -81,6 +97,14 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     // MARK: - Location & Compass Heading Lifecycle
     
     func startUpdatingHeading() {
+#if targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            self.currentHeading = 0.0
+            self.previousRawHeading = nil
+            self.smoothedHeading = 0.0
+            self.headingAccuracy = 5.0
+        }
+#endif
         guard CLLocationManager.headingAvailable() else {
             return
         }
@@ -120,6 +144,19 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     
     /// One-shot offline GPS coordinate snapshot for immediate location sharing
     func getCurrentLocationSnapshot(completion: @escaping (CLLocation?) -> Void) {
+#if targetEnvironment(simulator)
+        if locationManager.location == nil {
+            let mockLoc = CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                altitude: 10.0,
+                horizontalAccuracy: 5.0,
+                verticalAccuracy: 5.0,
+                timestamp: Date()
+            )
+            completion(mockLoc)
+            return
+        }
+#endif
         if let location = locationManager.location, Date().timeIntervalSince(location.timestamp) < 30 {
             completion(location)
             return
@@ -253,29 +290,33 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         let accuracy = newHeading.headingAccuracy
         
         DispatchQueue.main.async {
-            let previousRaw = self.rawHeading ?? raw
-            self.rawHeading = raw
-            self.currentHeading = raw
+            if self.previousRawHeading == nil {
+                self.previousRawHeading = raw
+                self.smoothedHeading = raw
+            }
+            
             self.headingAccuracy = accuracy
             
-            let delta = CircularAngleHelper.shortestAngularDifference(from: previousRaw, to: raw)
+            // Calculate shortest delta between [-180, 180]
+            var delta = raw - (self.previousRawHeading ?? raw)
+            delta = (delta + 540).truncatingRemainder(dividingBy: 360) - 180
             
-            // Apply Exponential Moving Average (EMA) filter with alpha = 0.18
-            let alpha = 0.18
-            let smoothedHeading = (raw * alpha) + (previousRaw * (1.0 - alpha))
-            let smoothedDelta = CircularAngleHelper.shortestAngularDifference(from: previousRaw, to: smoothedHeading)
-            
-            self.continuousHeading += smoothedDelta
-            
-            // Update raw heading reference for next iteration to use the smoothed value
-            self.rawHeading = smoothedHeading
-            self.currentHeading = smoothedHeading
-            
-            // Throttled logging: Only log on North boundary crossing or delta >= 2.0°
-            let crossedNorth = (previousRaw >= 350.0 && smoothedHeading <= 10.0) || (previousRaw <= 10.0 && smoothedHeading >= 350.0)
-            if crossedNorth {
-            } else if abs(smoothedDelta) >= 2.0 {
+            // Dynamic Alpha: Instant tracking for intentional turns, gentle damping for micro-jitter
+            let absDelta = abs(delta)
+            let dynamicAlpha: Double
+            if absDelta > 15.0 {
+                dynamicAlpha = 0.90 // Fast flick/turn: snap instantly with 0 lag
+            } else if absDelta > 5.0 {
+                dynamicAlpha = 0.65 // Normal body turning: responsive and smooth
+            } else {
+                dynamicAlpha = 0.25 // Holding still: damp sensor jitter & noise
             }
+            
+            self.smoothedHeading = (self.smoothedHeading + (delta * dynamicAlpha)).truncatingRemainder(dividingBy: 360)
+            if self.smoothedHeading < 0 { self.smoothedHeading += 360 }
+            
+            self.previousRawHeading = raw
+            self.currentHeading = self.smoothedHeading
         }
     }
     

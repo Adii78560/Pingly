@@ -1467,12 +1467,8 @@ extension MultipeerService: MCSessionDelegate {
                     RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "DUPLICATE_CHECK", peer: peerID.displayName, details: "messageID=\(shortMsgID) alreadyProcessed=\(alreadyProcessed)")
                     
                     if !alreadyProcessed {
-                        RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "REMOTE_PERSIST", peer: peerID.displayName, details: "messageID=\(shortMsgID)")
-                        RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "USER_DELIVERY", peer: peerID.displayName, details: "messageID=\(shortMsgID)")
-                        self.receivedMessageSubject.send(message)
-                        
-                        if message.text.hasPrefix("LOCATION_PROTOCOL:") {
-                            let jsonString = String(message.text.dropFirst("LOCATION_PROTOCOL:".count))
+                        if message.text.hasPrefix("LOCATION_PROTOCOL:") || message.type == .location || message.type == .locationRequest {
+                            let jsonString = message.text.hasPrefix("LOCATION_PROTOCOL:") ? String(message.text.dropFirst("LOCATION_PROTOCOL:".count)) : message.text
                             let locationMsg = Message(
                                 id: message.id,
                                 originID: message.originID,
@@ -1487,7 +1483,15 @@ extension MultipeerService: MCSessionDelegate {
                                 type: message.type
                             )
                             LocationShareManager.shared.processIncomingLocationPacket(locationMsg)
-                        } else if message.type == .transcript || message.text.hasPrefix("PTT_TRANSCRIPT:") {
+                            return
+                        }
+                        
+                        RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "REMOTE_PERSIST", peer: peerID.displayName, details: "messageID=\(shortMsgID)")
+                        RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "MessageFunnel", event: "USER_DELIVERY", peer: peerID.displayName, details: "messageID=\(shortMsgID)")
+                        
+                        self.receivedMessageSubject.send(message)
+                        
+                        if message.type == .transcript || message.text.hasPrefix("PTT_TRANSCRIPT:") {
                             let cleanText = message.text.hasPrefix("PTT_TRANSCRIPT:") ? String(message.text.dropFirst("PTT_TRANSCRIPT:".count)) : message.text
                             // Use the sender's channelID when present; fall back to this
                             // device's active channel rather than the hardcoded default so

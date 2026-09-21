@@ -164,7 +164,7 @@ struct RadarView: View {
             }
             
             // Render Radar Contacts
-            let contacts = viewModel.radarContacts(deviceHeading: LocationService.shared.continuousHeading)
+            let contacts = viewModel.radarContacts(deviceHeading: LocationService.shared.smoothedHeading)
             ForEach(contacts) { contact in
                 ZStack {
                     // Outer pulsating freshness ring
