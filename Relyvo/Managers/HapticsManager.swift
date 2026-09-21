@@ -91,6 +91,26 @@ final class HapticsManager {
         #endif
     }
     
+    // MARK: - Tactical Emergency SOS Pattern
+    
+    /// Triggers a heavy, repeated tactical vibration pattern for emergency SOS alerts
+    func playSOSTacticalPattern() {
+        #if !targetEnvironment(simulator)
+        let heavy = UIImpactFeedbackGenerator(style: .heavy)
+        let error = UINotificationFeedbackGenerator()
+        heavy.prepare()
+        error.prepare()
+        
+        heavy.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            error.notificationOccurred(.error)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            heavy.impactOccurred()
+        }
+        #endif
+    }
+    
     // MARK: - Tactical Heartbeat Pulse Pattern (Lub-Dub)
     
     /// Triggers a double-pulse heartbeat pattern (light tap followed by medium tap)

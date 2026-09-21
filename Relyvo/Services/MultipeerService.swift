@@ -316,7 +316,10 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         
         var isEncrypted = false
         var encryptedPayload: Data? = nil
-        if let channel = message.channelID, let key = ChannelKeyStore.shared.key(for: channel) {
+        
+        let bypassEncryption = message.isSOS
+        
+        if !bypassEncryption, let channel = message.channelID, let key = ChannelKeyStore.shared.key(for: channel) {
             if let payloadBytes = message.text.data(using: .utf8),
                let sealed = ChannelCrypto.encrypt(data: payloadBytes, key: key) {
                 isEncrypted = true
@@ -1395,7 +1398,7 @@ extension MultipeerService: MCSessionDelegate {
                                            (isChannelMessage && channelMatches) ||
                                            (!isChannelMessage && message.destinationID == "BROADCAST")
                 
-                if failedDecryption {
+                if failedDecryption && !isSOS {
                     shouldDeliverLocally = false
                 }
                 

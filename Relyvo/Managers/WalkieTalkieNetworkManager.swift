@@ -610,6 +610,7 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
     }
     
     @objc func handleIncomingSOS(_ notification: Notification) {
+        guard let message = notification.userInfo?["message"] as? Message else { return }
         audioDecodeQueue.async { [weak self] in
             guard let self = self else { return }
             
@@ -620,9 +621,16 @@ final class WalkieTalkieNetworkManager: NSObject, ObservableObject, AudioStreamE
                 }
             }
             
+            self.stopActiveAudioStream()
+            
             // Trigger emergency tactical alert tone and haptic vibration
-            AudioServicesPlaySystemSound(1005)
-            HapticManager.errorFeedback()
+            Task {
+                await SOSAlarmManager.shared.playEmergencyAlarm(for: message.id)
+            }
+            
+            DispatchQueue.main.async {
+                HapticsManager.shared.playSOSTacticalPattern()
+            }
             AppLogger.multipeer.warning("[SOS_ALERT_SOUND_PLAYED] High-priority SOS audio alarm dispatched")
         }
     }
