@@ -23,7 +23,6 @@ struct RadarView: View {
     @State private var isBreathing = false
     @State private var showEditNameAlert = false
     @State private var newBroadcastNameText = ""
-    @State private var showTacticalMap = false
     @State private var showBreadcrumbs = false
     @State private var activeNavTarget: NavigationTarget?
     
@@ -57,12 +56,6 @@ struct RadarView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     HStack(spacing: 12) {
-                        Button(action: { showTacticalMap = true }) {
-                            Image(systemName: "map.fill")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(AppTheme.tintColor)
-                        }
-                        
                         Button(action: { showBreadcrumbs = true }) {
                             Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
                                 .font(.system(size: 14, weight: .bold))
@@ -95,23 +88,7 @@ struct RadarView: View {
             } message: {
                 Text("This name will be visible to nearby off-grid Relyvo devices.")
             }
-            .fullScreenCover(isPresented: $showTacticalMap) {
-                NavigationStack {
-                    TacticalMapView(onSelectTarget: { target in
-                        self.showTacticalMap = false
-                        self.activeNavTarget = target
-                    })
-                    .environmentObject(NavigationViewModel())
-                    .navigationTitle("Tactical Map")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Close") { showTacticalMap = false }
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $showBreadcrumbs) {
+            .fullScreenCover(isPresented: $showBreadcrumbs) {
                 BreadcrumbTrailView()
             }
             .fullScreenCover(item: $activeNavTarget) { target in

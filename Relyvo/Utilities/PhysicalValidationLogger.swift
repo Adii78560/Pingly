@@ -9,6 +9,8 @@ import Foundation
 import Combine
 import os
 
+#if DEBUG
+
 /// Specific event categories for the Physical Validation Campaign checklist.
 enum ValidationEventType: String {
     case meshRx = "[MESH_RX]"
@@ -63,3 +65,33 @@ final class PhysicalValidationLogger: ObservableObject {
         logs.removeAll()
     }
 }
+
+
+#else
+
+// MARK: - Release No-Op Stubs
+enum ValidationEventType: String {
+    case meshRx, meshForward, meshDedupDrop, meshLoopDrop, meshTtlDrop, meshDelivered, meshAck, meshQueue, peerDiscovered, peerConnected, peerDisconnected, chatAuthDrop, chatQueueAuthDrop
+}
+
+struct ValidationLogEntry: Identifiable, Equatable {
+    let id = UUID()
+    let timestamp = Date()
+    let type: ValidationEventType
+    let message: String
+}
+
+@MainActor
+final class PhysicalValidationLogger: ObservableObject {
+    static let shared = PhysicalValidationLogger()
+    
+    @Published var logs: [ValidationLogEntry] = []
+    @Published var isOverlayVisible: Bool = false
+    
+    private init() {}
+    
+    @inline(__always) func log(type: ValidationEventType, _ message: String) {}
+    @inline(__always) func clear() {}
+}
+
+#endif

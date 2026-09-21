@@ -40,9 +40,6 @@ struct RelyvoApp: App {
         // Run self-testing verification suite on launch
         Task {
             _ = await RelaynHardeningTests.shared.runAllVerificationTests()
-            Task { @MainActor in
-                _ = NavigationEngineTests.shared.runAllNavigationTests()
-            }
         }
     }
     

@@ -10,6 +10,8 @@ import Combine
 import CryptoKit
 import os
 
+#if DEBUG
+
 struct SessionLifecycleEvent: Identifiable {
     let id = UUID()
     let timestamp = Date()
@@ -452,3 +454,70 @@ enum RelaynTransportLogger {
         return (error.localizedDescription, "N/A")
     }
 }
+
+
+#else
+
+// MARK: - Release No-Op Stubs
+struct SessionLifecycleEvent: Identifiable {
+    let id = UUID()
+    let timestamp = Date()
+}
+
+final class RelaynTransportDiagnosticsManager: ObservableObject {
+    static let shared = RelaynTransportDiagnosticsManager()
+    @Published private(set) var testRunID: String = "RELEASE"
+    @Published private(set) var currentMCSessionState: String = "NOT_CONNECTED"
+    @Published private(set) var connectedPeersCount: Int = 0
+    @Published private(set) var connectedPeersList: [String] = []
+    @Published private(set) var lastSocketError: String = "None"
+    @Published private(set) var disconnectCount: Int = 0
+    private init() {}
+    @inline(__always) func recordPhysicalTestEvent(category: String = "SessionLifecycle", event: String, peer: String = "N/A", details: String = "") {}
+    @inline(__always) func resetPhysicalTestDiagnostics() {}
+    @inline(__always) func incrementPhysicalTestSent() {}
+    @inline(__always) func incrementPhysicalTestReceived() {}
+    @inline(__always) func incrementPhysicalTestACKed() {}
+    @inline(__always) func incrementPhysicalTestMessageFailures() {}
+    @inline(__always) func incrementPhysicalTestPTTSessions() {}
+    @inline(__always) func addPhysicalTestPTTTxFrames(count: Int) {}
+    @inline(__always) func addPhysicalTestPTTRxFrames(count: Int) {}
+    @inline(__always) func addPhysicalTestPTTDroppedFrames(count: Int) {}
+    @inline(__always) func recordLifecycleEvent(event: String, peer: String = "N/A", details: String = "") {}
+    @inline(__always) func recordSocketOrStreamError(errorDescription: String, domain: String = "NSPOSIXErrorDomain", code: Int = 54) {}
+    @inline(__always) func updateTxTimestamp() {}
+    @inline(__always) func updateRxTimestamp() {}
+    @inline(__always) func updatePTTTxTimestamp() {}
+    @inline(__always) func updatePTTRxTimestamp() {}
+    @inline(__always) func updateConnectedPeersList(_ peers: [String]) {}
+    @inline(__always) func recordOutgoingMessage(id: UUID, peer: String, result: String) {}
+    @inline(__always) func recordIncomingMessage(id: UUID?, peer: String, result: String, decodeRes: String? = nil) {}
+    @inline(__always) func recordACKEvent(id: UUID, peer: String, result: String) {}
+    @inline(__always) func recordPeerConnection(peer: String) {}
+    @inline(__always) func updateConnectedPeers(count: Int) {}
+    @inline(__always) func incrementTxFrames() {}
+    @inline(__always) func incrementRxFrames() {}
+    @inline(__always) func incrementDecodeSuccess() {}
+    @inline(__always) func incrementDecodeFailures() {}
+    @inline(__always) func incrementAckSent() {}
+    @inline(__always) func incrementAckReceived() {}
+    @inline(__always) func incrementAckMatched() {}
+    @inline(__always) func incrementAckUnmatched() {}
+    @inline(__always) func incrementRelayReceived() {}
+    @inline(__always) func incrementRelayForwarded() {}
+    @inline(__always) func incrementRelayDropped() {}
+    @inline(__always) func incrementQueueFailed() {}
+    @inline(__always) func incrementQueueDelivered() {}
+    @inline(__always) func logDiagnosticSummary() {}
+}
+
+enum RelaynTransportLogger {
+    @inline(__always) static func sha256Hex(data: Data) -> String  { return "" }
+    @inline(__always) static func hexPreview(data: Data, maxBytes: Int = 128) -> String  { return "" }
+    @inline(__always) static func utf8Preview(data: Data, maxBytes: Int = 128) -> String  { return "" }
+    @inline(__always) static func currentQueueName() -> String  { return "" }
+    @inline(__always) static func currentThreadDescription() -> String  { return "" }
+    @inline(__always) static func formatDecodingError(_ error: Error) -> (description: String, codingPath: String)  { return ("", "") }
+}
+
+#endif

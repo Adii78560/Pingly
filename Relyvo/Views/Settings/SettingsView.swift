@@ -53,9 +53,7 @@ struct SettingsView: View {
             Form {
                 identitySection
                 subscriptionSection
-                distressProfileSection
                 hardwareRadiosSection
-                diagnosticsSection
                 privacyAndLegalSection
                 dataManagementSection
                 storageAndSyncSection
@@ -342,25 +340,7 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - 3. Distress Profile Section
     
-    private var distressProfileSection: some View {
-        Section {
-            HStack {
-                SettingsIconBadge(systemName: "checkmark.shield.fill", backgroundColor: .orange)
-                Picker("Default Status", selection: $viewModel.selectedEmergencyStatus) {
-                    ForEach(EmergencyStatus.allCases) { status in
-                        Text(status.rawValue).tag(status)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
-        } header: {
-            Text("Distress Profile")
-        } footer: {
-            Text("Default status broadcasted to nearby emergency nodes when scanning.")
-        }
-    }
     
     // MARK: - 4. Hardware Radios Section
     
@@ -400,38 +380,7 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - 5. Diagnostics Section
     
-    private var diagnosticsSection: some View {
-        Section("Diagnostics & Delivery Status") {
-            NavigationLink(destination: PhysicalValidationHubView()) {
-                HStack {
-                    SettingsIconBadge(systemName: "flag.checkered.circle.fill", backgroundColor: .purple)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Physical Validation Hub")
-                            .font(.body.weight(.bold))
-                            .foregroundColor(.purple)
-                        Text("Campaign identity, mesh topology & PTT console")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
-            NavigationLink(destination: MeshDiagnosticsView()) {
-                HStack {
-                    SettingsIconBadge(systemName: "bell.badge.waveform.fill", backgroundColor: AppTheme.tintColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Mesh Diagnostics & Notification Log")
-                            .font(.body)
-                        Text("Inspect active peers, delivery ACKs & event deduplication")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-    }
     
     // MARK: - 6. Privacy & Legal Section
     
@@ -439,7 +388,7 @@ struct SettingsView: View {
         Section {
             Link(destination: Constants.Subscriptions.privacyPolicyURL) {
                 HStack {
-                    SettingsIconBadge(systemName: "hand.raised.shield.fill", backgroundColor: .blue)
+                    SettingsIconBadge(systemName: "hand.raised.fill", backgroundColor: .blue)
                     Text("Privacy Policy")
                         .font(.body)
                         .foregroundColor(.primary)
@@ -583,19 +532,7 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
             
-            NavigationLink(destination: OfflineRegionsView()) {
-                HStack(spacing: 12) {
-                    SettingsIconBadge(systemName: "map.fill", backgroundColor: .blue)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Offline Navigation & Maps")
-                            .font(.body)
-                        Text("Manage downloaded regions")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
+
             Button(action: {
                 cloudSyncService.syncPendingDataToCloud()
             }) {

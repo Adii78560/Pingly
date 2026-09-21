@@ -170,9 +170,15 @@ struct ActivityFeedRow: View {
             CircularAvatarView(senderAlias: item.displayName, senderID: item.peerID, size: 40)
             
             VStack(alignment: .leading, spacing: 6) {
-                Text(item.typeRaw == "LOCATION_REQUEST" ? "\(item.displayName) requested your offline GPS location" : "\(item.displayName) started sharing location")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.primary)
+                if item.typeRaw == "EMERGENCY_SOS" {
+                    Text("\(item.displayName) triggered an Emergency SOS!")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.red)
+                } else {
+                    Text(item.typeRaw == "LOCATION_REQUEST" ? "\(item.displayName) requested your offline GPS location" : "\(item.displayName) started sharing location")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.primary)
+                }
                 
                 Text(item.timestamp.formatted())
                     .font(.caption)
@@ -214,6 +220,16 @@ struct ActivityFeedRow: View {
                             .foregroundColor(item.statusRaw == "ACCEPTED" ? .green : .secondary)
                             .padding(.top, 2)
                     }
+                } else if item.typeRaw == "EMERGENCY_SOS" {
+                    Text("EMERGENCY")
+                        .font(.caption)
+                        .bold()
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.red)
+                        .cornerRadius(4)
+                        .padding(.top, 2)
                 }
             }
         }

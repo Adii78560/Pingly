@@ -11,6 +11,7 @@ import AudioToolbox
 /// Minimal, Apple-Grade CoreAnimation & SwiftUI Splash Screen
 struct AnimatedSplashScreenView: View {
     @Binding var isFinished: Bool
+    @Environment(\.colorScheme) var colorScheme
     
     // Core Animation States
     @State private var emblemScale: CGFloat = 0.85
@@ -26,10 +27,13 @@ struct AnimatedSplashScreenView: View {
     // Bottom Badge Dot State
     @State private var pulseDot: Bool = false
     
+    // Animation Guard
+    @State private var hasAnimated: Bool = false
+    
     var body: some View {
         ZStack {
-            // 1. Canvas & Background (Deep matte OLED black)
-            Color(red: 0.05, green: 0.06, blue: 0.08)
+            // 1. Canvas & Background (Adapts to light/dark mode)
+            (colorScheme == .dark ? Color(red: 0.05, green: 0.06, blue: 0.08) : Color(UIColor.systemBackground))
                 .ignoresSafeArea()
             
             // Ultra-subtle, slow-pulsing radial glow centered behind the logo
@@ -101,12 +105,12 @@ struct AnimatedSplashScreenView: View {
                 VStack(spacing: 6) {
                     Text("Relyvo")
                         .font(.system(size: 38, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(colorScheme == .dark ? .white : .primary)
                     
                     Text("OFF-GRID MESH COMMUNICATION")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .kerning(1.8)
-                        .foregroundColor(Color.white.opacity(0.65))
+                        .foregroundColor(colorScheme == .dark ? Color.white.opacity(0.65) : .secondary)
                 }
                 .padding(.top, 24)
                 .opacity(textOpacity)
@@ -137,8 +141,10 @@ struct AnimatedSplashScreenView: View {
     }
     
     private func runMinimalAnimationSequence() {
+        guard !hasAnimated else { return }
+        hasAnimated = true
+        
         // Entrance Animation
-        AudioServicesPlaySystemSound(1327) // Play a soothing 'Bloom' system chime
         
         // Logo squircle springs into view
         withAnimation(.spring(response: 0.6, dampingFraction: 0.72)) {

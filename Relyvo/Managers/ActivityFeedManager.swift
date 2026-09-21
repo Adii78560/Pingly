@@ -41,6 +41,18 @@ public final class ActivityFeedManager: ObservableObject {
         refreshUnreadCount()
     }
     
+    public func addEmergencySOS(peerID: String, displayName: String) {
+        let item = SDActivityItem(
+            peerID: peerID,
+            displayName: displayName,
+            typeRaw: "EMERGENCY_SOS",
+            statusRaw: "CRITICAL"
+        )
+        context.insert(item)
+        try? context.save()
+        refreshUnreadCount()
+    }
+    
     public func markAllAsRead() {
         do {
             let descriptor = FetchDescriptor<SDActivityItem>(predicate: #Predicate { !$0.isRead })
