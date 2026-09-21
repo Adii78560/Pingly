@@ -102,7 +102,6 @@ struct MainTabView: View {
             selectedTab = 2 // Switch to Messages tab
         }
         .onAppear {
-            ATTManager.shared.requestTrackingPermissionIfFirstLaunch()
             locationService.requestLocationPermission()
             let handle = settingsViewModel.userHandle
             multipeerService.startAdvertisingAndBrowsing(userHandle: handle, status: settingsViewModel.selectedEmergencyStatus)

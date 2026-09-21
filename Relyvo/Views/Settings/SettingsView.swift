@@ -17,7 +17,6 @@ struct SettingsView: View {
     @StateObject private var swiftDataService = SwiftDataService.shared
     @StateObject private var cloudSyncService = CloudSyncService.shared
     @StateObject private var locationService = LocationService.shared
-    @StateObject private var attManager = ATTManager.shared
     @StateObject private var dataExportService = DataExportService.shared
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     
@@ -474,21 +473,7 @@ struct SettingsView: View {
             }
             .tint(.orange)
             
-            HStack {
-                SettingsIconBadge(systemName: "hand.raised.fill", backgroundColor: .purple)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("App Tracking Transparency")
-                        .font(.body)
-                    Text("P2P mesh uses zero 3rd-party ad tracking")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Text(attManager.statusDescription)
-                    .font(.caption.bold())
-                    .foregroundColor(.secondary)
-            }
-            
+
             Button(action: {
                 HapticsManager.shared.lightImpact()
                 locationService.openAppSettings()
