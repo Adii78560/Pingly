@@ -23,11 +23,12 @@ public final actor PersistenceActor {
         accuracy: Double? = nil,
         conversationID: UUID? = nil,
         isRead: Bool = false
-    ) {
-        let tag = isDelivered ? "\(AppLogger.messageTag(id)) REMOTE_PERSIST" : "\(AppLogger.messageTag(id)) PERSIST"
+    ) async {
+        let tag1 = await AppLogger.messageTag(id)
+        let tag = isDelivered ? "\(tag1) REMOTE_PERSIST" : "\(tag1) PERSIST"
         AppLogger.multipeer.info("\(tag)_START type=\(messageTypeRaw)")
         
-        guard messageTypeRaw == "CHAT", !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard (messageTypeRaw == "CHAT" || messageTypeRaw == "TEXT"), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
         let resolvedOriginID = originID ?? senderID
         let resolvedDestinationID = destinationID ?? channel
@@ -108,7 +109,7 @@ public final actor PersistenceActor {
         }
         
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
-        if let existing = try? modelContext.fetch(descriptor).first {
+        if (try? modelContext.fetch(descriptor).first) != nil {
             return
         }
         
@@ -137,8 +138,8 @@ public final actor PersistenceActor {
         modelContext.insert(pending)
         try? modelContext.save()
         
-        let pendingCount = (try? modelContext.fetchCount(FetchDescriptor<SDPendingMessage>())) ?? 0
-        let priorityStr = (priorityRaw == 2) ? "HIGH" : (priorityRaw == 1 ? "NORMAL" : "LOW")
+        _ = (try? modelContext.fetchCount(FetchDescriptor<SDPendingMessage>())) ?? 0
+        _ = (priorityRaw == 2) ? "HIGH" : (priorityRaw == 1 ? "NORMAL" : "LOW")
     }
     
     public func markPendingMessageAsACKed(messageID: UUID) {
@@ -170,7 +171,7 @@ public final actor PersistenceActor {
         try? modelContext.save()
     }
     
-    public func updatePendingMessageStatus(messageID: UUID, statusRaw: String, reason: String? = nil) {
+    public func updatePendingMessageStatus(messageID: UUID, statusRaw: String, reason: String? = nil) async {
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let pending = (try? modelContext.fetch(descriptor))?.first {
             let oldStatus = pending.statusRaw
@@ -178,11 +179,11 @@ public final actor PersistenceActor {
             pending.lastAttemptTimestamp = Date()
             
             if statusRaw == "FAILED" {
-                pending.retryCount += 1
+                pending.retryCount = max(pending.retryCount + 1, 1)
             }
             try? modelContext.save()
             
-            let tag = AppLogger.messageTag(messageID)
+            let tag = await AppLogger.messageTag(messageID)
             if let r = reason {
                 AppLogger.multipeer.info("\(tag) STATE \(oldStatus) -> \(statusRaw) reason=\(r) retryCount=\(pending.retryCount)")
             } else {
@@ -191,12 +192,13 @@ public final actor PersistenceActor {
         }
     }
     
-    public func deletePendingMessage(messageID: UUID) {
+    public func deletePendingMessage(messageID: UUID) async {
         let descriptor = FetchDescriptor<SDPendingMessage>(predicate: #Predicate { $0.messageID == messageID })
         if let pending = (try? modelContext.fetch(descriptor))?.first {
             modelContext.delete(pending)
             try? modelContext.save()
-            AppLogger.multipeer.info("\(AppLogger.messageTag(messageID)) DELETED from queue")
+            let tag = await AppLogger.messageTag(messageID)
+            AppLogger.multipeer.info("\(tag) DELETED from queue")
         }
     }
     
@@ -293,7 +295,7 @@ public final actor PersistenceActor {
     
     // MARK: - Location Share Sessions
     
-    public func upsertLocationSessions(_ states: [LocationSessionState]) {
+    public func upsertLocationSessions(_ states: [LocationSessionState]) async {
         for state in states {
             let remotePeerID = state.remotePeerID
             let descriptor = FetchDescriptor<SDLocationShareSession>(predicate: #Predicate { $0.remotePeerID == remotePeerID })
@@ -302,8 +304,9 @@ public final actor PersistenceActor {
             if let existing = (try? modelContext.fetch(descriptor))?.first {
                 session = existing
             } else {
+                let localNodeID = await NodeIdentity.shared.nodeID
                 session = SDLocationShareSession(
-                    localPeerID: NodeIdentity.shared.nodeID,
+                    localPeerID: localNodeID,
                     remotePeerID: remotePeerID,
                     remoteDisplayName: state.remoteDisplayName
                 )
@@ -337,14 +340,15 @@ public final actor PersistenceActor {
         try? modelContext.save()
     }
     
-    public func updateLocationSessionState(remotePeerID: String, remoteDisplayName: String, stateRaw: String? = nil, isSharingLocal: Bool? = nil, isSharingRemote: Bool? = nil) {
+    public func updateLocationSessionState(remotePeerID: String, remoteDisplayName: String, stateRaw: String? = nil, isSharingLocal: Bool? = nil, isSharingRemote: Bool? = nil) async {
         let descriptor = FetchDescriptor<SDLocationShareSession>(predicate: #Predicate { $0.remotePeerID == remotePeerID })
         let session: SDLocationShareSession
         if let existing = (try? modelContext.fetch(descriptor))?.first {
             session = existing
         } else {
+            let localNodeID = await NodeIdentity.shared.nodeID
             session = SDLocationShareSession(
-                localPeerID: NodeIdentity.shared.nodeID,
+                localPeerID: localNodeID,
                 remotePeerID: remotePeerID,
                 remoteDisplayName: remoteDisplayName
             )
@@ -540,10 +544,10 @@ public final actor PersistenceActor {
     
     // MARK: - Channel Protocols
     
-    func handleChannelInvite(channelID: String, from nodeID: String) {
+    func handleChannelInvite(channelID: String, from nodeID: String) async {
         guard let channelUUID = UUID(uuidString: channelID) else { return }
         
-        let localNodeID = NodeIdentity.shared.nodeID
+        let localNodeID = await NodeIdentity.shared.nodeID
         let descriptor = FetchDescriptor<SDChannelMember>(
             predicate: #Predicate { $0.channelID == channelUUID && $0.nodeID == localNodeID }
         )

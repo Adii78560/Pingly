@@ -142,7 +142,7 @@ final class SimulatedNode {
         do {
             message = try JSONDecoder().decode(Message.self, from: data)
         } catch {
-            let dataStr = String(data: data, encoding: .utf8) ?? data.map { String(format: "%02hhX", $0) }.joined()
+            _ = String(data: data, encoding: .utf8) ?? data.map { String(format: "%02hhX", $0) }.joined()
             return
         }
         
@@ -653,7 +653,7 @@ final class LoopbackTestHarness {
         
         // Execute a simulated node transaction
         let isolatedNode = SimulatedNode(nodeID: "TEST-ISO", displayName: "Isolated Node")
-        await isolatedNode.sendChatMessage(to: "TEST-OTHER", text: "Isolated Message")
+        _ = await isolatedNode.sendChatMessage(to: "TEST-OTHER", text: "Isolated Message")
         
         let prodChatCountAfter = (try? SwiftDataService.shared.context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
         let t14Success = (prodChatCountBefore == prodChatCountAfter)

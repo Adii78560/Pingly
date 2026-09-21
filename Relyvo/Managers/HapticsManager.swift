@@ -17,41 +17,51 @@ final class HapticsManager {
     
     func lightImpact() {
         #if !targetEnvironment(simulator)
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        generator.impactOccurred()
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.prepare()
+            generator.impactOccurred()
+        }
         #endif
     }
     
     func mediumImpact() {
         #if !targetEnvironment(simulator)
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.prepare()
-        generator.impactOccurred()
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.prepare()
+            generator.impactOccurred()
+        }
         #endif
     }
     
     func heavyImpact() {
         #if !targetEnvironment(simulator)
-        let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.prepare()
-        generator.impactOccurred()
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .heavy)
+            generator.prepare()
+            generator.impactOccurred()
+        }
         #endif
     }
     
     func rigidImpact() {
         #if !targetEnvironment(simulator)
-        let generator = UIImpactFeedbackGenerator(style: .rigid)
-        generator.prepare()
-        generator.impactOccurred()
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .rigid)
+            generator.prepare()
+            generator.impactOccurred()
+        }
         #endif
     }
     
     func softImpact() {
         #if !targetEnvironment(simulator)
-        let generator = UIImpactFeedbackGenerator(style: .soft)
-        generator.prepare()
-        generator.impactOccurred()
+        DispatchQueue.main.async {
+            let generator = UIImpactFeedbackGenerator(style: .soft)
+            generator.prepare()
+            generator.impactOccurred()
+        }
         #endif
     }
     
@@ -59,9 +69,11 @@ final class HapticsManager {
     
     func selectionFeedback() {
         #if !targetEnvironment(simulator)
-        let generator = UISelectionFeedbackGenerator()
-        generator.prepare()
-        generator.selectionChanged()
+        DispatchQueue.main.async {
+            let generator = UISelectionFeedbackGenerator()
+            generator.prepare()
+            generator.selectionChanged()
+        }
         #endif
     }
     
@@ -69,25 +81,31 @@ final class HapticsManager {
     
     func successFeedback() {
         #if !targetEnvironment(simulator)
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.success)
+        DispatchQueue.main.async {
+            let generator = UINotificationFeedbackGenerator()
+            generator.prepare()
+            generator.notificationOccurred(.success)
+        }
         #endif
     }
     
     func warningFeedback() {
         #if !targetEnvironment(simulator)
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.warning)
+        DispatchQueue.main.async {
+            let generator = UINotificationFeedbackGenerator()
+            generator.prepare()
+            generator.notificationOccurred(.warning)
+        }
         #endif
     }
     
     func errorFeedback() {
         #if !targetEnvironment(simulator)
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.error)
+        DispatchQueue.main.async {
+            let generator = UINotificationFeedbackGenerator()
+            generator.prepare()
+            generator.notificationOccurred(.error)
+        }
         #endif
     }
     
@@ -96,17 +114,19 @@ final class HapticsManager {
     /// Triggers a heavy, repeated tactical vibration pattern for emergency SOS alerts
     func playSOSTacticalPattern() {
         #if !targetEnvironment(simulator)
-        let heavy = UIImpactFeedbackGenerator(style: .heavy)
-        let error = UINotificationFeedbackGenerator()
-        heavy.prepare()
-        error.prepare()
-        
-        heavy.impactOccurred()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            error.notificationOccurred(.error)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        DispatchQueue.main.async {
+            let heavy = UIImpactFeedbackGenerator(style: .heavy)
+            let error = UINotificationFeedbackGenerator()
+            heavy.prepare()
+            error.prepare()
+            
             heavy.impactOccurred()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                error.notificationOccurred(.error)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                heavy.impactOccurred()
+            }
         }
         #endif
     }
@@ -116,14 +136,16 @@ final class HapticsManager {
     /// Triggers a double-pulse heartbeat pattern (light tap followed by medium tap)
     func heartbeatPulse() {
         #if !targetEnvironment(simulator)
-        let generator1 = UIImpactFeedbackGenerator(style: .light)
-        generator1.prepare()
-        generator1.impactOccurred()
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            let generator2 = UIImpactFeedbackGenerator(style: .medium)
-            generator2.prepare()
-            generator2.impactOccurred()
+        DispatchQueue.main.async {
+            let generator1 = UIImpactFeedbackGenerator(style: .light)
+            generator1.prepare()
+            generator1.impactOccurred()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                let generator2 = UIImpactFeedbackGenerator(style: .medium)
+                generator2.prepare()
+                generator2.impactOccurred()
+            }
         }
         #endif
     }

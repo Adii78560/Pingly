@@ -31,14 +31,14 @@ final class RadioCallViewModel: ObservableObject {
             // cannot bleed into the newly selected channel's session.
             networkManager.stopActiveAudioStream()
             chatMessages.removeAll()
-            loadVoiceMessages()
             loadSwiftDataTranscripts()
-            loadSwiftDataChatMessages()
+            loadChannelMessages(for: newChannel)
             networkManager.selectedChannel = newChannel
             multipeerService.activeChannelID = newChannel
             ChannelPresenceManager.shared.setActiveChannel(newChannel)
             AppLogger.multipeer.info("[DIAG_CHANNEL_SWITCH] localNode=\(NodeIdentity.shared.nodeID) oldChannel=\(oldValue) newChannel=\(newChannel)")
             AppLogger.multipeer.info("[ChannelSwitch] Active channel changed to: \(newChannel)")
+            hasUnreadChannelMessages = false
         }
     }
     
@@ -54,7 +54,8 @@ final class RadioCallViewModel: ObservableObject {
     @Published var liveActiveSpeaker: String? = nil
     @Published var activeSOSAlert: SOSAlertPayload? = nil
     @Published var currentLocation: CLLocation? = nil
-
+    @Published var hasUnreadChannelMessages: Bool = false
+    @Published var showingChatDrawer: Bool = false
     
     var channelPeers: [PeerDevice] {
         return multipeerService.connectedPeers
@@ -120,11 +121,10 @@ final class RadioCallViewModel: ObservableObject {
         setupSubscriptions()
         loadVoiceMessages()
         loadSwiftDataTranscripts()
-        loadSwiftDataChatMessages()
+        loadChannelMessages(for: selectedChannel)
     }
     
-    func loadSwiftDataChatMessages() {
-        let channelName = self.selectedChannel
+    func loadChannelMessages(for channelName: String) {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             let descriptor = FetchDescriptor<SDChatMessage>(
@@ -200,7 +200,7 @@ final class RadioCallViewModel: ObservableObject {
         
         selectedChannel = channelName
         multipeerService.broadcastChannelSync(channelName: channelName)
-        loadSwiftDataChatMessages()
+        loadChannelMessages(for: channelName)
         HapticManager.successFeedback()
         AppLogger.multipeer.info("""
         [PINGLY_CHANNEL_CREATE]
@@ -412,6 +412,9 @@ final class RadioCallViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 self.loadVoiceMessages()
+                if !self.showingChatDrawer {
+                    self.hasUnreadChannelMessages = true
+                }
             }
             .store(in: &cancellables)
             
@@ -423,6 +426,9 @@ final class RadioCallViewModel: ObservableObject {
                 self.loadSwiftDataTranscripts()
                 if let last = self.filteredTranscripts.last {
                     self.latestTextSnippet = "\(last.speakerName): \"\(last.text)\""
+                }
+                if !self.showingChatDrawer {
+                    self.hasUnreadChannelMessages = true
                 }
             }
             .store(in: &cancellables)
@@ -446,6 +452,9 @@ final class RadioCallViewModel: ObservableObject {
                     if message.type == .chat && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         if !self.chatMessages.contains(where: { $0.id == message.id }) {
                             self.chatMessages.append(message)
+                            if !self.showingChatDrawer {
+                                self.hasUnreadChannelMessages = true
+                            }
                         }
                     }
                 }

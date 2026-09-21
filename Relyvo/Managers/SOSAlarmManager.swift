@@ -21,6 +21,8 @@ actor SOSAlarmManager {
     private var playerNode: AVAudioPlayerNode?
     private var isPlaying = false
     
+    private let audioSessionQueue = DispatchQueue(label: "com.relyvo.audio.sosSessionQueue", qos: .userInitiated)
+    
     private init() {}
     
     /// Triggers a 1.0 second dual-tone loudspeaker siren.
@@ -44,22 +46,20 @@ actor SOSAlarmManager {
         
         isPlaying = true
         
-        // 1. Force AudioSession to Playback to bypass silent/ringer switch
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, options: [.duckOthers])
-            
-            if session.category == .playAndRecord {
-                try session.overrideOutputAudioPort(.speaker)
+        audioSessionQueue.async { [weak self] in
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
+                try session.setActive(true)
+            } catch {
+                AppLogger.multipeer.error("[SOS_ALARM_ERROR] Failed to override audio session for speaker playback: \(error.localizedDescription)")
             }
             
-            try session.setActive(true)
-        } catch {
-            AppLogger.multipeer.error("[SOS_ALARM_ERROR] Failed to override audio session for speaker playback: \(error.localizedDescription)")
+            Task {
+                // 2. Synthesize 1-second dual-tone siren
+                await self?.setupAndPlaySyntheticSiren()
+            }
         }
-        
-        // 2. Synthesize 1-second dual-tone siren
-        setupAndPlaySyntheticSiren()
     }
     
     private func setupAndPlaySyntheticSiren() {
@@ -120,7 +120,7 @@ actor SOSAlarmManager {
         } catch {
             AppLogger.multipeer.error("[SOS_ALARM_ERROR] Failed to start AVAudioEngine: \(error.localizedDescription)")
             Task {
-                await cleanupAlarm()
+                cleanupAlarm()
             }
         }
     }
@@ -131,13 +131,15 @@ actor SOSAlarmManager {
         engine?.stop()
         
         // Restore AVAudioSession state for Walkie-Talkie
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers])
-            try session.setActive(true)
-            AppLogger.multipeer.info("[SOS_ALARM_CLEANUP] Restored AVAudioSession to playAndRecord (voiceChat)")
-        } catch {
-            AppLogger.multipeer.error("[SOS_ALARM_ERROR] Failed to restore audio session: \(error.localizedDescription)")
+        audioSessionQueue.async {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers])
+                try session.setActive(true)
+                AppLogger.multipeer.info("[SOS_ALARM_CLEANUP] Restored AVAudioSession to playAndRecord (voiceChat)")
+            } catch {
+                AppLogger.multipeer.error("[SOS_ALARM_ERROR] Failed to restore audio session: \(error.localizedDescription)")
+            }
         }
     }
 }

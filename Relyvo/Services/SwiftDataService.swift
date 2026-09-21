@@ -96,12 +96,12 @@ final class SwiftDataService: ObservableObject {
     
     /// Diagnostics helper: Queries and logs counts for all persistent entities in SwiftData
     func logAllEntityCounts() {
-        let chatCount = (try? context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
-        let transcriptCount = (try? context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
-        let pendingCount = (try? context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
-        let userCount = (try? context.fetch(FetchDescriptor<SDUserProfile>()))?.count ?? 0
-        let notificationCount = (try? context.fetch(FetchDescriptor<SDNotificationEvent>()))?.count ?? 0
-        let locationSessionCount = (try? context.fetch(FetchDescriptor<SDLocationShareSession>()))?.count ?? 0
+        _ = (try? context.fetch(FetchDescriptor<SDChatMessage>()))?.count ?? 0
+        _ = (try? context.fetch(FetchDescriptor<SDVoiceTranscript>()))?.count ?? 0
+        _ = (try? context.fetch(FetchDescriptor<SDPendingMessage>()))?.count ?? 0
+        _ = (try? context.fetch(FetchDescriptor<SDUserProfile>()))?.count ?? 0
+        _ = (try? context.fetch(FetchDescriptor<SDNotificationEvent>()))?.count ?? 0
+        _ = (try? context.fetch(FetchDescriptor<SDLocationShareSession>()))?.count ?? 0
         
     }
     

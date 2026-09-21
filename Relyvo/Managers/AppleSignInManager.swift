@@ -71,7 +71,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
     /// Verifies existing Apple ID credential validity with Apple servers on launch
     func checkCredentialStateOnLaunch() {
         let isAuthStored = UserDefaults.standard.bool(forKey: AppleSignInKeys.isAuthenticated)
-        let hasUserID = appleUserID != nil && !(appleUserID?.isEmpty ?? true)
+        _ = appleUserID != nil && !(appleUserID?.isEmpty ?? true)
         
         
         guard isAuthStored, let userID = appleUserID, !userID.isEmpty else {
@@ -81,7 +81,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
             return
         }
         
-        let fingerprint = String(userID.prefix(6))
+        _ = String(userID.prefix(6))
         
         let appleIDProvider = ASAuthorizationAppleIDProvider()
         appleIDProvider.getCredentialState(forUserID: userID) { [weak self] credentialState, error in
@@ -92,7 +92,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
                     return
                 }
                 
-                if let error = error {
+                if error != nil {
                     AppLogger.multipeer.info("Offline network status during Apple ID credential check. Preserving offline session.")
                     self.authState = .authenticated
                     if let profile = SwiftDataService.shared.fetchUserProfile(appleUserID: userID) {
@@ -133,7 +133,7 @@ final class AppleSignInManager: NSObject, ObservableObject {
         let userID = appleIDCredential.user
         let email = appleIDCredential.email
         let fullName = appleIDCredential.fullName
-        let fingerprint = String(userID.prefix(6))
+        _ = String(userID.prefix(6))
         
         
         var formattedName: String?

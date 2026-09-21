@@ -477,7 +477,7 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     /// Relay-only variant of broadcast that excludes the originating peer to prevent echo-back loops.
     ///
     /// Encodes using compact binary wire format and dispatches via priority outbound queue.
-    private func broadcastExcluding(message: Message, excludingPeer senderPeerID: MCPeerID) {
+    private func broadcastExcluding(data: Data, excludingPeer senderPeerID: MCPeerID, isSOS: Bool, type: MeshPacketType) {
         guard let session = session else { return }
         let targetPeers = session.connectedPeers.filter { $0 != senderPeerID }
         guard !targetPeers.isEmpty else {
@@ -485,29 +485,18 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
             return
         }
         
-        var encryptedPayload: Data? = nil
-        if message.isEncrypted {
-            if let decodedData = Data(base64Encoded: message.text) {
-                encryptedPayload = decodedData
-            } else {
-                AppLogger.multipeer.error("[MESH_RELAY] Failed to decode base64 ciphertext for relay")
-                return
-            }
-        }
-        
-        guard let binaryData = try? MeshPacketHeader.encode(message, isEncrypted: message.isEncrypted, encryptedPayload: encryptedPayload) else { return }
-        let priority: MeshPacketPriority = message.isSOS ? .critical : .normal
+        let priority: MeshPacketPriority = isSOS ? .critical : .normal
         MeshOutboundQueue.shared.enqueue(
-            data: binaryData,
+            data: data,
             priority: priority,
             isReliable: true,
             toPeers: targetPeers,
             session: session,
-            tag: "RELAY_\(message.type.rawValue)"
+            tag: "RELAY_\(type.rawValue)"
         )
         
         let targetNames = targetPeers.map { $0.displayName }.joined(separator: ", ")
-        AppLogger.multipeer.info("[MESH_RELAY] Queued binary relay \(message.id.uuidString.prefix(6)) hop=\(message.hopsCount)/\(message.ttl) to [\(targetNames)] (excluded sender: \(senderPeerID.displayName))")
+        AppLogger.multipeer.info("[MESH_RELAY] Queued binary relay to [\(targetNames)] (excluded sender: \(senderPeerID.displayName))")
     }
     
     func sendRawPTTPacket(_ packet: Data, type: PTTFrameType) {
@@ -537,7 +526,6 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
         encodedBytes=\(packet.count)
         """)
         
-        let priority: MeshPacketPriority = (type == .start || type == .end) ? .critical : .realtime
         let isReliable = (type == .start || type == .end)
         
         if isReliable {
@@ -807,12 +795,6 @@ extension MultipeerService: MCSessionDelegate {
                     AppLogger.multipeer.info("Triggering store-and-forward re-routing after peer churn (surviving peers: \(self.connectedPeers.count))")
                     self.flushPendingStoreAndForwardQueue()
                 }
-            case .connecting:
-                self.connectStartTimestamp = Date()
-                AppLogger.multipeer.info("\(AppLogger.peerTag) connection attempt peer=\(shortPeer)")
-                AppLogger.multipeer.info("Connecting to peer: \(peerID.displayName)")
-                RelaynTransportDiagnosticsManager.shared.recordLifecycleEvent(event: "CONNECTING", peer: peerID.displayName, details: details)
-                RelaynTransportDiagnosticsManager.shared.recordPhysicalTestEvent(category: "SessionFunnel", event: "CONNECTING", peer: peerID.displayName)
             @unknown default:
                 break
             }
@@ -1247,6 +1229,12 @@ extension MultipeerService: MCSessionDelegate {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 
+                guard message.ttl > 1 else {
+                    AppLogger.multipeer.info("[MESH_TTL_DROP] Dropping packet \(message.id) - TTL exhausted (\(message.ttl))")
+                    return
+                }
+                
+                let originalMessage = message
                 var message = message
                 var failedDecryption = false
                 
@@ -1414,7 +1402,7 @@ extension MultipeerService: MCSessionDelegate {
                 
                 // Relay independence: forward if (a) not addressed to this device, (b) channel
                 // broadcast, OR (c) high-priority emergency SOS packet.
-                let shouldForward = (!isForMe) || isChannelMessage || isSOS
+                let shouldForward = ((!isForMe) || isChannelMessage || isSOS) && (message.ttl > 1)
                 
                 AppLogger.multipeer.info("""
                 [DIAG_PACKET_ROUTE]
@@ -1582,7 +1570,7 @@ extension MultipeerService: MCSessionDelegate {
                                 channel: isChannelMessage ? message.channelID! : message.originID,
                                 text: message.text,
                                 isDelivered: true,
-                                messageTypeRaw: "TEXT"
+                                messageTypeRaw: isChannelMessage ? "CHAT" : "TEXT"
                             )
                             MeshNotificationManager.shared.notifyMessageReceived(messageID: message.id, senderName: message.senderName, textPreview: message.text)
                             NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
@@ -1668,22 +1656,30 @@ extension MultipeerService: MCSessionDelegate {
                 if shouldForward && message.originID != localNodeID {
                     RelaynTransportDiagnosticsManager.shared.incrementRelayReceived()
                     
-                    guard message.ttl > 1 else {
-                        AppLogger.multipeer.info("[MESH_TTL_EXCEEDED] Dropping packet \(message.id) - TTL exhausted (\(message.ttl))")
-                        RelaynTransportDiagnosticsManager.shared.incrementRelayDropped()
-                        return
-                    }
-                    
-                    var relayMsg = message
+                    var relayMsg = originalMessage
                     relayMsg.previousHopID = localNodeID
-                    relayMsg.ttl = message.ttl - 1
-                    relayMsg.hopsCount = message.hopsCount + 1
+                    relayMsg.ttl = originalMessage.ttl - 1
+                    relayMsg.hopsCount = originalMessage.hopsCount + 1
                     relayMsg.relayHistory.append(localUUID)
                     
                     AppLogger.multipeer.info("[MESH_FORWARD] msg=\(relayMsg.id.uuidString) from=\(relayMsg.senderID) to=\(relayMsg.destinationID) hop=\(relayMsg.hopsCount) ttl=\(relayMsg.ttl)")
                     AppLogger.multipeer.info("\(AppLogger.routingTag(message.id)) FORWARDING hops=\(relayMsg.hopsCount) maxHops=\(relayMsg.ttl) peer=\(shortPeer)")
                     
-                    self.broadcastExcluding(message: relayMsg, excludingPeer: peerID)
+                    var encryptedPayload: Data? = nil
+                    if relayMsg.isEncrypted {
+                        encryptedPayload = Data(base64Encoded: relayMsg.text)
+                    }
+                    
+                    if let updatedData = try? MeshPacketHeader.encode(relayMsg, isEncrypted: relayMsg.isEncrypted, encryptedPayload: encryptedPayload) {
+                        let packetType: MeshPacketType = {
+                            if relayMsg.isSOS { return .location }
+                            if relayMsg.type == .ack { return .ack }
+                            if relayMsg.type == .sessionReady { return .sessionReady }
+                            if relayMsg.type == .location { return .location }
+                            return .text
+                        }()
+                        self.broadcastExcluding(data: updatedData, excludingPeer: peerID, isSOS: isSOS, type: packetType)
+                    }
                     
                     AppLogger.multipeer.info("""
                     [PINGLY_RELAY_TRANSIT]
@@ -1751,7 +1747,9 @@ extension MultipeerService: MCSessionDelegate {
 
 
     
-    func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
+    func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
+        stream.close()
+    }
     func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {}
     func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {}
 }

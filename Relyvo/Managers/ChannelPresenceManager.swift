@@ -150,7 +150,7 @@ final class ChannelPresenceManager: ObservableObject {
         )
         
         MultipeerService.shared.broadcast(message: pingMsg)
-        let rawByte = MeshChannelByte.from(channelID: channel).rawValue
+        _ = MeshChannelByte.from(channelID: channel).rawValue
     }
     
     // MARK: - Ingestion & Registry Store
@@ -167,7 +167,7 @@ final class ChannelPresenceManager: ObservableObject {
         let normalizedChannel = channelID.uppercased()
         let now = Date()
         
-        let matches = (normalizedChannel == self.currentChannelID.uppercased())
+        _ = (normalizedChannel == self.currentChannelID.uppercased())
         
         let peer = ChannelPeer(
             nodeID: originNodeID,

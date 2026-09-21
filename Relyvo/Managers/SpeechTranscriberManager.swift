@@ -112,7 +112,7 @@ final class SpeechTranscriberManager: ObservableObject {
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self = self else { return }
             
-            if let error = error {
+            if error != nil {
             }
             
             if let result = result {
@@ -248,7 +248,7 @@ final class SpeechTranscriberManager: ObservableObject {
 
 
             
-            let encodedBytes = (try? JSONEncoder().encode(netMessage))?.count ?? 0
+            _ = (try? JSONEncoder().encode(netMessage))?.count ?? 0
             
             if isConnected {
                 MultipeerService.shared.broadcast(message: netMessage)

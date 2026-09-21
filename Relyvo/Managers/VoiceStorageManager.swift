@@ -142,7 +142,7 @@ final class VoiceStorageManager: ObservableObject {
                 try fileManager.removeItem(at: wavURL)
                 
                 let compBytes = (try? fileManager.attributesOfItem(atPath: m4aURL.path)[.size] as? Int64) ?? 0
-                let savings = origBytes > 0 ? Int((Double(origBytes - compBytes) / Double(origBytes)) * 100.0) : 0
+                _ = origBytes > 0 ? Int((Double(origBytes - compBytes) / Double(origBytes)) * 100.0) : 0
                 
                 
                 // Update SwiftData record on main thread

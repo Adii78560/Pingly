@@ -46,7 +46,7 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
                     mode: .voiceChat,
                     options: [
                         .defaultToSpeaker,
-                        .allowBluetooth,
+                        .allowBluetoothHFP,
                         .allowBluetoothA2DP,
                         .duckOthers
                     ]
@@ -173,10 +173,8 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
             
             
         case .ended:
-            var shouldResume = false
             if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
-                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-                shouldResume = options.contains(.shouldResume)
+                _ = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
             }
             
             

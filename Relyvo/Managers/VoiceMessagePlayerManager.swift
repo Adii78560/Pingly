@@ -59,7 +59,7 @@ final class VoiceMessagePlayerManager: NSObject, ObservableObject, AVAudioPlayer
                 let session = AVAudioSession.sharedInstance()
                 // Category .playback ONLY supports [.duckOthers, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers].
                 // Passing .defaultToSpeaker with .playback triggers OSStatus -50 (kAudio_ParamError).
-                try session.setCategory(.playback, mode: .default, options: [.duckOthers, .allowBluetooth, .allowBluetoothA2DP])
+                try session.setCategory(.playback, mode: .default, options: [.duckOthers, .allowBluetoothHFP, .allowBluetoothA2DP])
                 try session.setActive(true)
                 
                 let player = try AVAudioPlayer(contentsOf: fileURL)

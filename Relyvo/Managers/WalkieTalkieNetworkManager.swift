@@ -27,26 +27,26 @@ extension UUID {
 func createWavHeader(dataLength: Int, sampleRate: Int32, channels: Int16, bitsPerSample: Int16) -> Data {
     var header = Data()
     header.append("RIFF".data(using: .utf8)!)
-    var fileSizeLE = Int32(dataLength + 36).littleEndian
+    let fileSizeLE = Int32(dataLength + 36).littleEndian
     withUnsafeBytes(of: fileSizeLE) { header.append(contentsOf: $0) }
     header.append("WAVE".data(using: .utf8)!)
     header.append("fmt ".data(using: .utf8)!)
-    var fmtSizeLE = Int32(16).littleEndian
+    let fmtSizeLE = Int32(16).littleEndian
     withUnsafeBytes(of: fmtSizeLE) { header.append(contentsOf: $0) }
-    var audioFormatLE = Int16(1).littleEndian
+    let audioFormatLE = Int16(1).littleEndian
     withUnsafeBytes(of: audioFormatLE) { header.append(contentsOf: $0) }
-    var numChannelsLE = channels.littleEndian
+    let numChannelsLE = channels.littleEndian
     withUnsafeBytes(of: numChannelsLE) { header.append(contentsOf: $0) }
-    var sRateLE = sampleRate.littleEndian
+    let sRateLE = sampleRate.littleEndian
     withUnsafeBytes(of: sRateLE) { header.append(contentsOf: $0) }
-    var byteRateLE = (sampleRate * Int32(channels) * Int32(bitsPerSample / 8)).littleEndian
+    let byteRateLE = (sampleRate * Int32(channels) * Int32(bitsPerSample / 8)).littleEndian
     withUnsafeBytes(of: byteRateLE) { header.append(contentsOf: $0) }
-    var blockAlignLE = (channels * (bitsPerSample / 8)).littleEndian
+    let blockAlignLE = (channels * (bitsPerSample / 8)).littleEndian
     withUnsafeBytes(of: blockAlignLE) { header.append(contentsOf: $0) }
-    var bPerSampleLE = bitsPerSample.littleEndian
+    let bPerSampleLE = bitsPerSample.littleEndian
     withUnsafeBytes(of: bPerSampleLE) { header.append(contentsOf: $0) }
     header.append("data".data(using: .utf8)!)
-    var dLengthLE = Int32(dataLength).littleEndian
+    let dLengthLE = Int32(dataLength).littleEndian
     withUnsafeBytes(of: dLengthLE) { header.append(contentsOf: $0) }
     return header
 }

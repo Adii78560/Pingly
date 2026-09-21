@@ -517,7 +517,7 @@ final class LocationShareManager: ObservableObject {
     
     private func checkPendingRequestExpirations() {
         let pending = activeSessions.values.filter { $0.stateRaw == "REQUEST_PENDING" }
-        let now = Date()
+        _ = Date()
         let localNodeID = NodeIdentity.shared.nodeID
         let localName = NodeIdentity.shared.displayName
         

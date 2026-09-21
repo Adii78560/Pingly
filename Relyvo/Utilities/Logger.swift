@@ -12,13 +12,13 @@ import os
 enum AppLogger {
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.RaiEnterprise.Relyvo"
     
-    static let general = Logger(subsystem: subsystem, category: "General")
-    static let multipeer = Logger(subsystem: subsystem, category: "MultipeerMesh")
-    static let ble = Logger(subsystem: subsystem, category: "BLEBeacon")
-    static let audio = Logger(subsystem: subsystem, category: "RadioAudio")
-    static let location = Logger(subsystem: subsystem, category: "Location")
-    static let emergency = Logger(subsystem: subsystem, category: "EmergencySOS")
-    static let notifications = Logger(subsystem: "com.relayn.mesh.notifications", category: "MeshNotifications")
+    nonisolated static let general = Logger(subsystem: subsystem, category: "General")
+    nonisolated static let multipeer = Logger(subsystem: subsystem, category: "MultipeerMesh")
+    nonisolated static let ble = Logger(subsystem: subsystem, category: "BLEBeacon")
+    nonisolated static let audio = Logger(subsystem: subsystem, category: "RadioAudio")
+    nonisolated static let location = Logger(subsystem: subsystem, category: "Location")
+    nonisolated static let emergency = Logger(subsystem: subsystem, category: "EmergencySOS")
+    nonisolated static let notifications = Logger(subsystem: "com.relayn.mesh.notifications", category: "MeshNotifications")
     
     /// Safe 6-character device fingerprint tag for structured device logs: `[Device=4B44FA]`
     @MainActor static var deviceTag: String {
