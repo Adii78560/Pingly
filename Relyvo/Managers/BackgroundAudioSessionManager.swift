@@ -35,6 +35,50 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
     
     private let audioSessionQueue = DispatchQueue(label: "com.relyvo.audio.backgroundSessionQueue", qos: .userInitiated)
     
+    // MARK: - Reference Counting Audio Session Lifecycle
+    private var activeSessionCount: Int = 0
+    private let sessionCountLock = NSLock()
+    private var deactivationTimer: DispatchSourceTimer?
+    
+    func incrementActiveSession() {
+        sessionCountLock.lock()
+        activeSessionCount += 1
+        let count = activeSessionCount
+        deactivationTimer?.cancel()
+        deactivationTimer = nil
+        let needsConfig = !isAudioSessionActive
+        sessionCountLock.unlock()
+        AppLogger.audio.info("[PTT_DIAG][BackgroundAudioSessionManager] incrementActiveSession() -> count=\(count)")
+        if count == 1 || needsConfig {
+            configureAudioSession()
+        }
+    }
+    
+    func decrementActiveSession() {
+        sessionCountLock.lock()
+        activeSessionCount = max(0, activeSessionCount - 1)
+        let count = activeSessionCount
+        if count == 0 {
+            // Graceful cooldown: delay deactivation by 4.0s to prevent tearing down CoreAudio RemoteIO between speech turns
+            deactivationTimer?.cancel()
+            let timer = DispatchSource.makeTimerSource(queue: audioSessionQueue)
+            timer.schedule(deadline: .now() + 4.0)
+            timer.setEventHandler { [weak self] in
+                guard let self = self else { return }
+                self.sessionCountLock.lock()
+                let currentCount = self.activeSessionCount
+                self.sessionCountLock.unlock()
+                if currentCount == 0 {
+                    self.deactivateAudioSession()
+                }
+            }
+            deactivationTimer = timer
+            timer.resume()
+        }
+        sessionCountLock.unlock()
+        AppLogger.audio.info("[PTT_DIAG][BackgroundAudioSessionManager] decrementActiveSession() -> count=\(count)")
+    }
+    
     /// Configures system AVAudioSession for simultaneous record & playback in foreground and background with loud loudspeaker policy.
     func configureAudioSession() {
         audioSessionQueue.async { [weak self] in
@@ -62,8 +106,10 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     self.isAudioSessionActive = true
                 }
+                AppLogger.audio.info("[PTT_DIAG][BackgroundAudioSessionManager] ✅ AVAudioSession configured & activated. category=\(session.category.rawValue) sampleRate=\(session.sampleRate) ioBufferDuration=\(session.ioBufferDuration)")
                 self.checkCurrentRoute()
             } catch {
+                AppLogger.audio.error("[PTT_DIAG][BackgroundAudioSessionManager] ❌ AVAudioSession configure FAILED: \(error.localizedDescription)")
             }
         }
     }
@@ -72,10 +118,12 @@ final class BackgroundAudioSessionManager: NSObject, ObservableObject {
         audioSessionQueue.async { [weak self] in
             do {
                 try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                AppLogger.audio.info("[PTT_DIAG][BackgroundAudioSessionManager] AVAudioSession deactivated")
                 DispatchQueue.main.async {
                     self?.isAudioSessionActive = false
                 }
             } catch {
+                AppLogger.audio.error("[PTT_DIAG][BackgroundAudioSessionManager] ❌ AVAudioSession deactivation FAILED: \(error.localizedDescription)")
             }
         }
     }

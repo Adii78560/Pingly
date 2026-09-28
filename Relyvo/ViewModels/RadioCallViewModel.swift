@@ -11,6 +11,15 @@ import CoreLocation
 import os
 import SwiftData
 
+/// Formalized state machine for Push-To-Talk radio operations
+enum PTTSessionState: Equatable {
+    case idle                          // Not connected or standby
+    case transmitting                  // Local user is talking (floor locked by self)
+    case receiving(from: String)       // Remote peer is talking (floor locked by peer name)
+    case outOfRange                    // Peer disconnected
+    case handsFree                     // Hands-free lock active
+}
+
 /// View model driving the Push-To-Talk (PTT) Off-Grid Radio Call screen
 final class RadioCallViewModel: ObservableObject {
     
@@ -19,6 +28,7 @@ final class RadioCallViewModel: ObservableObject {
     /// The UserDefaults key for user-created custom channels.
     static let customChannelsKey = "com.RaiEnterprise.Relyvo.customChannels"
 
+    @Published var sessionState: PTTSessionState = .outOfRange
     @Published var session: RadioSession = RadioSession()
     @Published var isPTTPressed: Bool = false
     @Published var activeChannelMembers: [ChannelPeer] = []
@@ -101,20 +111,26 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     private let multipeerService: MultipeerService
-    private let audioService: RadioAudioService
     private let networkManager = WalkieTalkieNetworkManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     var activeStatusText: String {
-        if !isConnected { return "OFFLINE" }
-        if networkManager.isFloorLockedBySelf { return "TRANSMITTING" }
-        if networkManager.activeFloorSenderID != nil { return "RECEIVING" }
-        return "READY"
+        switch sessionState {
+        case .outOfRange:
+            return "OFFLINE"
+        case .idle:
+            return "READY"
+        case .transmitting:
+            return "TRANSMITTING"
+        case .receiving:
+            return "RECEIVING"
+        case .handsFree:
+            return "LOCKED"
+        }
     }
     
-    init(multipeerService: MultipeerService, audioService: RadioAudioService) {
+    init(multipeerService: MultipeerService) {
         self.multipeerService = multipeerService
-        self.audioService = audioService
         self.networkManager.selectedChannel = selectedChannel
         self.multipeerService.activeChannelID = selectedChannel
         ChannelPresenceManager.shared.setActiveChannel(selectedChannel)
@@ -468,8 +484,16 @@ final class RadioCallViewModel: ObservableObject {
         networkManager.$isFloorLockedBySelf
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLocked in
-                self?.isPTTPressed = isLocked
-                self?.session.isBroadcasting = isLocked
+                guard let self = self else { return }
+                self.isPTTPressed = isLocked
+                self.session.isBroadcasting = isLocked
+                if isLocked {
+                    if self.sessionState != .handsFree {
+                        self.sessionState = .transmitting
+                    }
+                } else if self.sessionState == .transmitting || self.sessionState == .handsFree {
+                    self.sessionState = self.isConnected ? .idle : .outOfRange
+                }
             }
             .store(in: &cancellables)
         
@@ -478,40 +502,29 @@ final class RadioCallViewModel: ObservableObject {
             .sink { [weak self] senderID in
                 guard let self = self else { return }
                 if let senderID = senderID, senderID != "LOCAL_SELF" {
-                    self.liveActiveSpeaker = self.connectedPeerName
+                    let speaker = self.connectedPeerName.isEmpty || self.connectedPeerName == "Searching for Peers..." ? "Remote Peer" : self.connectedPeerName
+                    self.liveActiveSpeaker = speaker
                     self.session.isReceivingAudio = true
-                    self.session.activeSpeakerName = self.connectedPeerName
+                    self.session.activeSpeakerName = speaker
+                    self.sessionState = .receiving(from: speaker)
                 } else {
                     self.liveActiveSpeaker = nil
                     self.session.isReceivingAudio = false
                     self.session.activeSpeakerName = nil
+                    if case .receiving = self.sessionState {
+                        self.sessionState = self.isConnected ? .idle : .outOfRange
+                    }
                 }
             }
             .store(in: &cancellables)
-
         
-        // Microphone PCM audio stream -> send via MultipeerConnectivity
-        audioService.audioChunkPublisher
-            .sink { [weak self] audioData in
-                self?.multipeerService.sendAudioStream(data: audioData)
-            }
-            .store(in: &cancellables)
-        
-        // Dynamic audio level updates for PTT waveform visualizer
-        audioService.$currentAudioLevel
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] level in
-                self?.session.audioLevel = level
-            }
-            .store(in: &cancellables)
-        
+        // Dynamic audio level updates for PTT waveform visualizer from real AudioStreamEngine
         AudioStreamEngine.shared.$currentAudioLevel
             .receive(on: DispatchQueue.main)
             .sink { [weak self] level in
                 self?.session.audioLevel = level
             }
             .store(in: &cancellables)
-
         
         // Channel presence tuned-in members binding
         ChannelPresenceManager.shared.$activeChannelMembers
@@ -531,6 +544,9 @@ final class RadioCallViewModel: ObservableObject {
                     self.connectedPeerName = firstPeer.displayName
                     self.connectedPeerRSSI = firstPeer.rssi
                     self.isConnected = true
+                    if self.sessionState == .outOfRange {
+                        self.sessionState = .idle
+                    }
                     
                     // Mark pending offline transcripts as delivered (GREEN) when peers join channel
                     Task {
@@ -543,6 +559,9 @@ final class RadioCallViewModel: ObservableObject {
                     self.connectedPeerName = "Searching for Peers..."
                     self.connectedPeerRSSI = 0
                     self.isConnected = false
+                    if self.sessionState != .transmitting && self.sessionState != .handsFree {
+                        self.sessionState = .outOfRange
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -554,34 +573,42 @@ final class RadioCallViewModel: ObservableObject {
     }
     
     func disconnect() {
-        if isPTTPressed {
+        if isPTTPressed || sessionState == .transmitting || sessionState == .handsFree {
             stopTransmittingVoice()
         }
         isConnected = false
+        sessionState = .outOfRange
         multipeerService.stopAdvertisingAndBrowsing()
         HapticManager.warningFeedback()
     }
     
-    func startTransmittingVoice() {
+    func startTransmittingVoice(handsFree: Bool = false) {
         guard FeatureAccessManager.shared.canAccess(.walkieTalkie) else {
+            AppLogger.multipeer.warning("[PTT_DIAG][RadioCallViewModel] ❌ startTransmittingVoice BLOCKED by feature access (paywall)")
             FeatureAccessManager.shared.presentPaywall(for: .walkieTalkie)
             return
         }
         
+        AppLogger.multipeer.info("[PTT_DIAG][RadioCallViewModel] 🎙️ startTransmittingVoice(handsFree=\(handsFree)) currentState=\(String(describing: self.sessionState)) isConnected=\(self.isConnected) peerCount=\(self.session.connectedPeersCount)")
+        
         let handle = localUserHandle
         session.activeSpeakerName = handle
         let acquired = networkManager.acquireFloor()
+        AppLogger.multipeer.info("[PTT_DIAG][RadioCallViewModel] acquireFloor() returned: \(acquired)")
         if acquired {
+            sessionState = handsFree ? .handsFree : .transmitting
             HapticManager.mediumImpact()
         } else {
+            AppLogger.multipeer.warning("[PTT_DIAG][RadioCallViewModel] ❌ Floor acquisition FAILED")
             HapticManager.warningFeedback()
         }
     }
 
-    
     func stopTransmittingVoice() {
+        AppLogger.multipeer.info("[PTT_DIAG][RadioCallViewModel] ⏹️ stopTransmittingVoice() currentState=\(String(describing: self.sessionState))")
         networkManager.releaseFloor()
         session.activeSpeakerName = nil
+        sessionState = isConnected ? .idle : .outOfRange
         HapticManager.lightImpact()
     }
 }

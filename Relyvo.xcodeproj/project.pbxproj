@@ -12,14 +12,30 @@
 		04A4B6D2304B791000A0EF39 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 04A4B6D1304B791000A0EF39 /* RevenueCatUI */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		04F4886A30697661004DB56A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 042B944A3027A6670099763C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 042B94513027A6670099763C;
+			remoteInfo = Relyvo;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		042B94523027A6670099763C /* Relyvo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Relyvo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		04F4886630697661004DB56A /* RelyvoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RelyvoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		042B94543027A6670099763C /* Relyvo */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Relyvo;
+			sourceTree = "<group>";
+		};
+		04F4886730697661004DB56A /* RelyvoTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RelyvoTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -35,6 +51,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		04F4886330697661004DB56A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -42,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				042B94543027A6670099763C /* Relyvo */,
+				04F4886730697661004DB56A /* RelyvoTests */,
 				042B94533027A6670099763C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -50,6 +74,7 @@
 			isa = PBXGroup;
 			children = (
 				042B94523027A6670099763C /* Relyvo.app */,
+				04F4886630697661004DB56A /* RelyvoTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -77,6 +102,29 @@
 			productReference = 042B94523027A6670099763C /* Relyvo.app */;
 			productType = "com.apple.product-type.application";
 		};
+		04F4886530697661004DB56A /* RelyvoTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 04F4886E30697661004DB56A /* Build configuration list for PBXNativeTarget "RelyvoTests" */;
+			buildPhases = (
+				04F4886230697661004DB56A /* Sources */,
+				04F4886330697661004DB56A /* Frameworks */,
+				04F4886430697661004DB56A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				04F4886B30697661004DB56A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				04F4886730697661004DB56A /* RelyvoTests */,
+			);
+			name = RelyvoTests;
+			packageProductDependencies = (
+			);
+			productName = RelyvoTests;
+			productReference = 04F4886630697661004DB56A /* RelyvoTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -84,11 +132,15 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1600;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					042B94513027A6670099763C = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					04F4886530697661004DB56A = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 042B94513027A6670099763C;
 					};
 				};
 			};
@@ -109,12 +161,20 @@
 			projectRoot = "";
 			targets = (
 				042B94513027A6670099763C /* Relyvo */,
+				04F4886530697661004DB56A /* RelyvoTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		042B94503027A6670099763C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		04F4886430697661004DB56A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -131,7 +191,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		04F4886230697661004DB56A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		04F4886B30697661004DB56A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 042B94513027A6670099763C /* Relyvo */;
+			targetProxy = 04F4886A30697661004DB56A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		042B945B3027A6680099763C /* Debug */ = {
@@ -169,7 +244,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 7KLFQ5HN5D;
+				DEVELOPMENT_TEAM = G96FB38L7X;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -233,7 +308,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 7KLFQ5HN5D;
+				DEVELOPMENT_TEAM = G96FB38L7X;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -329,6 +404,52 @@
 			};
 			name = Release;
 		};
+		04F4886C30697661004DB56A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G96FB38L7X;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.RaiEnterprise.RelyvoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Relyvo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Relyvo";
+			};
+			name = Debug;
+		};
+		04F4886D30697661004DB56A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G96FB38L7X;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.RaiEnterprise.RelyvoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Relyvo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Relyvo";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -346,6 +467,15 @@
 			buildConfigurations = (
 				042B945E3027A6680099763C /* Debug */,
 				042B945F3027A6680099763C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		04F4886E30697661004DB56A /* Build configuration list for PBXNativeTarget "RelyvoTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				04F4886C30697661004DB56A /* Debug */,
+				04F4886D30697661004DB56A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
