@@ -15,6 +15,7 @@ public final actor PersistenceActor {
         senderName: String,
         channel: String,
         text: String,
+        timestamp: Date = Date(),
         isDelivered: Bool = false,
         messageTypeRaw: String,
         latitude: Double? = nil,
@@ -52,7 +53,7 @@ public final actor PersistenceActor {
                 senderName: senderName,
                 channel: channel,
                 text: text,
-                timestamp: Date(),
+                timestamp: timestamp,        // ✅ preserve original message timestamp
                 isSynced: false,
                 isDelivered: isDelivered,
                 latitude: latitude,

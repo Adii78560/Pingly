@@ -274,13 +274,17 @@ final class RadioCallViewModel: ObservableObject {
         Task {
             await SwiftDataService.shared.persistenceActor.saveChatMessage(
                 id: newMessage.id,
+                originID: localNodeID,
                 senderID: localNodeID,
+                destinationID: "BROADCAST",
                 senderName: handle,
                 channel: selectedChannel,
                 text: trimmed,
+                timestamp: newMessage.timestamp,
                 messageTypeRaw: "CHAT",
                 latitude: currentLocation?.coordinate.latitude,
-                longitude: currentLocation?.coordinate.longitude
+                longitude: currentLocation?.coordinate.longitude,
+                conversationID: newMessage.conversationID
             )
         }
         multipeerService.broadcast(message: newMessage)
@@ -316,11 +320,15 @@ final class RadioCallViewModel: ObservableObject {
         Task {
             await SwiftDataService.shared.persistenceActor.saveChatMessage(
                 id: sosMessage.id,
+                originID: localNodeID,
                 senderID: localNodeID,
+                destinationID: "BROADCAST",
                 senderName: handle,
                 channel: "CH-1 EMERGENCY",
                 text: sosText,
-                messageTypeRaw: "CHAT"
+                timestamp: sosMessage.timestamp,
+                messageTypeRaw: "CHAT",
+                conversationID: sosMessage.conversationID
             )
         }
         multipeerService.broadcast(message: sosMessage)

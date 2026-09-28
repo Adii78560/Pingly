@@ -1580,8 +1580,10 @@ extension MultipeerService: MCSessionDelegate {
                                 senderName: message.senderName,
                                 channel: isChannelMessage ? message.channelID! : message.originID,
                                 text: message.text,
+                                timestamp: message.timestamp,
                                 isDelivered: true,
-                                messageTypeRaw: isChannelMessage ? "CHAT" : "TEXT"
+                                messageTypeRaw: isChannelMessage ? "CHAT" : "TEXT",
+                                conversationID: message.conversationID
                             )
                             MeshNotificationManager.shared.notifyMessageReceived(messageID: message.id, senderName: message.senderName, textPreview: message.text)
                             NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)
