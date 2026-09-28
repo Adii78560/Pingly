@@ -88,7 +88,6 @@ public final class SubscriptionManager: NSObject, ObservableObject, Subscription
         guard !isConfigured else {
             return
         }
-        
         let apiKey = Constants.Subscriptions.testApiKey
         
         #if DEBUG

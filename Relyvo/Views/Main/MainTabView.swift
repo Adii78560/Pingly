@@ -16,7 +16,6 @@ struct MainTabView: View {
     // MARK: - Core Services (Singletons)
     @StateObject private var multipeerService = MultipeerService.shared
     @StateObject private var bleBeaconService = BLEBeaconService.shared
-    @StateObject private var radioAudioService = RadioAudioService.shared
     @StateObject private var locationService = LocationService.shared
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     @StateObject private var featureAccessManager = FeatureAccessManager.shared
@@ -36,12 +35,11 @@ struct MainTabView: View {
     init() {
         let mp = MultipeerService.shared
         let ble = BLEBeaconService.shared
-        let audio = RadioAudioService.shared
         let loc = LocationService.shared
         
         _radarViewModel = StateObject(wrappedValue: RadarViewModel(multipeerService: mp, bleBeaconService: ble))
         _messagesViewModel = StateObject(wrappedValue: MessagesViewModel(multipeerService: mp, locationService: loc))
-        _radioCallViewModel = StateObject(wrappedValue: RadioCallViewModel(multipeerService: mp, audioService: audio))
+        _radioCallViewModel = StateObject(wrappedValue: RadioCallViewModel(multipeerService: mp))
         _settingsViewModel = StateObject(wrappedValue: SettingsViewModel(multipeerService: mp, bleBeaconService: ble))
     }
     
@@ -102,7 +100,6 @@ struct MainTabView: View {
             selectedTab = 2 // Switch to Messages tab
         }
         .onAppear {
-            ATTManager.shared.requestTrackingPermissionIfFirstLaunch()
             locationService.requestLocationPermission()
             let handle = settingsViewModel.userHandle
             multipeerService.startAdvertisingAndBrowsing(userHandle: handle, status: settingsViewModel.selectedEmergencyStatus)

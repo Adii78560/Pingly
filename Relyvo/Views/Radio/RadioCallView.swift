@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 /// watchOS Walkie-Talkie & FaceTime Audio inspired View with Channel-Wise Chat Bubbles
 struct RadioCallView: View {
@@ -6,13 +7,94 @@ struct RadioCallView: View {
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     @StateObject private var featureAccessManager = FeatureAccessManager.shared
     
-    @State private var isPttPressedVisual = false
-    @State private var isHandsFreeLocked = false
     @State private var showingAddChannelAlert = false
     @State private var newChannelInputText = ""
     @State private var showSOSDialog = false
     @State private var showingQRShare = false
     @State private var showingQRScanner = false
+    
+    private let standardSpring = Animation.spring(response: 0.35, dampingFraction: 0.75)
+    
+    private var isAudioActive: Bool {
+        switch viewModel.sessionState {
+        case .transmitting, .handsFree, .receiving:
+            return true
+        case .idle, .outOfRange:
+            return false
+        }
+    }
+    
+    private var cardBackground: AnyShapeStyle {
+        switch viewModel.sessionState {
+        case .handsFree:
+            return AnyShapeStyle(Color.red.opacity(0.85))
+        case .transmitting:
+            return AnyShapeStyle(AppTheme.primaryGradient)
+        case .receiving:
+            return AnyShapeStyle(Color.red.opacity(0.65))
+        case .outOfRange:
+            return AnyShapeStyle(LinearGradient(colors: [Color.gray.opacity(0.6), Color.gray.opacity(0.4)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .idle:
+            return AnyShapeStyle(LinearGradient(colors: [AppTheme.tintColor, AppTheme.tintColor.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+    }
+    
+    private var cardShadowColor: Color {
+        switch viewModel.sessionState {
+        case .transmitting, .handsFree:
+            return AppTheme.hotMagenta.opacity(0.6)
+        case .receiving:
+            return Color.red.opacity(0.5)
+        case .outOfRange:
+            return Color.clear
+        case .idle:
+            return AppTheme.tintColor.opacity(0.35)
+        }
+    }
+    
+    private var cardShadowRadius: CGFloat {
+        switch viewModel.sessionState {
+        case .transmitting, .handsFree:
+            return 16
+        case .receiving:
+            return 10
+        case .outOfRange:
+            return 0
+        case .idle:
+            return 8
+        }
+    }
+    
+    @ViewBuilder
+    private var waveformView: some View {
+        if isAudioActive {
+            TimelineView(.periodic(from: .now, by: 0.04)) { context in
+                HStack(spacing: 4) {
+                    ForEach(0..<12, id: \.self) { index in
+                        let rawLevel = CGFloat(viewModel.session.audioLevel)
+                        let time = context.date.timeIntervalSinceReferenceDate
+                        let wave = sin(time * 14.0 + Double(index) * 0.65) * 0.35 + 0.65
+                        let level = rawLevel > 0.02 ? rawLevel : CGFloat.random(in: 0.15...0.85)
+                        let h = 4.0 + (30.0 * level * CGFloat(wave))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.white)
+                            .frame(width: 4, height: max(4, h))
+                    }
+                }
+            }
+            .frame(height: 40)
+        } else {
+            HStack(spacing: 4) {
+                ForEach(0..<12, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.white.opacity(0.35))
+                        .frame(width: 4, height: 4.0)
+                }
+            }
+            .frame(height: 40)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -121,67 +203,60 @@ struct RadioCallView: View {
 
                 // 2. Hero Squircle PTT Transmit Card
                 ZStack {
-                    let isActiveLocal = viewModel.isPTTPressed || isPttPressedVisual
-                    let isRemoteSpeaking = viewModel.session.isReceivingAudio || viewModel.liveActiveSpeaker != nil
-                    let idleGradient = LinearGradient(colors: [AppTheme.tintColor, AppTheme.tintColor.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    let lockColor = Color.red.opacity(0.8)
-                    let remoteColor = Color.red.opacity(0.6)
-                    let transmittingGradient = AppTheme.primaryGradient
-
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(isHandsFreeLocked ? AnyShapeStyle(lockColor) : (isActiveLocal ? AnyShapeStyle(transmittingGradient) : (isRemoteSpeaking ? AnyShapeStyle(remoteColor) : AnyShapeStyle(idleGradient))))
+                        .fill(cardBackground)
                         .frame(height: 195)
-                        .shadow(color: isActiveLocal ? AppTheme.hotMagenta.opacity(0.6) : AppTheme.tintColor.opacity(0.35), radius: isActiveLocal ? 16 : 8, x: 0, y: isActiveLocal ? 8 : 4)
+                        .shadow(color: cardShadowColor, radius: cardShadowRadius, x: 0, y: isAudioActive ? 8 : 4)
 
                     VStack(spacing: 8) {
-                        if isRemoteSpeaking {
-                            Text("🔴 \(viewModel.liveActiveSpeaker ?? "Peer") speaking live...")
+                        switch viewModel.sessionState {
+                        case .receiving(let speaker):
+                            Text("🔴 \(speaker) speaking live...")
                                 .font(.title3.bold())
                                 .foregroundColor(.white)
-                                .onTapGesture {
-                                    if isHandsFreeLocked {
-                                        isHandsFreeLocked = false
-                                        isPttPressedVisual = false
-                                        viewModel.stopTransmittingVoice()
-                                        HapticsManager.shared.lightImpact()
-                                    }
-                                }
-                        } else if isHandsFreeLocked {
+                            waveformView
+                            
+                        case .handsFree:
                             Image(systemName: "lock.fill")
-                                .font(.system(size: 44))
+                                .font(.system(size: 36))
                                 .foregroundColor(.white)
                             Text("TRANSMITTING (LOCKED)")
                                 .font(.title3.bold())
                                 .foregroundColor(.white)
+                            waveformView
                             Text("Tap anywhere to stop")
                                 .font(.system(size: 12))
                                 .foregroundColor(.white.opacity(0.8))
-                        } else if isActiveLocal {
+                                
+                        case .transmitting:
                             Text("Transmitting...")
                                 .font(.title3.bold())
                                 .foregroundColor(.white)
-                            // Audio Waveform
-                            TimelineView(.periodic(from: .now, by: 0.04)) { context in
-                                HStack(spacing: 4) {
-                                    ForEach(0..<12, id: \.self) { index in
-                                        let rawLevel = CGFloat(viewModel.session.audioLevel)
-                                        let time = context.date.timeIntervalSinceReferenceDate
-                                        let wave = sin(time * 14.0 + Double(index) * 0.65) * 0.35 + 0.65
-                                        let h = 4.0 + (30.0 * (rawLevel > 0.02 ? rawLevel : 0.2) * CGFloat(wave))
-                                        RoundedRectangle(cornerRadius: 2)
-                                            .fill(Color.white)
-                                            .frame(width: 4, height: max(4, h))
-                                    }
-                                }
-                            }
-                            .frame(height: 40)
-                        } else {
+                            waveformView
+                            Text("▲ Slide up to lock")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.7))
+                                
+                        case .outOfRange:
+                            Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                                .font(.system(size: 36))
+                                .foregroundColor(.white.opacity(0.8))
+                            Text("Searching for Peers...")
+                                .font(.title3.bold())
+                                .foregroundColor(.white)
+                            waveformView
+                            Text("Out of range — standby")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.6))
+                                
+                        case .idle:
                             Image(systemName: "mic.fill")
-                                .font(.system(size: 44))
+                                .font(.system(size: 36))
                                 .foregroundColor(.white)
                             Text("Hold to talk")
                                 .font(.title3.bold())
                                 .foregroundColor(.white)
+                            waveformView
                             Text("▲ Slide up to lock")
                                 .font(.system(size: 12))
                                 .foregroundColor(.white.opacity(0.6))
@@ -191,10 +266,10 @@ struct RadioCallView: View {
                 .padding(.horizontal, 16)
                 .highPriorityGesture(
                     TapGesture().onEnded {
-                        if isHandsFreeLocked {
-                            isHandsFreeLocked = false
-                            isPttPressedVisual = false
-                            viewModel.stopTransmittingVoice()
+                        if viewModel.sessionState == .handsFree {
+                            withAnimation(standardSpring) {
+                                viewModel.stopTransmittingVoice()
+                            }
                             HapticsManager.shared.lightImpact()
                         }
                     }
@@ -203,31 +278,33 @@ struct RadioCallView: View {
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
                             guard featureAccessManager.canAccess(.walkieTalkie) else {
-                                if !isPttPressedVisual {
-                                    isPttPressedVisual = true
-                                    featureAccessManager.requireAccess(to: .walkieTalkie)
-                                }
+                                AppLogger.multipeer.warning("[PTT_DIAG][RadioCallView] ❌ PTT blocked: featureAccessManager.canAccess(.walkieTalkie) is false")
+                                featureAccessManager.requireAccess(to: .walkieTalkie)
                                 return
                             }
-                            let isRemoteSpeaking = viewModel.session.isReceivingAudio || viewModel.liveActiveSpeaker != nil
-                            if isRemoteSpeaking { return }
-
-                            if !viewModel.isPTTPressed && !isHandsFreeLocked {
-                                isPttPressedVisual = true
-                                viewModel.startTransmittingVoice()
+                            if case .receiving = viewModel.sessionState {
+                                AppLogger.multipeer.info("[PTT_DIAG][RadioCallView] PTT touch ignored: currently receiving audio")
+                                return
                             }
 
-                            if value.translation.height < -60 && !isHandsFreeLocked {
-                                isHandsFreeLocked = true
+                            if viewModel.sessionState == .idle || viewModel.sessionState == .outOfRange {
+                                withAnimation(standardSpring) {
+                                    viewModel.startTransmittingVoice(handsFree: false)
+                                }
+                            }
+
+                            if value.translation.height < -60 && viewModel.sessionState == .transmitting {
+                                withAnimation(standardSpring) {
+                                    viewModel.sessionState = .handsFree
+                                }
                                 HapticsManager.shared.heavyImpact()
                             }
                         }
                         .onEnded { _ in
-                            if isHandsFreeLocked {
-                                // Do nothing, remain transmitting
-                            } else {
-                                isPttPressedVisual = false
-                                if featureAccessManager.canAccess(.walkieTalkie) {
+                            if viewModel.sessionState == .handsFree {
+                                // Keep transmitting in hands-free mode
+                            } else if viewModel.sessionState == .transmitting {
+                                withAnimation(standardSpring) {
                                     viewModel.stopTransmittingVoice()
                                 }
                             }
@@ -371,10 +448,10 @@ struct RadioCallView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                if isHandsFreeLocked {
-                    isHandsFreeLocked = false
-                    isPttPressedVisual = false
-                    viewModel.stopTransmittingVoice()
+                if viewModel.sessionState == .handsFree {
+                    withAnimation(standardSpring) {
+                        viewModel.stopTransmittingVoice()
+                    }
                     HapticsManager.shared.lightImpact()
                 }
             }
@@ -447,6 +524,10 @@ struct RadioCallView: View {
                 ChannelChatModalView(viewModel: viewModel)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
+            }
+            .onAppear {
+                AudioStreamEngine.shared.requestMicrophonePermission()
+                BackgroundAudioSessionManager.shared.configureAudioSession()
             }
         }
     }

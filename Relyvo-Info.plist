@@ -46,6 +46,8 @@
 		<string>_pingly-mesh._tcp</string>
 		<string>_pingly-mesh._udp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Relyvo uses the camera to scan QR codes for secure channel pairing.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Relyvo uses local peer-to-peer Wi-Fi network protocols to transfer message drops and broadcast real-time Push-To-Talk radio voice calls.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -56,11 +58,6 @@
 	<string>Relyvo requires microphone access to record and transmit live Push-To-Talk (PTT) radio voice communications.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Relyvo uses Speech Recognition to transcribe Walkie-Talkie voice broadcasts in real-time so you can read missed messages.</string>
-	<key>NSUserTrackingUsageDescription</key>
-	<string>Relyvo uses anonymous telemetry to optimize off-grid P2P mesh signal strength and node connectivity performance.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Relyvo uses the camera to scan QR codes for secure channel pairing.</string>
-
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

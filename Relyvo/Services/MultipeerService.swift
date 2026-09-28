@@ -500,7 +500,14 @@ final class MultipeerService: NSObject, MultipeerServiceProtocol, ObservableObje
     }
     
     func sendRawPTTPacket(_ packet: Data, type: PTTFrameType) {
-        guard let session = session, !session.connectedPeers.isEmpty else { return }
+        guard let session = session else {
+            AppLogger.multipeer.warning("[PTT_DIAG][MultipeerService] ❌ sendRawPTTPacket FAILED: session is nil")
+            return
+        }
+        guard !session.connectedPeers.isEmpty else {
+            AppLogger.multipeer.warning("[PTT_DIAG][MultipeerService] ⚠️ sendRawPTTPacket: connectedPeers is EMPTY — no peers to receive PTT \(type)")
+            return
+        }
         let peerNames = session.connectedPeers.map { $0.displayName }.joined(separator: ", ")
         
         AppLogger.multipeer.info("""
@@ -1573,8 +1580,10 @@ extension MultipeerService: MCSessionDelegate {
                                 senderName: message.senderName,
                                 channel: isChannelMessage ? message.channelID! : message.originID,
                                 text: message.text,
+                                timestamp: message.timestamp,
                                 isDelivered: true,
-                                messageTypeRaw: isChannelMessage ? "CHAT" : "TEXT"
+                                messageTypeRaw: isChannelMessage ? "CHAT" : "TEXT",
+                                conversationID: message.conversationID
                             )
                             MeshNotificationManager.shared.notifyMessageReceived(messageID: message.id, senderName: message.senderName, textPreview: message.text)
                             NotificationCenter.default.post(name: .didReceiveChatMessage, object: nil)

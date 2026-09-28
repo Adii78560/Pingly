@@ -731,7 +731,7 @@ final class RelaynHardeningTests {
         assert(Constants.Subscriptions.lifetimeProductID == "com.RaiEnterprise.Relyvo.pro.forever", "Lifetime product ID matches forever spec")
         assert(Constants.Subscriptions.legacyLifetimeProductID == "com.RaiEnterprise.Relyvo.pro.lifetime", "Legacy lifetime product ID alias matches spec")
         assert(Constants.Subscriptions.lifetimePackageID == "$rc_lifetime", "Lifetime package ID matches '$rc_lifetime'")
-        assert(Constants.Subscriptions.apiKey == "test_hgaTGoexYnzezVzkyZNkxbLdnha", "RevenueCat test SDK API key is configured")
+        assert(Constants.Subscriptions.apiKey == "appl_ZSeKDIWZgnflWhUBxDKodzOuAFF", "RevenueCat production SDK API key is configured")
         assert(Constants.Subscriptions.privacyPolicyURL.absoluteString == "https://nutrisence-ai.blogspot.com/2026/09/relyvo-privacy-policy.html", "Privacy policy URL matches production blogspot endpoint")
         assert(Constants.Subscriptions.termsOfServiceURL.absoluteString == "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/", "Terms of service URL matches Apple Standard EULA endpoint")
         

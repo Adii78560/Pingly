@@ -186,6 +186,7 @@ final class MessagesViewModel: ObservableObject {
                 senderName: handle,
                 channel: conversation.recipientNodeID,
                 text: trimmed,
+                timestamp: newMessage.timestamp,
                 messageTypeRaw: "CHAT",
                 conversationID: newMessage.conversationID
             )
@@ -285,6 +286,7 @@ final class MessagesViewModel: ObservableObject {
                     senderName: handle,
                     channel: conversation.recipientNodeID,
                     text: locationText,
+                    timestamp: newMessage.timestamp,
                     messageTypeRaw: "LOCATION",
                     latitude: loc.coordinate.latitude,
                     longitude: loc.coordinate.longitude,
@@ -350,7 +352,7 @@ final class MessagesViewModel: ObservableObject {
         
         let isChannelMessage = message.channelID != nil && !message.channelID!.isEmpty && message.channelID!.hasPrefix("CH-")
         if isChannelMessage {
-            // MultipeerService (line ~1495) handles background persistence globally.
+            // MultipeerService handles background persistence globally for channel messages.
             // We exit early here to ensure Channels NEVER generate a Messages-tab conversation card.
             return
         }
@@ -367,11 +369,11 @@ final class MessagesViewModel: ObservableObject {
         let convName = message.senderName
         let convRecipient = senderNodeID
         
-        // 🔒 Communication Authorization Gate
-        if !DirectChatGate.shared.canSendDirectMessage(to: senderNodeID) {
-            AppLogger.multipeer.warning("Blocked incoming direct CHAT packet \(message.id) from unauthorized sender: \(senderNodeID)")
-            return
-        }
+        // NOTE: We intentionally do NOT gate incoming direct messages on friendship status.
+        // MultipeerService already persists all incoming messages to SwiftData; blocking the
+        // UI here (but not the DB write) created a session-vs-reload inconsistency where
+        // received messages were invisible during the session but appeared after a restart.
+        // Sending is still gated via DirectChatGate in sendMessageToConversation.
         
         if selectedConversation?.id == convID {
             relayedMessage.isRead = true
@@ -406,21 +408,9 @@ final class MessagesViewModel: ObservableObject {
             AppLogger.multipeer.info("Auto-created conversation thread for incoming peer/channel: \(convName) (ConvID: \(convID))")
         }
         
-        Task {
-            await SwiftDataService.shared.persistenceActor.saveChatMessage(
-                id: message.id,
-                originID: message.originID,
-                senderID: message.senderID,
-                destinationID: message.destinationID,
-                senderName: message.senderName,
-                channel: isChannelMessage ? message.channelID! : senderNodeID,
-                text: message.text,
-                isDelivered: true,
-                messageTypeRaw: "CHAT",
-                conversationID: isChannelMessage ? UUID(uuidString: convID)! : message.conversationID,
-                isRead: relayedMessage.isRead
-            )
-        }
+        // NOTE: Persistence for incoming messages is handled exclusively by MultipeerService
+        // (saveChatMessage with isDelivered: true + correct conversationID). Persisting here
+        // as well caused a double-write race where messageTypeRaw was non-deterministic.
         
         if relayedMessage.hopsCount <= Constants.Emergency.broadcastTTL {
             multipeerService.broadcast(message: relayedMessage)
@@ -461,9 +451,24 @@ final class MessagesViewModel: ObservableObject {
                 
                 for (convID, msgList) in grouped {
                     if let last = msgList.last {
-                        let peerName = msgList.first(where: { $0.senderID != NodeIdentity.shared.nodeID && $0.senderName != NodeIdentity.shared.displayName })?.senderName ?? last.senderName
+                        // Try to find the remote peer's name from a received message first.
+                        // If all messages are outgoing (no replies yet), fall back to the
+                        // SDFriend record so the conversation card shows the recipient's name
+                        // instead of the local user's name.
+                        let localNodeID = NodeIdentity.shared.nodeID
+                        let localDisplayName = NodeIdentity.shared.displayName
                         
-                        let recipientNodeID = msgList.first(where: { $0.senderID != NodeIdentity.shared.nodeID })?.senderID ?? last.destinationID
+                        let peerName: String
+                        if let incomingMsg = msgList.first(where: { $0.senderID != localNodeID && $0.senderName != localDisplayName }) {
+                            peerName = incomingMsg.senderName
+                        } else {
+                            // All outgoing — look up recipient in SDFriend by destinationID.
+                            let recipientCandidate = last.destinationID
+                            let friendDescriptor = FetchDescriptor<SDFriend>(predicate: #Predicate { $0.nodeID == recipientCandidate })
+                            peerName = (try? SwiftDataService.shared.context.fetch(friendDescriptor))?.first?.handle ?? last.senderName
+                        }
+                        
+                        let recipientNodeID = msgList.first(where: { $0.senderID != localNodeID })?.senderID ?? last.destinationID
                         
                         AppLogger.multipeer.info("[MESSAGE_LOADED] convID=\(convID) messageCount=\(msgList.count) peer=\(peerName)")
                         
